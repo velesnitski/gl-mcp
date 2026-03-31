@@ -47,7 +47,7 @@ pub async fn list_pipelines(
         let ref_name = p["ref"].as_str().unwrap_or("?");
         let source = p["source"].as_str().unwrap_or("?");
         let created = p["created_at"].as_str().unwrap_or("?");
-        let web_url = p["web_url"].as_str().unwrap_or("");
+        let _web_url = p["web_url"].as_str().unwrap_or("");
 
         let status_icon = match status {
             "success" => "✅",
@@ -170,7 +170,7 @@ pub async fn get_job_log(
     let duration = job["duration"].as_f64().unwrap_or(0.0);
 
     // Get log text (plain text, not JSON)
-    let log_url = format!("{}/api/v4/projects/{encoded}/jobs/{job_id}/trace", "");
+    let _log_url = format!("{}/api/v4/projects/{encoded}/jobs/{job_id}/trace", "");
     // Use get_json which returns Value, but trace returns plain text
     // We need raw text — use the client's get method differently
     let log_text: String = client
