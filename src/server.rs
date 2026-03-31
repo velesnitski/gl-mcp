@@ -150,6 +150,64 @@ pub struct GetPipelineParams {
     instance: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListCommitsParams {
+    #[schemars(description = "Project ID or path")]
+    project_id: String,
+    #[schemars(description = "Branch or tag name (empty = default branch)")]
+    branch: Option<String>,
+    #[schemars(description = "Filter by author name or email")]
+    author: Option<String>,
+    #[schemars(description = "ISO date: commits after this date (e.g., '2026-03-24T00:00:00Z')")]
+    since: Option<String>,
+    #[schemars(description = "ISO date: commits before this date")]
+    until: Option<String>,
+    #[schemars(description = "Max results (default: 20)")]
+    per_page: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetCommitDiffParams {
+    #[schemars(description = "Project ID or path")]
+    project_id: String,
+    #[schemars(description = "Commit SHA (full or short)")]
+    sha: String,
+    #[schemars(description = "Max diff lines per file (default: 200)")]
+    max_lines_per_file: Option<usize>,
+    #[schemars(description = "Skip lockfiles and generated code (default: true)")]
+    skip_generated: Option<bool>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetMrChangesParams {
+    #[schemars(description = "Project ID or path")]
+    project_id: String,
+    #[schemars(description = "Merge request IID")]
+    mr_iid: u64,
+    #[schemars(description = "Max diff lines per file (default: 200)")]
+    max_lines_per_file: Option<usize>,
+    #[schemars(description = "Skip lockfiles and generated code (default: true)")]
+    skip_generated: Option<bool>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetFileContentParams {
+    #[schemars(description = "Project ID or path")]
+    project_id: String,
+    #[schemars(description = "File path within the repository")]
+    file_path: String,
+    #[schemars(description = "Branch, tag, or commit SHA (default: default branch)")]
+    ref_name: Option<String>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
 // ─── Helper ───
 
 fn resolve_client<'a>(resolver: &'a Resolver, instance: &Option<String>, id: &str) -> Result<&'a GitLabClient, McpError> {
@@ -284,6 +342,62 @@ impl GlMcpServer {
     async fn get_pipeline(&self, Parameters(p): Parameters<GetPipelineParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         match tools::pipelines::get_pipeline(client, &p.project_id, p.pipeline_id).await {
+            Ok(text) => tool_ok(text),
+            Err(e) => tool_err(e),
+        }
+    }
+
+    // ─── Commits & Diffs ───
+
+    #[tool(description = "List commits for a project, optionally filtered by branch, author, and date range. Groups by author for overview.")]
+    async fn list_commits(&self, Parameters(p): Parameters<ListCommitsParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        match tools::commits::list_commits(
+            client, &p.project_id,
+            p.branch.as_deref().unwrap_or(""),
+            p.author.as_deref().unwrap_or(""),
+            p.since.as_deref().unwrap_or(""),
+            p.until.as_deref().unwrap_or(""),
+            p.per_page.unwrap_or(20),
+        ).await {
+            Ok(text) => tool_ok(text),
+            Err(e) => tool_err(e),
+        }
+    }
+
+    #[tool(description = "Get the diff of a commit with smart filtering: skips lockfiles/generated code, groups by language, truncates large diffs. Use for code review.")]
+    async fn get_commit_diff(&self, Parameters(p): Parameters<GetCommitDiffParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        match tools::commits::get_commit_diff(
+            client, &p.project_id, &p.sha,
+            p.max_lines_per_file.unwrap_or(200),
+            p.skip_generated.unwrap_or(true),
+        ).await {
+            Ok(text) => tool_ok(text),
+            Err(e) => tool_err(e),
+        }
+    }
+
+    #[tool(description = "Get all changes in a merge request as a unified diff, grouped by language. Use for MR code review.")]
+    async fn get_mr_changes(&self, Parameters(p): Parameters<GetMrChangesParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        match tools::commits::get_mr_changes(
+            client, &p.project_id, p.mr_iid,
+            p.max_lines_per_file.unwrap_or(200),
+            p.skip_generated.unwrap_or(true),
+        ).await {
+            Ok(text) => tool_ok(text),
+            Err(e) => tool_err(e),
+        }
+    }
+
+    #[tool(description = "Get file content at a specific branch, tag, or commit SHA. Use for additional context during code review.")]
+    async fn get_file_content(&self, Parameters(p): Parameters<GetFileContentParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        match tools::commits::get_file_content(
+            client, &p.project_id, &p.file_path,
+            p.ref_name.as_deref().unwrap_or("HEAD"),
+        ).await {
             Ok(text) => tool_ok(text),
             Err(e) => tool_err(e),
         }
