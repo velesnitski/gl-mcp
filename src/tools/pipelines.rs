@@ -1,6 +1,7 @@
 //! GitLab CI/CD pipeline tools.
 
 use crate::client::GitLabClient;
+use crate::error::Result;
 use serde_json::Value;
 
 /// List pipelines for a project.
@@ -10,7 +11,7 @@ pub async fn list_pipelines(
     status: &str,
     ref_name: &str,
     per_page: u32,
-) -> Result<String, String> {
+) -> Result<String> {
     let per_page_str = per_page.to_string();
     let path = format!(
         "/projects/{}/pipelines",
@@ -32,7 +33,7 @@ pub async fn list_pipelines(
     let pipelines: Vec<Value> = client
         .get(&path, &params)
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     if pipelines.is_empty() {
         return Ok("No pipelines found.".to_string());
@@ -70,10 +71,10 @@ pub async fn get_pipeline(
     client: &GitLabClient,
     project_id: &str,
     pipeline_id: u64,
-) -> Result<String, String> {
+) -> Result<String> {
     let encoded = urlencoding::encode(project_id);
     let path = format!("/projects/{encoded}/pipelines/{pipeline_id}");
-    let p: Value = client.get(&path, &[]).await.map_err(|e| e.to_string())?;
+    let p: Value = client.get(&path, &[]).await?;
 
     let status = p["status"].as_str().unwrap_or("?");
     let ref_name = p["ref"].as_str().unwrap_or("?");
@@ -108,7 +109,7 @@ pub async fn get_pipeline(
     let jobs: Vec<Value> = client
         .get(&jobs_path, &[("per_page", "100")])
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     if !jobs.is_empty() {
         // Group by stage
@@ -154,14 +155,14 @@ pub async fn get_job_log(
     project_id: &str,
     job_id: u64,
     tail: usize,
-) -> Result<String, String> {
+) -> Result<String> {
     let encoded = urlencoding::encode(project_id);
 
     // Get job metadata first
     let job: serde_json::Value = client
         .get(&format!("/projects/{encoded}/jobs/{job_id}"), &[])
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     let name = job["name"].as_str().unwrap_or("?");
     let status = job["status"].as_str().unwrap_or("?");
@@ -175,7 +176,7 @@ pub async fn get_job_log(
     let log_text: String = client
         .get(&format!("/projects/{encoded}/jobs/{job_id}/trace"), &[])
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     // Tail: take last N lines
     let lines: Vec<&str> = log_text.lines().collect();
@@ -203,7 +204,7 @@ pub async fn retry_pipeline(
     client: &GitLabClient,
     project_id: &str,
     pipeline_id: u64,
-) -> Result<String, String> {
+) -> Result<String> {
     let encoded = urlencoding::encode(project_id);
     let p: serde_json::Value = client
         .post(
@@ -211,7 +212,7 @@ pub async fn retry_pipeline(
             &serde_json::json!({}),
         )
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     let status = p["status"].as_str().unwrap_or("?");
     let web_url = p["web_url"].as_str().unwrap_or("");
@@ -225,7 +226,7 @@ pub async fn cancel_pipeline(
     client: &GitLabClient,
     project_id: &str,
     pipeline_id: u64,
-) -> Result<String, String> {
+) -> Result<String> {
     let encoded = urlencoding::encode(project_id);
     let p: serde_json::Value = client
         .post(
@@ -233,7 +234,7 @@ pub async fn cancel_pipeline(
             &serde_json::json!({}),
         )
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     let status = p["status"].as_str().unwrap_or("?");
     Ok(format!("Pipeline #{pipeline_id} canceled. **Status:** {status}"))

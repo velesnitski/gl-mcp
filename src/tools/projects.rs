@@ -1,6 +1,7 @@
 //! GitLab project tools.
 
 use crate::client::GitLabClient;
+use crate::error::Result;
 use serde_json::Value;
 
 /// List projects accessible to the authenticated user.
@@ -8,7 +9,7 @@ pub async fn list_projects(
     client: &GitLabClient,
     search: &str,
     per_page: u32,
-) -> Result<String, String> {
+) -> Result<String> {
     let per_page_str = per_page.to_string();
     let mut params = vec![
         ("per_page", per_page_str.as_str()),
@@ -22,7 +23,7 @@ pub async fn list_projects(
     let projects: Vec<Value> = client
         .get("/projects", &params)
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     if projects.is_empty() {
         return Ok("No projects found.".to_string());
@@ -59,12 +60,12 @@ pub async fn list_projects(
 pub async fn get_project(
     client: &GitLabClient,
     project_id: &str,
-) -> Result<String, String> {
+) -> Result<String> {
     let path = format!("/projects/{}", urlencoding::encode(project_id));
     let p: Value = client
         .get(&path, &[])
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     let name = p["path_with_namespace"].as_str().unwrap_or("?");
     let id = p["id"].as_u64().unwrap_or(0);
@@ -111,12 +112,12 @@ pub async fn get_project(
 pub async fn list_members(
     client: &GitLabClient,
     project_id: &str,
-) -> Result<String, String> {
+) -> Result<String> {
     let path = format!("/projects/{}/members/all", urlencoding::encode(project_id));
     let members: Vec<Value> = client
         .get(&path, &[("per_page", "100")])
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     if members.is_empty() {
         return Ok("No members found.".to_string());
@@ -146,7 +147,7 @@ pub async fn list_branches(
     project_id: &str,
     search: &str,
     per_page: u32,
-) -> Result<String, String> {
+) -> Result<String> {
     let per_page_str = per_page.to_string();
     let path = format!(
         "/projects/{}/repository/branches",
@@ -165,7 +166,7 @@ pub async fn list_branches(
     let branches: Vec<Value> = client
         .get(&path, &params)
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     if branches.is_empty() {
         return Ok("No branches found.".to_string());

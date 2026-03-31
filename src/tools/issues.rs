@@ -1,6 +1,7 @@
 //! GitLab issue tools.
 
 use crate::client::GitLabClient;
+use crate::error::Result;
 use serde_json::Value;
 
 /// Search issues across projects or within a project.
@@ -12,7 +13,7 @@ pub async fn search_issues(
     labels: &str,
     assignee: &str,
     per_page: u32,
-) -> Result<String, String> {
+) -> Result<String> {
     let per_page_str = per_page.to_string();
     let path = if project_id.is_empty() {
         "/issues".to_string()
@@ -41,7 +42,7 @@ pub async fn search_issues(
     let issues: Vec<Value> = client
         .get(&path, &params)
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     if issues.is_empty() {
         return Ok("No issues found.".to_string());
@@ -87,13 +88,13 @@ pub async fn get_issue(
     project_id: &str,
     issue_iid: u64,
     include_notes: bool,
-) -> Result<String, String> {
+) -> Result<String> {
     let path = format!(
         "/projects/{}/issues/{}",
         urlencoding::encode(project_id),
         issue_iid
     );
-    let issue: Value = client.get(&path, &[]).await.map_err(|e| e.to_string())?;
+    let issue: Value = client.get(&path, &[]).await?;
 
     let title = issue["title"].as_str().unwrap_or("?");
     let state = issue["state"].as_str().unwrap_or("?");
@@ -143,7 +144,7 @@ pub async fn get_issue(
         let notes: Vec<Value> = client
             .get(&notes_path, &[("per_page", "50"), ("sort", "asc")])
             .await
-            .map_err(|e| e.to_string())?;
+            ?;
 
         let user_notes: Vec<&Value> = notes
             .iter()
@@ -174,7 +175,7 @@ pub async fn create_issue(
     labels: &str,
     assignee: &str,
     milestone_id: Option<u64>,
-) -> Result<String, String> {
+) -> Result<String> {
     let path = format!("/projects/{}/issues", urlencoding::encode(project_id));
 
     let mut body = serde_json::json!({ "title": title });
@@ -189,7 +190,7 @@ pub async fn create_issue(
         let users: Vec<Value> = client
             .get("/users", &[("username", assignee)])
             .await
-            .map_err(|e| e.to_string())?;
+            ?;
         if let Some(user) = users.first() {
             if let Some(id) = user["id"].as_u64() {
                 body["assignee_ids"] = serde_json::json!([id]);
@@ -200,7 +201,7 @@ pub async fn create_issue(
         body["milestone_id"] = Value::Number(mid.into());
     }
 
-    let issue: Value = client.post(&path, &body).await.map_err(|e| e.to_string())?;
+    let issue: Value = client.post(&path, &body).await?;
     let iid = issue["iid"].as_u64().unwrap_or(0);
     let web_url = issue["web_url"].as_str().unwrap_or("");
 
@@ -217,7 +218,7 @@ pub async fn update_issue(
     state_event: Option<&str>,
     labels: Option<&str>,
     assignee: Option<&str>,
-) -> Result<String, String> {
+) -> Result<String> {
     let path = format!(
         "/projects/{}/issues/{}",
         urlencoding::encode(project_id),
@@ -244,7 +245,7 @@ pub async fn update_issue(
             let users: Vec<Value> = client
                 .get("/users", &[("username", a)])
                 .await
-                .map_err(|e| e.to_string())?;
+                ?;
             if let Some(user) = users.first() {
                 if let Some(id) = user["id"].as_u64() {
                     body["assignee_ids"] = serde_json::json!([id]);
@@ -256,7 +257,7 @@ pub async fn update_issue(
     let issue: Value = client
         .put(&path, &body)
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     let state = issue["state"].as_str().unwrap_or("?");
     let web_url = issue["web_url"].as_str().unwrap_or("");
@@ -272,7 +273,7 @@ pub async fn add_note(
     iid: u64,
     note_type: &str,
     body: &str,
-) -> Result<String, String> {
+) -> Result<String> {
     let kind = if note_type == "mr" {
         "merge_requests"
     } else {
@@ -288,7 +289,7 @@ pub async fn add_note(
     let note: Value = client
         .post(&path, &serde_json::json!({ "body": body }))
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     let note_id = note["id"].as_u64().unwrap_or(0);
     let symbol = if note_type == "mr" { "!" } else { "#" };
