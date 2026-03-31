@@ -1,0 +1,88 @@
+# PHP / Laravel rules
+
+[[rule]]
+id = "PHP001"
+severity = "critical"
+name = "SQL injection risk"
+pattern = '(->whereRaw|->selectRaw|->havingRaw|DB::raw)\s*\([^)]*\$'
+message = "Raw SQL with variable interpolation — use parameterized queries"
+
+[[rule]]
+id = "PHP002"
+severity = "critical"
+name = "dd() left in code"
+pattern = '\bdd\s*\('
+message = "Debug dd() call left in production code"
+
+[[rule]]
+id = "PHP003"
+severity = "critical"
+name = "dump() left in code"
+pattern = '\bdump\s*\('
+message = "Debug dump() call left in production code"
+
+[[rule]]
+id = "PHP004"
+severity = "warning"
+name = "var_dump left in code"
+pattern = '\bvar_dump\s*\('
+message = "Debug var_dump() left in code"
+
+[[rule]]
+id = "PHP005"
+severity = "warning"
+name = "print_r left in code"
+pattern = '\bprint_r\s*\('
+message = "Debug print_r() left in code"
+
+[[rule]]
+id = "PHP006"
+severity = "warning"
+name = "env() outside config"
+pattern = '\benv\s*\('
+negative_file_pattern = 'config/'
+message = "env() should only be used in config files — use config() helper elsewhere"
+
+[[rule]]
+id = "PHP007"
+severity = "info"
+name = "Missing return type"
+pattern = '(public|protected|private)\s+function\s+\w+\s*\([^)]*\)\s*\{'
+negative_pattern = '(public|protected|private)\s+function\s+\w+\s*\([^)]*\)\s*:\s*\S+'
+message = "Function without return type declaration"
+
+[[rule]]
+id = "PHP008"
+severity = "warning"
+name = "Catch-all exception"
+pattern = 'catch\s*\(\s*(\\\\)?Exception\s+\$'
+message = "Catching generic Exception — use specific exception types"
+
+[[rule]]
+id = "PHP009"
+severity = "critical"
+name = "Unvalidated request input"
+pattern = '\$request\s*->\s*(input|get|post)\s*\([^)]*\)\s*(?!.*validate)'
+message = "Using raw request input — validate or sanitize first"
+
+[[rule]]
+id = "PHP010"
+severity = "warning"
+name = "Sleep in production code"
+pattern = '\bsleep\s*\(\s*\d+'
+message = "sleep() in production code — use queue/job instead"
+
+[[rule]]
+id = "PHP011"
+severity = "info"
+name = "Magic number"
+pattern = '(?<!=\s)(?<!\$)\b(?!0\b|1\b|2\b|100\b|200\b|301\b|302\b|400\b|401\b|403\b|404\b|422\b|500\b)\d{3,}\b(?!\s*[=;])'
+message = "Magic number — consider using a named constant"
+
+[[rule]]
+id = "PHP012"
+severity = "warning"
+name = "No newline at EOF"
+applies_to = "file_end"
+pattern = '\\No newline at end of file'
+message = "Missing newline at end of file (PSR-12)"

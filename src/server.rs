@@ -476,6 +476,34 @@ pub struct GetMrApprovalsParams {
     instance: Option<String>,
 }
 
+// ─── Lint params ───
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ValidateCommitParams {
+    #[schemars(description = "Project ID or path")]
+    project_id: String,
+    #[schemars(description = "Commit SHA")]
+    sha: String,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ValidateMrParams {
+    #[schemars(description = "Project ID or path")]
+    project_id: String,
+    #[schemars(description = "Merge request IID")]
+    mr_iid: u64,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListRulesParams {
+    #[schemars(description = "Language filter: PHP, Kotlin, TypeScript, Ansible (empty = all)")]
+    language: Option<String>,
+}
+
 // ─── Helpers ───
 
 /// Parse human-readable period into hours.
@@ -834,6 +862,31 @@ impl GlMcpServer {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         tool_call!(self, "get_mr_approvals",
             tools::repository::get_mr_approvals(client, &p.project_id, p.mr_iid).await
+        )
+    }
+
+    // ─── Lint ───
+
+    #[tool(description = "Validate a commit against coding rules (regex-based, zero LLM tokens). Returns only violations grouped by severity.")]
+    async fn validate_commit(&self, Parameters(p): Parameters<ValidateCommitParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "validate_commit",
+            tools::lint::validate_commit(client, &p.project_id, &p.sha).await
+        )
+    }
+
+    #[tool(description = "Validate all commits in a merge request against coding rules. Returns only violations.")]
+    async fn validate_mr(&self, Parameters(p): Parameters<ValidateMrParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "validate_mr",
+            tools::lint::validate_mr(client, &p.project_id, p.mr_iid).await
+        )
+    }
+
+    #[tool(description = "List available coding rules, optionally filtered by language.")]
+    async fn list_rules(&self, Parameters(p): Parameters<ListRulesParams>) -> Result<CallToolResult, McpError> {
+        tool_call!(self, "list_rules",
+            Ok::<String, crate::error::Error>(tools::lint::list_rules(p.language.as_deref().unwrap_or("")))
         )
     }
 }
