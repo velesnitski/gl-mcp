@@ -1,6 +1,7 @@
 //! GitLab merge request tools.
 
 use crate::client::GitLabClient;
+use crate::error::Result;
 use serde_json::Value;
 
 /// List merge requests.
@@ -12,7 +13,7 @@ pub async fn list_merge_requests(
     scope: &str,
     created_after: &str,
     per_page: u32,
-) -> Result<String, String> {
+) -> Result<String> {
     let per_page_str = per_page.to_string();
     let path = if project_id.is_empty() {
         "/merge_requests".to_string()
@@ -41,7 +42,7 @@ pub async fn list_merge_requests(
         params.push(("created_after", created_after));
     }
 
-    let mrs: Vec<Value> = client.get(&path, &params).await.map_err(|e| e.to_string())?;
+    let mrs: Vec<Value> = client.get(&path, &params).await?;
 
     if mrs.is_empty() {
         return Ok("No merge requests found.".to_string());
@@ -84,13 +85,13 @@ pub async fn get_merge_request(
     project_id: &str,
     mr_iid: u64,
     include_notes: bool,
-) -> Result<String, String> {
+) -> Result<String> {
     let path = format!(
         "/projects/{}/merge_requests/{}",
         urlencoding::encode(project_id),
         mr_iid
     );
-    let mr: Value = client.get(&path, &[]).await.map_err(|e| e.to_string())?;
+    let mr: Value = client.get(&path, &[]).await?;
 
     let title = mr["title"].as_str().unwrap_or("?");
     let state = mr["state"].as_str().unwrap_or("?");
@@ -154,7 +155,7 @@ pub async fn get_merge_request(
         let notes: Vec<Value> = client
             .get(&notes_path, &[("per_page", "50"), ("sort", "asc")])
             .await
-            .map_err(|e| e.to_string())?;
+            ?;
 
         let user_notes: Vec<&Value> = notes
             .iter()

@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 
 use crate::client::GitLabClient;
+use crate::error::{Error, Result};
 use crate::config::Config;
 
 /// Resolves which GitLab instance to use for a given request.
@@ -42,13 +43,13 @@ impl Resolver {
     /// - If `instance` is non-empty, use that instance by name.
     /// - If `identifier` contains a URL, extract domain and look up instance.
     /// - Otherwise, use the default instance.
-    pub fn resolve(&self, instance: &str, identifier: &str) -> Result<&GitLabClient, String> {
+    pub fn resolve(&self, instance: &str, identifier: &str) -> Result<&GitLabClient> {
         // 1. Explicit instance
         if !instance.is_empty() {
             return self
                 .clients
                 .get(instance)
-                .ok_or_else(|| format!("Unknown instance: {instance}"));
+                .ok_or_else(|| Error::NotFound(format!("Unknown instance: {instance}")));
         }
 
         // 2. Auto-detect from URL
@@ -67,11 +68,11 @@ impl Resolver {
         // 3. Default
         self.clients
             .get(&self.default_name)
-            .ok_or_else(|| "No default instance configured".to_string())
+            .ok_or_else(|| Error::Config("No default instance configured".into()))
     }
 
     /// Shorthand: resolve with no instance hint and no identifier.
-    pub fn default_client(&self) -> Result<&GitLabClient, String> {
+    pub fn default_client(&self) -> Result<&GitLabClient> {
         self.resolve("", "")
     }
 }
