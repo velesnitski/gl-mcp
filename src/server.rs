@@ -178,6 +178,12 @@ pub struct GetCommitDiffParams {
     max_lines_per_file: Option<usize>,
     #[schemars(description = "Skip lockfiles and generated code (default: true)")]
     skip_generated: Option<bool>,
+    #[schemars(description = "Return only file list + stats, no diff content. ~10x smaller response. Use for initial review, then drill into specific files.")]
+    summary_only: Option<bool>,
+    #[schemars(description = "Only show diff for files matching this path substring (e.g., 'AuthController.php')")]
+    file: Option<String>,
+    #[schemars(description = "Strip markdown formatting for smaller responses")]
+    compact: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
 }
@@ -192,6 +198,12 @@ pub struct GetMrChangesParams {
     max_lines_per_file: Option<usize>,
     #[schemars(description = "Skip lockfiles and generated code (default: true)")]
     skip_generated: Option<bool>,
+    #[schemars(description = "Return only file list + stats, no diff content")]
+    summary_only: Option<bool>,
+    #[schemars(description = "Only show diff for files matching this path substring")]
+    file: Option<String>,
+    #[schemars(description = "Strip markdown formatting for smaller responses")]
+    compact: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
 }
@@ -204,6 +216,26 @@ pub struct GetFileContentParams {
     file_path: String,
     #[schemars(description = "Branch, tag, or commit SHA (default: default branch)")]
     ref_name: Option<String>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetUserActivityParams {
+    #[schemars(description = "GitLab username")]
+    username: String,
+    #[schemars(description = "Look back N hours (default: 24)")]
+    hours: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListGroupProjectsParams {
+    #[schemars(description = "Group path (e.g., 'example-org/software')")]
+    group_path: String,
+    #[schemars(description = "Max results (default: 50)")]
+    per_page: Option<u32>,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
 }
@@ -365,26 +397,32 @@ impl GlMcpServer {
         }
     }
 
-    #[tool(description = "Get the diff of a commit with smart filtering: skips lockfiles/generated code, groups by language, truncates large diffs. Use for code review.")]
+    #[tool(description = "Get the diff of a commit with smart filtering. Use summary_only=true first for overview (~10x smaller), then drill into specific files with file= parameter.")]
     async fn get_commit_diff(&self, Parameters(p): Parameters<GetCommitDiffParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         match tools::commits::get_commit_diff(
             client, &p.project_id, &p.sha,
             p.max_lines_per_file.unwrap_or(200),
             p.skip_generated.unwrap_or(true),
+            p.summary_only.unwrap_or(false),
+            p.file.as_deref().unwrap_or(""),
+            p.compact.unwrap_or(false),
         ).await {
             Ok(text) => tool_ok(text),
             Err(e) => tool_err(e),
         }
     }
 
-    #[tool(description = "Get all changes in a merge request as a unified diff, grouped by language. Use for MR code review.")]
+    #[tool(description = "Get all changes in a merge request. Use summary_only=true first, then file= for specific files. Grouped by language.")]
     async fn get_mr_changes(&self, Parameters(p): Parameters<GetMrChangesParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         match tools::commits::get_mr_changes(
             client, &p.project_id, p.mr_iid,
             p.max_lines_per_file.unwrap_or(200),
             p.skip_generated.unwrap_or(true),
+            p.summary_only.unwrap_or(false),
+            p.file.as_deref().unwrap_or(""),
+            p.compact.unwrap_or(false),
         ).await {
             Ok(text) => tool_ok(text),
             Err(e) => tool_err(e),
@@ -397,6 +435,28 @@ impl GlMcpServer {
         match tools::commits::get_file_content(
             client, &p.project_id, &p.file_path,
             p.ref_name.as_deref().unwrap_or("HEAD"),
+        ).await {
+            Ok(text) => tool_ok(text),
+            Err(e) => tool_err(e),
+        }
+    }
+
+    #[tool(description = "Get developer activity: commits, MRs opened/merged/approved for the last N hours. Mirrors youtrack-reports dev metrics.")]
+    async fn get_user_activity(&self, Parameters(p): Parameters<GetUserActivityParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        match tools::commits::get_user_activity(
+            client, &p.username, p.hours.unwrap_or(24),
+        ).await {
+            Ok(text) => tool_ok(text),
+            Err(e) => tool_err(e),
+        }
+    }
+
+    #[tool(description = "List all projects in a GitLab group (including subgroups). Use to expand team paths like 'backend/*'.")]
+    async fn list_group_projects(&self, Parameters(p): Parameters<ListGroupProjectsParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        match tools::commits::list_group_projects(
+            client, &p.group_path, p.per_page.unwrap_or(50),
         ).await {
             Ok(text) => tool_ok(text),
             Err(e) => tool_err(e),
