@@ -206,3 +206,93 @@ pub async fn create_issue(
 
     Ok(format!("Created: **#{iid}** — {title}\n**URL:** {web_url}"))
 }
+
+/// Update an issue.
+pub async fn update_issue(
+    client: &GitLabClient,
+    project_id: &str,
+    issue_iid: u64,
+    title: Option<&str>,
+    description: Option<&str>,
+    state_event: Option<&str>,
+    labels: Option<&str>,
+    assignee: Option<&str>,
+) -> Result<String, String> {
+    let path = format!(
+        "/projects/{}/issues/{}",
+        urlencoding::encode(project_id),
+        issue_iid
+    );
+
+    let mut body = serde_json::json!({});
+    if let Some(t) = title {
+        body["title"] = Value::String(t.to_string());
+    }
+    if let Some(d) = description {
+        body["description"] = Value::String(d.to_string());
+    }
+    if let Some(s) = state_event {
+        body["state_event"] = Value::String(s.to_string());
+    }
+    if let Some(l) = labels {
+        body["labels"] = Value::String(l.to_string());
+    }
+    if let Some(a) = assignee {
+        if a.is_empty() {
+            body["assignee_ids"] = serde_json::json!([]);
+        } else {
+            let users: Vec<Value> = client
+                .get("/users", &[("username", a)])
+                .await
+                .map_err(|e| e.to_string())?;
+            if let Some(user) = users.first() {
+                if let Some(id) = user["id"].as_u64() {
+                    body["assignee_ids"] = serde_json::json!([id]);
+                }
+            }
+        }
+    }
+
+    let issue: Value = client
+        .put(&path, &body)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let state = issue["state"].as_str().unwrap_or("?");
+    let web_url = issue["web_url"].as_str().unwrap_or("");
+    Ok(format!(
+        "Updated: **#{issue_iid}** [{state}]\n**URL:** {web_url}"
+    ))
+}
+
+/// Add a note (comment) to an issue or merge request.
+pub async fn add_note(
+    client: &GitLabClient,
+    project_id: &str,
+    iid: u64,
+    note_type: &str,
+    body: &str,
+) -> Result<String, String> {
+    let kind = if note_type == "mr" {
+        "merge_requests"
+    } else {
+        "issues"
+    };
+    let path = format!(
+        "/projects/{}/{}/{}/notes",
+        urlencoding::encode(project_id),
+        kind,
+        iid
+    );
+
+    let note: Value = client
+        .post(&path, &serde_json::json!({ "body": body }))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let note_id = note["id"].as_u64().unwrap_or(0);
+    let symbol = if note_type == "mr" { "!" } else { "#" };
+    Ok(format!(
+        "Comment added to **{symbol}{iid}** (note id: {note_id})"
+    ))
+}
