@@ -1,0 +1,38 @@
+# Global rules — apply to all languages
+
+[[rule]]
+id = "G001"
+severity = "warning"
+name = "Non-descriptive commit message"
+applies_to = "commit_message"
+pattern = '^(fix|update|changes|wip|test|tmp|asdf|todo)$'
+message = "Commit message too vague — describe what changed and why"
+
+[[rule]]
+id = "G002"
+severity = "critical"
+name = "Possible hardcoded secret"
+pattern = '(?i)(password|secret|api_key|apikey|token|private_key)\s*[=:]\s*["\x27][A-Za-z0-9+/=_-]{8,}'
+message = "Possible hardcoded credential — use environment variables"
+
+[[rule]]
+id = "G003"
+severity = "warning"
+name = "TODO without ticket"
+pattern = '(?i)(TODO|FIXME|HACK|XXX)(?!.*\b[A-Z]+-\d+)'
+message = "TODO/FIXME without issue reference — add ticket ID"
+
+[[rule]]
+id = "G004"
+severity = "info"
+name = "Large file change"
+applies_to = "file_stats"
+max_additions = 500
+message = "Large change (>500 lines) — consider splitting into smaller commits"
+
+[[rule]]
+id = "G005"
+severity = "warning"
+name = "Debug output left in code"
+pattern = '(?i)\b(console\.log|var_dump|print_r|dd\(|puts |p\b |binding\.pry|debugger|System\.out\.print)'
+message = "Debug output left in code"

@@ -1,0 +1,59 @@
+# Kotlin / Android rules
+
+[[rule]]
+id = "KT001"
+severity = "warning"
+name = "println left in code"
+pattern = '\bprintln\s*\('
+message = "println() left in code — use Logger/Timber"
+
+[[rule]]
+id = "KT002"
+severity = "critical"
+name = "Log.d/v in release"
+pattern = '\bLog\.(d|v)\s*\('
+message = "Debug/verbose log in production — use Timber or remove"
+
+[[rule]]
+id = "KT003"
+severity = "warning"
+name = "Force unwrap (!!) usage"
+pattern = '!!'
+message = "Force unwrap (!!) — handle null safely with ?.let or ?:"
+
+[[rule]]
+id = "KT004"
+severity = "warning"
+name = "Hardcoded string in UI"
+pattern = '(?i)text\s*=\s*"[A-Za-z]{3,}'
+negative_pattern = 'stringResource|getString|AppString'
+message = "Hardcoded UI string — use string resources for localization"
+
+[[rule]]
+id = "KT005"
+severity = "info"
+name = "TODO in code"
+pattern = '//\s*TODO'
+message = "TODO comment — track in issue tracker"
+
+[[rule]]
+id = "KT006"
+severity = "warning"
+name = "Thread.sleep in coroutine"
+pattern = 'Thread\.sleep'
+message = "Thread.sleep blocks thread — use delay() in coroutines"
+
+[[rule]]
+id = "KT007"
+severity = "warning"
+name = "GlobalScope usage"
+pattern = '\bGlobalScope\b'
+message = "GlobalScope can leak coroutines — use viewModelScope or lifecycleScope"
+
+[[rule]]
+id = "KT008"
+severity = "info"
+name = "Large composable function"
+applies_to = "file_stats"
+max_additions = 200
+message = "Large composable — consider splitting into smaller components"
