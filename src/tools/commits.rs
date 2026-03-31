@@ -381,15 +381,15 @@ pub async fn get_commit_diff(
 
     let mut parts = if compact {
         vec![
-            format!("{sha}|{author}|{date}"),
+            format!("{project_id}|{sha}|{author}|{date}"),
             message.to_string(),
             format!("+{stats_add}|-{stats_del}|{}f", diffs.len()),
             String::new(),
         ]
     } else {
         vec![
-            format!("## Commit `{sha}` by {author}"),
-            format!("**Date:** {date}"),
+            format!("## Commit `{sha}` in {project_id}"),
+            format!("**Author:** {author} | **Date:** {date}"),
             format!("**Message:** {message}"),
             format!("**Stats:** +{stats_add} -{stats_del} in {} files", diffs.len()),
             String::new(),
@@ -440,13 +440,13 @@ pub async fn get_mr_changes(
 
     let mut parts = if compact {
         vec![
-            format!("!{mr_iid}|{title}|{state}"),
+            format!("{project_id}|!{mr_iid}|{title}|{state}"),
             format!("{author}|{source}→{target}|{}f", changes.len()),
             String::new(),
         ]
     } else {
         vec![
-            format!("## MR !{mr_iid}: {title}"),
+            format!("## {project_id} !{mr_iid}: {title}"),
             format!("**Author:** @{author} | **State:** {state}"),
             format!("**Branch:** {source} → {target}"),
             format!("**Files changed:** {}", changes.len()),
