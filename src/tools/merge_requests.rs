@@ -63,8 +63,11 @@ pub async fn list_merge_requests(
             ""
         };
 
+        let created = mr["created_at"].as_str().unwrap_or("?");
+        let created_short = if created.len() > 10 { &created[..10] } else { created };
+
         lines.push(format!(
-            "- **{project}** [{state}]{draft} {title} ({source} → {target}) by @{author}"
+            "- **{project}** [{state}]{draft} {title} ({source} → {target}) by @{author} ({created_short})"
         ));
     }
 
