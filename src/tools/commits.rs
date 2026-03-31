@@ -28,6 +28,9 @@ pub fn detect_language(path: &str) -> &str {
     match path.rsplit('.').next() {
         Some("php") => "PHP",
         Some("go") => "Go",
+        Some("kt" | "kts") => "Kotlin",
+        Some("java") => "Java",
+        Some("swift") => "Swift",
         Some("ts" | "tsx") => "TypeScript",
         Some("js" | "jsx") => "JavaScript",
         Some("yml" | "yaml") => "YAML/Ansible",
@@ -43,6 +46,7 @@ pub fn detect_language(path: &str) -> &str {
         Some("toml") => "TOML",
         Some("xml") => "XML",
         Some("md") => "Markdown",
+        Some("gradle") => "Gradle",
         _ if path.contains("Dockerfile") => "Docker",
         _ if path.contains("Makefile") => "Make",
         _ if path.contains(".github/") || path.contains(".gitlab-ci") => "CI/CD",
@@ -507,11 +511,12 @@ pub async fn get_user_activity(
     let user_id = user["id"].as_u64().ok_or("User has no ID")?;
     let display_name = user["name"].as_str().unwrap_or(username);
 
-    // Calculate since date
+    // Calculate since timestamp
     let since = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
-    let since_str = since.format("%Y-%m-%d").to_string();
+    let since_ts = since.timestamp();
 
-    // Fetch events (paginated)
+    // Fetch events (paginated) — no date filter, filter client-side
+    // Self-hosted GitLab may not support `after` param reliably
     let mut all_events: Vec<Value> = Vec::new();
     let mut page = 1u32;
     loop {
@@ -519,7 +524,7 @@ pub async fn get_user_activity(
         let events: Vec<Value> = client
             .get(
                 &format!("/users/{user_id}/events"),
-                &[("after", &since_str), ("per_page", "100"), ("page", &page_str)],
+                &[("per_page", "100"), ("page", &page_str), ("sort", "desc")],
             )
             .await
             .map_err(|e| e.to_string())?;
@@ -527,15 +532,26 @@ pub async fn get_user_activity(
         if events.is_empty() {
             break;
         }
+
+        // Check if oldest event in this page is still within our window
+        let oldest_in_window = events.iter().any(|e| {
+            e["created_at"]
+                .as_str()
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|dt| dt.timestamp() >= since_ts)
+                .unwrap_or(false)
+        });
+
         all_events.extend(events);
         page += 1;
-        if page > 5 {
-            break; // Safety limit
+
+        // Stop if we've gone past our time window or hit safety limit
+        if !oldest_in_window || page > 10 {
+            break;
         }
     }
 
     // Filter to exact time window
-    let since_ts = since.timestamp();
     let filtered: Vec<&Value> = all_events
         .iter()
         .filter(|e| {
