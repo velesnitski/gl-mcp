@@ -9,21 +9,13 @@ pub mod pipelines;
 pub mod commits;
 
 /// Tools that modify data — blocked in read-only mode.
+/// Tools that modify data — blocked in read-only mode.
 pub const WRITE_TOOLS: &[&str] = &[
-    "create_project",
     "create_issue",
     "update_issue",
-    "close_issue",
-    "create_merge_request",
-    "update_merge_request",
-    "merge_merge_request",
-    "add_issue_note",
-    "add_mr_note",
+    "add_note",
     "retry_pipeline",
     "cancel_pipeline",
-    "create_branch",
-    "delete_branch",
-    "create_tag",
 ];
 
 /// Check if a tool should be available given config.

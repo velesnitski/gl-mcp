@@ -147,3 +147,94 @@ pub async fn get_pipeline(
 
     Ok(parts.join("\n"))
 }
+
+/// Get CI job log (trace).
+pub async fn get_job_log(
+    client: &GitLabClient,
+    project_id: &str,
+    job_id: u64,
+    tail: usize,
+) -> Result<String, String> {
+    let encoded = urlencoding::encode(project_id);
+
+    // Get job metadata first
+    let job: serde_json::Value = client
+        .get(&format!("/projects/{encoded}/jobs/{job_id}"), &[])
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let name = job["name"].as_str().unwrap_or("?");
+    let status = job["status"].as_str().unwrap_or("?");
+    let stage = job["stage"].as_str().unwrap_or("?");
+    let duration = job["duration"].as_f64().unwrap_or(0.0);
+
+    // Get log text (plain text, not JSON)
+    let log_url = format!("{}/api/v4/projects/{encoded}/jobs/{job_id}/trace", "");
+    // Use get_json which returns Value, but trace returns plain text
+    // We need raw text — use the client's get method differently
+    let log_text: String = client
+        .get(&format!("/projects/{encoded}/jobs/{job_id}/trace"), &[])
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Tail: take last N lines
+    let lines: Vec<&str> = log_text.lines().collect();
+    let start = if lines.len() > tail { lines.len() - tail } else { 0 };
+    let tail_lines = &lines[start..];
+
+    let mut parts = vec![
+        format!("## Job #{job_id}: {name}"),
+        format!("**Stage:** {stage} | **Status:** {status} | **Duration:** {duration:.0}s"),
+    ];
+
+    if start > 0 {
+        parts.push(format!("*...{start} lines skipped, showing last {tail}*"));
+    }
+    parts.push(String::new());
+    parts.push("```".to_string());
+    parts.push(tail_lines.join("\n"));
+    parts.push("```".to_string());
+
+    Ok(parts.join("\n"))
+}
+
+/// Retry a pipeline.
+pub async fn retry_pipeline(
+    client: &GitLabClient,
+    project_id: &str,
+    pipeline_id: u64,
+) -> Result<String, String> {
+    let encoded = urlencoding::encode(project_id);
+    let p: serde_json::Value = client
+        .post(
+            &format!("/projects/{encoded}/pipelines/{pipeline_id}/retry"),
+            &serde_json::json!({}),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let status = p["status"].as_str().unwrap_or("?");
+    let web_url = p["web_url"].as_str().unwrap_or("");
+    Ok(format!(
+        "Pipeline #{pipeline_id} retried. **Status:** {status}\n**URL:** {web_url}"
+    ))
+}
+
+/// Cancel a pipeline.
+pub async fn cancel_pipeline(
+    client: &GitLabClient,
+    project_id: &str,
+    pipeline_id: u64,
+) -> Result<String, String> {
+    let encoded = urlencoding::encode(project_id);
+    let p: serde_json::Value = client
+        .post(
+            &format!("/projects/{encoded}/pipelines/{pipeline_id}/cancel"),
+            &serde_json::json!({}),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let status = p["status"].as_str().unwrap_or("?");
+    Ok(format!("Pipeline #{pipeline_id} canceled. **Status:** {status}"))
+}

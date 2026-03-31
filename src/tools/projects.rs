@@ -139,3 +139,61 @@ pub async fn list_members(
 
     Ok(lines.join("\n"))
 }
+
+/// List branches for a project.
+pub async fn list_branches(
+    client: &GitLabClient,
+    project_id: &str,
+    search: &str,
+    per_page: u32,
+) -> Result<String, String> {
+    let per_page_str = per_page.to_string();
+    let path = format!(
+        "/projects/{}/repository/branches",
+        urlencoding::encode(project_id)
+    );
+
+    let mut params: Vec<(&str, &str)> = vec![
+        ("per_page", &per_page_str),
+        ("order_by", "updated"),
+        ("sort", "desc"),
+    ];
+    if !search.is_empty() {
+        params.push(("search", search));
+    }
+
+    let branches: Vec<Value> = client
+        .get(&path, &params)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if branches.is_empty() {
+        return Ok("No branches found.".to_string());
+    }
+
+    let mut lines = vec![format!("**Branches: {}**\n", branches.len())];
+    for b in &branches {
+        let name = b["name"].as_str().unwrap_or("?");
+        let is_default = b["default"].as_bool().unwrap_or(false);
+        let is_protected = b["protected"].as_bool().unwrap_or(false);
+        let author = b["commit"]["author_name"].as_str().unwrap_or("?");
+        let date = b["commit"]["created_at"].as_str().unwrap_or("?");
+        let date_short = if date.len() > 10 { &date[..10] } else { date };
+        let message = b["commit"]["title"].as_str().unwrap_or("");
+
+        let mut flags = Vec::new();
+        if is_default { flags.push("default"); }
+        if is_protected { flags.push("protected"); }
+        let flag_str = if flags.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", flags.join(", "))
+        };
+
+        lines.push(format!(
+            "- **{name}**{flag_str} — {message} (@{author}, {date_short})"
+        ));
+    }
+
+    Ok(lines.join("\n"))
+}
