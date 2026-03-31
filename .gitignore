@@ -1,0 +1,7 @@
+/target
+*.log
+.env
+.mcp.json
+.claude/
+~/.gl-mcp/
+*.DS_Store
