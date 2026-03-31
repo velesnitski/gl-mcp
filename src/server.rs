@@ -1,5 +1,59 @@
 //! MCP server handler — wires GitLab tools to rmcp.
 
+// Flexible number deserializer: accepts both "20" and 20 from JSON.
+// MCP clients sometimes send numbers as strings.
+mod flex {
+    use serde::{self, Deserialize, Deserializer};
+
+    pub fn deserialize_opt_u32<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+    where D: Deserializer<'de> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum StringOrNum {
+            Str(String),
+            Num(u32),
+        }
+        let v = Option::<StringOrNum>::deserialize(deserializer)?;
+        Ok(match v {
+            Some(StringOrNum::Num(n)) => Some(n),
+            Some(StringOrNum::Str(s)) => s.parse().ok(),
+            None => None,
+        })
+    }
+
+    pub fn deserialize_opt_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+    where D: Deserializer<'de> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum StringOrNum {
+            Str(String),
+            Num(u64),
+        }
+        let v = Option::<StringOrNum>::deserialize(deserializer)?;
+        Ok(match v {
+            Some(StringOrNum::Num(n)) => Some(n),
+            Some(StringOrNum::Str(s)) => s.parse().ok(),
+            None => None,
+        })
+    }
+
+    pub fn deserialize_opt_usize<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
+    where D: Deserializer<'de> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum StringOrNum {
+            Str(String),
+            Num(usize),
+        }
+        let v = Option::<StringOrNum>::deserialize(deserializer)?;
+        Ok(match v {
+            Some(StringOrNum::Num(n)) => Some(n),
+            Some(StringOrNum::Str(s)) => s.parse().ok(),
+            None => None,
+        })
+    }
+}
+
 use rmcp::{
     handler::server::wrapper::Parameters,
     model::{
@@ -33,6 +87,7 @@ pub struct ListProjectsParams {
     #[schemars(description = "Search query to filter projects")]
     search: Option<String>,
     #[schemars(description = "Max results (default: 20)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     per_page: Option<u32>,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
@@ -67,6 +122,7 @@ pub struct SearchIssuesParams {
     #[schemars(description = "Filter by assignee username")]
     assignee: Option<String>,
     #[schemars(description = "Max results (default: 20)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     per_page: Option<u32>,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
@@ -140,9 +196,14 @@ pub struct ListMergeRequestsParams {
     project_id: Option<String>,
     #[schemars(description = "Filter by state: opened, closed, merged, all (default: opened)")]
     state: Option<String>,
+    #[schemars(description = "Filter by author username")]
+    author: Option<String>,
     #[schemars(description = "Scope: assigned_to_me, created_by_me, all (default: all)")]
     scope: Option<String>,
+    #[schemars(description = "Only MRs created after this date (ISO, e.g., '2026-03-01')")]
+    created_after: Option<String>,
     #[schemars(description = "Max results (default: 20)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     per_page: Option<u32>,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
@@ -169,6 +230,7 @@ pub struct ListPipelinesParams {
     #[schemars(description = "Filter by git ref (branch/tag)")]
     ref_name: Option<String>,
     #[schemars(description = "Max results (default: 20)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     per_page: Option<u32>,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
@@ -191,6 +253,7 @@ pub struct GetJobLogParams {
     #[schemars(description = "Job ID")]
     job_id: u64,
     #[schemars(description = "Max lines from end of log (default: 100)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_usize")]
     tail: Option<usize>,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
@@ -223,6 +286,7 @@ pub struct ListBranchesParams {
     #[schemars(description = "Search branch name")]
     search: Option<String>,
     #[schemars(description = "Max results (default: 20)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     per_page: Option<u32>,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
@@ -241,6 +305,7 @@ pub struct ListCommitsParams {
     #[schemars(description = "ISO date: commits before this date")]
     until: Option<String>,
     #[schemars(description = "Max results (default: 20)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     per_page: Option<u32>,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
@@ -253,6 +318,7 @@ pub struct GetCommitDiffParams {
     #[schemars(description = "Commit SHA (full or short)")]
     sha: String,
     #[schemars(description = "Max diff lines per file (default: 200)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_usize")]
     max_lines_per_file: Option<usize>,
     #[schemars(description = "Skip lockfiles and generated code (default: true)")]
     skip_generated: Option<bool>,
@@ -273,6 +339,7 @@ pub struct GetMrChangesParams {
     #[schemars(description = "Merge request IID")]
     mr_iid: u64,
     #[schemars(description = "Max diff lines per file (default: 200)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_usize")]
     max_lines_per_file: Option<usize>,
     #[schemars(description = "Skip lockfiles and generated code (default: true)")]
     skip_generated: Option<bool>,
@@ -302,8 +369,20 @@ pub struct GetFileContentParams {
 pub struct GetUserActivityParams {
     #[schemars(description = "GitLab username")]
     username: String,
-    #[schemars(description = "Look back N hours (default: 24)")]
-    hours: Option<u32>,
+    #[schemars(description = "Period: 'today', 'yesterday', 'week' (since Monday), '3d', or hours as number (default: 24)")]
+    period: Option<String>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GenerateDevReportParams {
+    #[schemars(description = "GitLab username")]
+    username: String,
+    #[schemars(description = "Period: 'today', 'yesterday', 'week', '3d', or hours (default: today)")]
+    period: Option<String>,
+    #[schemars(description = "Filter to specific project path substring (optional)")]
+    project: Option<String>,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
 }
@@ -313,12 +392,125 @@ pub struct ListGroupProjectsParams {
     #[schemars(description = "Group path (e.g., 'example-org/software')")]
     group_path: String,
     #[schemars(description = "Max results (default: 50)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     per_page: Option<u32>,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
 }
 
+// ─── Repository params ───
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SearchCodeParams {
+    #[schemars(description = "Project ID or path")]
+    project_id: String,
+    #[schemars(description = "Search query (regex supported)")]
+    query: String,
+    #[schemars(description = "Branch/tag to search in (optional)")]
+    ref_name: Option<String>,
+    #[schemars(description = "Max results (default: 20)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    per_page: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetLanguagesParams {
+    #[schemars(description = "Project ID or path")]
+    project_id: String,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetTreeParams {
+    #[schemars(description = "Project ID or path")]
+    project_id: String,
+    #[schemars(description = "Directory path (empty = root)")]
+    path: Option<String>,
+    #[schemars(description = "Branch/tag/SHA (optional)")]
+    ref_name: Option<String>,
+    #[schemars(description = "Include subdirectories recursively (default: false)")]
+    recursive: Option<bool>,
+    #[schemars(description = "Max results (default: 100)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    per_page: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CompareBranchesParams {
+    #[schemars(description = "Project ID or path")]
+    project_id: String,
+    #[schemars(description = "Base branch/tag/SHA")]
+    from: String,
+    #[schemars(description = "Head branch/tag/SHA")]
+    to: String,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListTagsParams {
+    #[schemars(description = "Project ID or path")]
+    project_id: String,
+    #[schemars(description = "Search tag name")]
+    search: Option<String>,
+    #[schemars(description = "Max results (default: 20)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    per_page: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetMrApprovalsParams {
+    #[schemars(description = "Project ID or path")]
+    project_id: String,
+    #[schemars(description = "Merge request IID")]
+    mr_iid: u64,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
 // ─── Helpers ───
+
+/// Parse human-readable period into hours.
+fn parse_period(period: &str) -> u32 {
+    let p = period.trim().to_lowercase();
+    match p.as_str() {
+        "today" => {
+            let now = chrono::Utc::now();
+            let midnight = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
+            let diff = now.naive_utc() - midnight;
+            diff.num_hours().max(1) as u32
+        }
+        "yesterday" => {
+            let now = chrono::Utc::now();
+            let yesterday_midnight = (now - chrono::Duration::days(1)).date_naive().and_hms_opt(0, 0, 0).unwrap();
+            let diff = now.naive_utc() - yesterday_midnight;
+            diff.num_hours().max(1) as u32
+        }
+        "week" => {
+            let now = chrono::Utc::now();
+            use chrono::Datelike;
+            let weekday = now.weekday().num_days_from_monday();
+            let monday = now - chrono::Duration::days(weekday as i64);
+            let monday_midnight = monday.date_naive().and_hms_opt(0, 0, 0).unwrap();
+            let diff = now.naive_utc() - monday_midnight;
+            diff.num_hours().max(1) as u32
+        }
+        _ if p.ends_with('d') => {
+            p.trim_end_matches('d').parse::<u32>().unwrap_or(1) * 24
+        }
+        _ if p.ends_with('h') => {
+            p.trim_end_matches('h').parse::<u32>().unwrap_or(24)
+        }
+        _ => p.parse::<u32>().unwrap_or(24),
+    }
+}
 
 fn resolve_client<'a>(resolver: &'a Resolver, instance: &Option<String>, id: &str) -> Result<&'a GitLabClient, McpError> {
     resolver
@@ -469,11 +661,11 @@ impl GlMcpServer {
 
     // ─── Merge Requests ───
 
-    #[tool(description = "List merge requests across all projects or within a specific project")]
+    #[tool(description = "List merge requests. Filter by project, state, author, scope, created_after.")]
     async fn list_merge_requests(&self, Parameters(p): Parameters<ListMergeRequestsParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         tool_call!(self, "list_merge_requests",
-            tools::merge_requests::list_merge_requests(client, p.project_id.as_deref().unwrap_or(""), p.state.as_deref().unwrap_or("opened"), p.scope.as_deref().unwrap_or("all"), p.per_page.unwrap_or(20)).await
+            tools::merge_requests::list_merge_requests(client, p.project_id.as_deref().unwrap_or(""), p.state.as_deref().unwrap_or("opened"), p.author.as_deref().unwrap_or(""), p.scope.as_deref().unwrap_or("all"), p.created_after.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
         )
     }
 
@@ -575,11 +767,71 @@ impl GlMcpServer {
         )
     }
 
-    #[tool(description = "Get developer activity: commits, MRs opened/merged/approved for the last N hours")]
+    #[tool(description = "Get developer daily activity across all projects: commits, MRs, grouped by day and project. Use period='today', 'yesterday', 'week', '3d', or hours.")]
     async fn get_user_activity(&self, Parameters(p): Parameters<GetUserActivityParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
+        let hours = parse_period(p.period.as_deref().unwrap_or("24"));
         tool_call!(self, "get_user_activity",
-            tools::commits::get_user_activity(client, &p.username, p.hours.unwrap_or(24)).await
+            tools::commits::get_user_activity(client, &p.username, hours).await
+        )
+    }
+
+    #[tool(description = "Generate a complete HTML daily report for a developer. Returns full HTML with dark theme, commits, diffs, open MRs, and quality notes. Save to file and open in browser.")]
+    async fn generate_dev_report(&self, Parameters(p): Parameters<GenerateDevReportParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        let hours = parse_period(p.period.as_deref().unwrap_or("today"));
+        tool_call!(self, "generate_dev_report",
+            tools::reports::generate_dev_report(client, &p.username, hours, p.project.as_deref().unwrap_or("")).await
+        )
+    }
+
+    // ─── Repository ───
+
+    #[tool(description = "Search code in a project. Returns matching file paths, line numbers, and code snippets.")]
+    async fn search_code(&self, Parameters(p): Parameters<SearchCodeParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "search_code",
+            tools::repository::search_code(client, &p.project_id, &p.query, p.ref_name.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
+        )
+    }
+
+    #[tool(description = "Get project language breakdown (e.g., PHP 80%, Go 15%).")]
+    async fn get_languages(&self, Parameters(p): Parameters<GetLanguagesParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "get_languages",
+            tools::repository::get_languages(client, &p.project_id).await
+        )
+    }
+
+    #[tool(description = "Get repository directory listing. Use recursive=true for full tree.")]
+    async fn get_tree(&self, Parameters(p): Parameters<GetTreeParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "get_tree",
+            tools::repository::get_tree(client, &p.project_id, p.path.as_deref().unwrap_or(""), p.ref_name.as_deref().unwrap_or(""), p.recursive.unwrap_or(false), p.per_page.unwrap_or(100)).await
+        )
+    }
+
+    #[tool(description = "Compare two branches/tags/SHAs. Shows commits and changed files between them.")]
+    async fn compare_branches(&self, Parameters(p): Parameters<CompareBranchesParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "compare_branches",
+            tools::repository::compare_branches(client, &p.project_id, &p.from, &p.to).await
+        )
+    }
+
+    #[tool(description = "List tags (releases) for a project.")]
+    async fn list_tags(&self, Parameters(p): Parameters<ListTagsParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "list_tags",
+            tools::repository::list_tags(client, &p.project_id, p.search.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
+        )
+    }
+
+    #[tool(description = "Get merge request approval status: who approved, how many remaining.")]
+    async fn get_mr_approvals(&self, Parameters(p): Parameters<GetMrApprovalsParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        tool_call!(self, "get_mr_approvals",
+            tools::repository::get_mr_approvals(client, &p.project_id, p.mr_iid).await
         )
     }
 }
