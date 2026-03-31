@@ -5,6 +5,7 @@
 
 mod client;
 mod config;
+mod error;
 mod logging;
 mod resolver;
 mod server;

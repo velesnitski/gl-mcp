@@ -13,6 +13,7 @@
 //!   GITLAB_COMPACT      — strip markdown for token savings (true/1/yes)
 
 use std::collections::HashMap;
+use crate::error::{Error, Result};
 use std::env;
 
 /// Single GitLab instance configuration (immutable after creation).
@@ -38,7 +39,7 @@ fn is_truthy(val: &str) -> bool {
 
 impl Config {
     /// Load configuration from environment variables.
-    pub fn from_env() -> Result<Self, String> {
+    pub fn from_env() -> Result<Self> {
         let read_only = env::var("GITLAB_READ_ONLY")
             .map(|v| is_truthy(&v))
             .unwrap_or(false);
@@ -63,9 +64,9 @@ impl Config {
                 }
                 let upper = name.to_uppercase();
                 let url = env::var(format!("GITLAB_{upper}_URL"))
-                    .map_err(|_| format!("GITLAB_{upper}_URL not set"))?;
+                    .map_err(|_| Error::Config(format!("GITLAB_{upper}_URL not set")))?;
                 let token = env::var(format!("GITLAB_{upper}_TOKEN"))
-                    .map_err(|_| format!("GITLAB_{upper}_TOKEN not set"))?;
+                    .map_err(|_| Error::Config(format!("GITLAB_{upper}_TOKEN not set")))?;
 
                 validate_url(&url)?;
                 result.push(GitLabInstance {
@@ -75,15 +76,15 @@ impl Config {
                 });
             }
             if result.is_empty() {
-                return Err("GITLAB_INSTANCES is set but no valid instances configured".into());
+                return Err(Error::Config("GITLAB_INSTANCES is set but no valid instances configured".into()));
             }
             result
         } else {
             // Single instance mode
             let url = env::var("GITLAB_URL")
-                .map_err(|_| "GITLAB_URL not set")?;
+                .map_err(|_| Error::Config("GITLAB_URL not set".into()))?;
             let token = env::var("GITLAB_TOKEN")
-                .map_err(|_| "GITLAB_TOKEN not set")?;
+                .map_err(|_| Error::Config("GITLAB_TOKEN not set".into()))?;
 
             validate_url(&url)?;
             vec![GitLabInstance {
@@ -115,7 +116,7 @@ impl Config {
     }
 }
 
-fn validate_url(url: &str) -> Result<(), String> {
+fn validate_url(url: &str) -> Result<()> {
     if url.starts_with("https://") {
         return Ok(());
     }
@@ -125,7 +126,7 @@ fn validate_url(url: &str) -> Result<(), String> {
     if env::var("GITLAB_ALLOW_HTTP").map(|v| is_truthy(&v)).unwrap_or(false) {
         return Ok(());
     }
-    Err(format!(
+    Err(Error::Config(format!(
         "URL must use HTTPS: {url}. Set GITLAB_ALLOW_HTTP=1 to allow HTTP."
-    ))
+    )))
 }
