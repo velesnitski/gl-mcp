@@ -340,6 +340,22 @@ fn strip_markdown(text: &str) -> String {
     out
 }
 
+/// Guard: block write tools in read-only mode.
+macro_rules! write_guard {
+    ($self:expr, $name:literal) => {
+        if $self.config.read_only && crate::tools::WRITE_TOOLS.contains(&$name) {
+            return Ok(CallToolResult::error(vec![Content::text(
+                format!("Tool '{}' is disabled in read-only mode (GITLAB_READ_ONLY=1)", $name)
+            )]));
+        }
+        if !crate::tools::is_tool_enabled($name, false, &$self.config.disabled_tools) {
+            return Ok(CallToolResult::error(vec![Content::text(
+                format!("Tool '{}' is disabled via DISABLED_TOOLS", $name)
+            )]));
+        }
+    };
+}
+
 /// Tool call wrapper: handles compact mode + analytics logging.
 macro_rules! tool_call {
     ($self:expr, $name:literal, $body:expr) => {{
@@ -425,6 +441,7 @@ impl GlMcpServer {
 
     #[tool(description = "Create a new issue in a GitLab project")]
     async fn create_issue(&self, Parameters(p): Parameters<CreateIssueParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "create_issue");
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         tool_call!(self, "create_issue",
             tools::issues::create_issue(client, &p.project_id, &p.title, p.description.as_deref().unwrap_or(""), p.labels.as_deref().unwrap_or(""), p.assignee.as_deref().unwrap_or(""), None).await
@@ -433,6 +450,7 @@ impl GlMcpServer {
 
     #[tool(description = "Update a GitLab issue: title, description, state, labels, assignee")]
     async fn update_issue(&self, Parameters(p): Parameters<UpdateIssueParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "update_issue");
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         tool_call!(self, "update_issue",
             tools::issues::update_issue(client, &p.project_id, p.issue_iid, p.title.as_deref(), p.description.as_deref(), p.state_event.as_deref(), p.labels.as_deref(), p.assignee.as_deref()).await
@@ -441,6 +459,7 @@ impl GlMcpServer {
 
     #[tool(description = "Add a comment (note) to an issue or merge request")]
     async fn add_note(&self, Parameters(p): Parameters<AddNoteParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "add_note");
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         let note_type = p.note_type.as_deref().unwrap_or("issue");
         tool_call!(self, "add_note",
@@ -494,6 +513,7 @@ impl GlMcpServer {
 
     #[tool(description = "Retry a failed pipeline")]
     async fn retry_pipeline(&self, Parameters(p): Parameters<RetryPipelineParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "retry_pipeline");
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         tool_call!(self, "retry_pipeline",
             tools::pipelines::retry_pipeline(client, &p.project_id, p.pipeline_id).await
@@ -502,6 +522,7 @@ impl GlMcpServer {
 
     #[tool(description = "Cancel a running pipeline")]
     async fn cancel_pipeline(&self, Parameters(p): Parameters<CancelPipelineParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "cancel_pipeline");
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         tool_call!(self, "cancel_pipeline",
             tools::pipelines::cancel_pipeline(client, &p.project_id, p.pipeline_id).await

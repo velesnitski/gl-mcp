@@ -286,12 +286,12 @@ pub async fn list_commits(
         urlencoding::encode(project_id)
     );
 
+    // Don't send author to API — GitLab does exact match which breaks on
+    // Cyrillic names (e.g. "Malykhin" won't match "Владимир Малыхин").
+    // Fetch all commits and filter client-side with fuzzy contains.
     let mut params: Vec<(&str, &str)> = vec![("per_page", &per_page_str)];
     if !branch.is_empty() {
         params.push(("ref_name", branch));
-    }
-    if !author.is_empty() {
-        params.push(("author", author));
     }
     if !since.is_empty() {
         params.push(("since", since));
@@ -300,13 +300,25 @@ pub async fn list_commits(
         params.push(("until", until));
     }
 
-    let commits: Vec<Value> = client.get(&path, &params).await.map_err(|e| e.to_string())?;
+    let all_commits: Vec<Value> = client.get(&path, &params).await.map_err(|e| e.to_string())?;
+
+    // Client-side author filter: case-insensitive contains on name AND email
+    let commits: Vec<&Value> = if author.is_empty() {
+        all_commits.iter().collect()
+    } else {
+        let query = author.to_lowercase();
+        all_commits.iter().filter(|c| {
+            let name = c["author_name"].as_str().unwrap_or("").to_lowercase();
+            let email = c["author_email"].as_str().unwrap_or("").to_lowercase();
+            name.contains(&query) || email.contains(&query)
+        }).collect()
+    };
 
     if commits.is_empty() {
         return Ok("No commits found.".to_string());
     }
 
-    let mut by_author: BTreeMap<String, Vec<&Value>> = BTreeMap::new();
+    let mut by_author: BTreeMap<String, Vec<&&Value>> = BTreeMap::new();
     for c in &commits {
         let author = c["author_name"].as_str().unwrap_or("Unknown").to_string();
         by_author.entry(author).or_default().push(c);
