@@ -21,6 +21,7 @@ mod flex {
         })
     }
 
+    #[allow(dead_code)]
     pub fn deserialize_opt_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
     where D: Deserializer<'de> {
         #[derive(Deserialize)]

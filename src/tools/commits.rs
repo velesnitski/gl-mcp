@@ -366,7 +366,7 @@ pub async fn get_commit_diff(
         .await
         ?;
 
-    let title = commit["title"].as_str().unwrap_or("?");
+    let _title = commit["title"].as_str().unwrap_or("?");
     let author = commit["author_name"].as_str().unwrap_or("?");
     let date = commit["created_at"].as_str().unwrap_or("?");
     let message = commit["message"].as_str().unwrap_or("");
