@@ -72,6 +72,7 @@ impl Resolver {
     }
 
     /// Shorthand: resolve with no instance hint and no identifier.
+    #[allow(dead_code)]
     pub fn default_client(&self) -> Result<&GitLabClient> {
         self.resolve("", "")
     }

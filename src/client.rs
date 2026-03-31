@@ -12,6 +12,7 @@ use crate::error::{Error, Result};
 
 /// GitLab API client for a single instance.
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct GitLabClient {
     pub name: String,
     base_url: String,
