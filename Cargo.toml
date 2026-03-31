@@ -5,6 +5,10 @@ edition = "2024"
 description = "GitLab MCP server for Claude Code"
 license = "MIT"
 
+[lib]
+name = "gl_mcp"
+path = "src/lib.rs"
+
 [[bin]]
 name = "gl-mcp"
 path = "src/main.rs"
