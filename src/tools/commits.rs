@@ -509,7 +509,7 @@ pub async fn get_file_content(
 
 /// Get user activity (events) for the last N hours.
 /// Fetch user events for a time window. Shared by get_user_activity and get_user_daily_report.
-async fn fetch_user_events(
+pub async fn fetch_user_events(
     client: &GitLabClient,
     user_id: u64,
     since_ts: i64,
@@ -559,7 +559,7 @@ async fn fetch_user_events(
 }
 
 /// Resolve project IDs to names via batch lookup. Caches per-call.
-async fn resolve_project_names(
+pub async fn resolve_project_names(
     client: &GitLabClient,
     project_ids: &std::collections::BTreeSet<u64>,
 ) -> BTreeMap<u64, String> {

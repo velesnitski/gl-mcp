@@ -374,6 +374,18 @@ pub struct GetUserActivityParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct GenerateDevReportParams {
+    #[schemars(description = "GitLab username")]
+    username: String,
+    #[schemars(description = "Period: 'today', 'yesterday', 'week', '3d', or hours (default: today)")]
+    period: Option<String>,
+    #[schemars(description = "Filter to specific project path substring (optional)")]
+    project: Option<String>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListGroupProjectsParams {
     #[schemars(description = "Group path (e.g., 'example-org/software')")]
     group_path: String,
@@ -682,6 +694,15 @@ impl GlMcpServer {
         let hours = parse_period(p.period.as_deref().unwrap_or("24"));
         tool_call!(self, "get_user_activity",
             tools::commits::get_user_activity(client, &p.username, hours).await
+        )
+    }
+
+    #[tool(description = "Generate a complete HTML daily report for a developer. Returns full HTML with dark theme, commits, diffs, open MRs, and quality notes. Save to file and open in browser.")]
+    async fn generate_dev_report(&self, Parameters(p): Parameters<GenerateDevReportParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        let hours = parse_period(p.period.as_deref().unwrap_or("today"));
+        tool_call!(self, "generate_dev_report",
+            tools::reports::generate_dev_report(client, &p.username, hours, p.project.as_deref().unwrap_or("")).await
         )
     }
 }
