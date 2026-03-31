@@ -381,15 +381,15 @@ pub async fn get_commit_diff(
 
     let mut parts = if compact {
         vec![
-            format!("{sha}|{author}|{date}"),
+            format!("{project_id}|{sha}|{author}|{date}"),
             message.to_string(),
             format!("+{stats_add}|-{stats_del}|{}f", diffs.len()),
             String::new(),
         ]
     } else {
         vec![
-            format!("## Commit `{sha}` by {author}"),
-            format!("**Date:** {date}"),
+            format!("## Commit `{sha}` in {project_id}"),
+            format!("**Author:** {author} | **Date:** {date}"),
             format!("**Message:** {message}"),
             format!("**Stats:** +{stats_add} -{stats_del} in {} files", diffs.len()),
             String::new(),
@@ -440,13 +440,13 @@ pub async fn get_mr_changes(
 
     let mut parts = if compact {
         vec![
-            format!("!{mr_iid}|{title}|{state}"),
+            format!("{project_id}|!{mr_iid}|{title}|{state}"),
             format!("{author}|{source}→{target}|{}f", changes.len()),
             String::new(),
         ]
     } else {
         vec![
-            format!("## MR !{mr_iid}: {title}"),
+            format!("## {project_id} !{mr_iid}: {title}"),
             format!("**Author:** @{author} | **State:** {state}"),
             format!("**Branch:** {source} → {target}"),
             format!("**Files changed:** {}", changes.len()),
@@ -508,27 +508,12 @@ pub async fn get_file_content(
 }
 
 /// Get user activity (events) for the last N hours.
-pub async fn get_user_activity(
+/// Fetch user events for a time window. Shared by get_user_activity and get_user_daily_report.
+pub async fn fetch_user_events(
     client: &GitLabClient,
-    username: &str,
-    hours: u32,
-) -> Result<String, String> {
-    // Resolve user ID
-    let users: Vec<Value> = client
-        .get("/users", &[("username", username)])
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let user = users.first().ok_or_else(|| format!("User @{username} not found"))?;
-    let user_id = user["id"].as_u64().ok_or("User has no ID")?;
-    let display_name = user["name"].as_str().unwrap_or(username);
-
-    // Calculate since timestamp
-    let since = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
-    let since_ts = since.timestamp();
-
-    // Fetch events (paginated) — no date filter, filter client-side
-    // Self-hosted GitLab may not support `after` param reliably
+    user_id: u64,
+    since_ts: i64,
+) -> Result<Vec<Value>, String> {
     let mut all_events: Vec<Value> = Vec::new();
     let mut page = 1u32;
     loop {
@@ -545,7 +530,6 @@ pub async fn get_user_activity(
             break;
         }
 
-        // Check if oldest event in this page is still within our window
         let oldest_in_window = events.iter().any(|e| {
             e["created_at"]
                 .as_str()
@@ -557,15 +541,13 @@ pub async fn get_user_activity(
         all_events.extend(events);
         page += 1;
 
-        // Stop if we've gone past our time window or hit safety limit
         if !oldest_in_window || page > 10 {
             break;
         }
     }
 
-    // Filter to exact time window
-    let filtered: Vec<&Value> = all_events
-        .iter()
+    Ok(all_events
+        .into_iter()
         .filter(|e| {
             e["created_at"]
                 .as_str()
@@ -573,61 +555,187 @@ pub async fn get_user_activity(
                 .map(|dt| dt.timestamp() >= since_ts)
                 .unwrap_or(false)
         })
-        .collect();
+        .collect())
+}
 
-    // Aggregate
-    let mut commits = 0u64;
-    let mut mr_opened = 0u64;
-    let mut mr_merged = 0u64;
-    let mut mr_approved = 0u64;
-    let mut projects: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let mut actions: BTreeMap<String, u64> = BTreeMap::new();
-
-    for event in &filtered {
-        let action = event["action_name"].as_str().unwrap_or("unknown");
-        *actions.entry(action.to_string()).or_default() += 1;
-
-        if let Some(proj) = event["project_id"].as_u64() {
-            projects.insert(proj.to_string());
+/// Resolve project IDs to names via batch lookup. Caches per-call.
+pub async fn resolve_project_names(
+    client: &GitLabClient,
+    project_ids: &std::collections::BTreeSet<u64>,
+) -> BTreeMap<u64, String> {
+    let mut names = BTreeMap::new();
+    for &pid in project_ids {
+        if let Ok(proj) = client
+            .get::<Value>(&format!("/projects/{pid}"), &[("simple", "true")])
+            .await
+        {
+            let name = proj["path_with_namespace"]
+                .as_str()
+                .unwrap_or("?")
+                .to_string();
+            names.insert(pid, name);
         }
+    }
+    names
+}
 
-        // Count commits from push events
-        if action == "pushed to" || action == "pushed new" {
-            let count = event["push_data"]["commit_count"].as_u64().unwrap_or(1);
-            commits += count;
-        }
+/// Per-day, per-project activity struct.
+struct DayProjectStats {
+    pushes: u64,
+    commits: u64,
+    merges: u64,
+    mr_opened: u64,
+    mr_merged: u64,
+    mr_approved: u64,
+    other_events: u64,
+}
 
-        // MR events
-        let target_type = event["target_type"].as_str().unwrap_or("");
-        if target_type == "MergeRequest" {
-            match action {
-                "opened" => mr_opened += 1,
-                "accepted" => mr_merged += 1,
-                "approved" => mr_approved += 1,
-                _ => {}
-            }
+impl DayProjectStats {
+    fn new() -> Self {
+        Self { pushes: 0, commits: 0, merges: 0, mr_opened: 0, mr_merged: 0, mr_approved: 0, other_events: 0 }
+    }
+    fn total(&self) -> u64 {
+        self.pushes + self.mr_opened + self.mr_merged + self.mr_approved + self.other_events
+    }
+}
+
+/// Get developer activity with per-day, per-project breakdown.
+pub async fn get_user_activity(
+    client: &GitLabClient,
+    username: &str,
+    hours: u32,
+) -> Result<String, String> {
+    let users: Vec<Value> = client
+        .get("/users", &[("username", username)])
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let user = users.first().ok_or_else(|| format!("User @{username} not found"))?;
+    let user_id = user["id"].as_u64().ok_or("User has no ID")?;
+    let display_name = user["name"].as_str().unwrap_or(username);
+
+    let since = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
+    let events = fetch_user_events(client, user_id, since.timestamp()).await?;
+
+    if events.is_empty() {
+        return Ok(format!(
+            "## @{username} ({display_name})\n**Period:** last {hours}h\n\nNo activity."
+        ));
+    }
+
+    // Collect unique project IDs
+    let mut project_ids: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
+    for e in &events {
+        if let Some(pid) = e["project_id"].as_u64() {
+            project_ids.insert(pid);
         }
     }
 
+    // Resolve project names
+    let project_names = resolve_project_names(client, &project_ids).await;
+
+    // Aggregate: day → project → stats
+    // Also aggregate totals
+    let mut by_day: BTreeMap<String, BTreeMap<u64, DayProjectStats>> = BTreeMap::new();
+    let mut total = DayProjectStats::new();
+
+    for event in &events {
+        let date = event["created_at"]
+            .as_str()
+            .and_then(|s| s.get(..10))
+            .unwrap_or("?")
+            .to_string();
+        let pid = event["project_id"].as_u64().unwrap_or(0);
+        let action = event["action_name"].as_str().unwrap_or("");
+        let target_type = event["target_type"].as_str().unwrap_or("");
+
+        let stats = by_day.entry(date).or_default().entry(pid).or_insert_with(DayProjectStats::new);
+
+        if action == "pushed to" || action == "pushed new" {
+            let raw_count = event["push_data"]["commit_count"].as_u64().unwrap_or(1);
+            // Detect merge commits: >20 commits in a single push is almost certainly a branch merge
+            let is_merge = raw_count > 20;
+            let display_count = if is_merge { 1 } else { raw_count };
+            stats.pushes += 1;
+            stats.commits += display_count;
+            if is_merge { stats.merges += 1; }
+            total.pushes += 1;
+            total.commits += display_count;
+            if is_merge { total.merges += 1; }
+        } else if target_type == "MergeRequest" {
+            match action {
+                "opened" => { stats.mr_opened += 1; total.mr_opened += 1; }
+                "accepted" => { stats.mr_merged += 1; total.mr_merged += 1; }
+                "approved" => { stats.mr_approved += 1; total.mr_approved += 1; }
+                _ => { stats.other_events += 1; total.other_events += 1; }
+            }
+        } else {
+            stats.other_events += 1;
+            total.other_events += 1;
+        }
+    }
+
+    // Format output
     let mut lines = vec![
-        format!("## Activity: @{username} ({display_name})"),
-        format!("**Period:** last {hours}h | **Total events:** {}", filtered.len()),
+        format!("## @{username} ({display_name})"),
+        format!(
+            "**Period:** last {hours}h | **Events:** {} | **Projects:** {}",
+            events.len(),
+            project_ids.len()
+        ),
+        format!(
+            "**Totals:** {} pushes ({} commits, {} branch merges), {} MRs opened, {} merged, {} approved",
+            total.pushes, total.commits, total.merges, total.mr_opened, total.mr_merged, total.mr_approved
+        ),
         String::new(),
-        format!("| Metric | Count |"),
-        format!("|--------|-------|"),
-        format!("| Commits | {commits} |"),
-        format!("| MRs opened | {mr_opened} |"),
-        format!("| MRs merged | {mr_merged} |"),
-        format!("| MRs approved | {mr_approved} |"),
-        format!("| Projects active | {} |", projects.len()),
     ];
 
-    if !actions.is_empty() {
-        lines.push(String::new());
-        lines.push("### Activity breakdown".to_string());
-        for (action, count) in &actions {
-            lines.push(format!("- {action}: {count}"));
+    // Per-day breakdown (newest first)
+    for (day, projects) in by_day.iter().rev() {
+        let day_total: u64 = projects.values().map(|s| s.total()).sum();
+        let day_commits: u64 = projects.values().map(|s| s.commits).sum();
+        lines.push(format!("### {day} ({day_total} events, {day_commits} commits)"));
+
+        for (pid, stats) in projects {
+            let proj_name = project_names
+                .get(pid)
+                .map(|s| s.as_str())
+                .unwrap_or("unknown");
+            // Short name: last 2 path segments
+            let short = proj_name
+                .rsplit('/')
+                .take(2)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("/");
+
+            let mut parts = Vec::new();
+            if stats.pushes > 0 {
+                let merge_note = if stats.merges > 0 {
+                    format!(" + {} branch merge", stats.merges)
+                } else {
+                    String::new()
+                };
+                parts.push(format!("{} pushes ({} commits{})", stats.pushes, stats.commits, merge_note));
+            }
+            if stats.mr_opened > 0 {
+                parts.push(format!("{} MR opened", stats.mr_opened));
+            }
+            if stats.mr_merged > 0 {
+                parts.push(format!("{} MR merged", stats.mr_merged));
+            }
+            if stats.mr_approved > 0 {
+                parts.push(format!("{} MR approved", stats.mr_approved));
+            }
+            if stats.other_events > 0 {
+                parts.push(format!("{} other", stats.other_events));
+            }
+
+            lines.push(format!("- **{}**: {}", short, parts.join(", ")));
         }
+        lines.push(String::new());
     }
 
     Ok(lines.join("\n"))
