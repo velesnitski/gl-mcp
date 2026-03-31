@@ -10,6 +10,7 @@ pub async fn list_merge_requests(
     state: &str,
     author: &str,
     scope: &str,
+    created_after: &str,
     per_page: u32,
 ) -> Result<String, String> {
     let per_page_str = per_page.to_string();
@@ -35,6 +36,9 @@ pub async fn list_merge_requests(
     }
     if !scope.is_empty() {
         params.push(("scope", scope));
+    }
+    if !created_after.is_empty() {
+        params.push(("created_after", created_after));
     }
 
     let mrs: Vec<Value> = client.get(&path, &params).await.map_err(|e| e.to_string())?;
