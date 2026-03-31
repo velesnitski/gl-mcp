@@ -6,6 +6,7 @@ pub mod projects;
 pub mod issues;
 pub mod merge_requests;
 pub mod pipelines;
+pub mod commits;
 
 /// Tools that modify data — blocked in read-only mode.
 pub const WRITE_TOOLS: &[&str] = &[
