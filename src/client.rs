@@ -2,12 +2,13 @@
 //!
 //! Reusable async client with connection pooling and structured error handling.
 
-use reqwest::{Client, Response, StatusCode};
+use reqwest::{Client, Response};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tracing::error;
 
 use crate::config::GitLabInstance;
+use crate::error::{Error, Result};
 
 /// GitLab API client for a single instance.
 #[derive(Clone)]
@@ -41,33 +42,28 @@ impl GitLabClient {
     }
 
     /// GET request, returning deserialized JSON.
-    pub async fn get<T: DeserializeOwned>(&self, path: &str, params: &[(&str, &str)]) -> Result<T, ApiError> {
+    pub async fn get<T: DeserializeOwned>(&self, path: &str, params: &[(&str, &str)]) -> Result<T> {
         let url = format!("{}{}", self.base_url, path);
         let resp = self.http.get(&url).query(params).send().await?;
         self.handle_response(resp).await
     }
 
-    /// GET request returning raw JSON Value.
-    pub async fn get_json(&self, path: &str, params: &[(&str, &str)]) -> Result<Value, ApiError> {
-        self.get(path, params).await
-    }
-
     /// POST request with JSON body.
-    pub async fn post<T: DeserializeOwned>(&self, path: &str, body: &Value) -> Result<T, ApiError> {
+    pub async fn post<T: DeserializeOwned>(&self, path: &str, body: &Value) -> Result<T> {
         let url = format!("{}{}", self.base_url, path);
         let resp = self.http.post(&url).json(body).send().await?;
         self.handle_response(resp).await
     }
 
     /// PUT request with JSON body.
-    pub async fn put<T: DeserializeOwned>(&self, path: &str, body: &Value) -> Result<T, ApiError> {
+    pub async fn put<T: DeserializeOwned>(&self, path: &str, body: &Value) -> Result<T> {
         let url = format!("{}{}", self.base_url, path);
         let resp = self.http.put(&url).json(body).send().await?;
         self.handle_response(resp).await
     }
 
     /// DELETE request.
-    pub async fn delete(&self, path: &str) -> Result<(), ApiError> {
+    pub async fn delete(&self, path: &str) -> Result<()> {
         let url = format!("{}{}", self.base_url, path);
         let resp = self.http.delete(&url).send().await?;
         if resp.status().is_success() {
@@ -77,8 +73,7 @@ impl GitLabClient {
         }
     }
 
-    /// Extract error details from a non-success response.
-    async fn extract_error(&self, resp: Response) -> ApiError {
+    async fn extract_error(&self, resp: Response) -> Error {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
 
@@ -89,58 +84,29 @@ impl GitLabClient {
                     .or_else(|| v.get("error"))
                     .map(|m| m.to_string())
             })
-            .unwrap_or_else(|| body.chars().take(200).collect());
+            .unwrap_or_else(|| {
+                if body.len() > 200 { body[..200].to_string() } else { body }
+            });
 
         error!(
             status = status.as_u16(),
-            path = "",
             error_type = "gitlab_api",
             "GitLab API error: {message}"
         );
 
-        ApiError::GitLab { status, message }
+        Error::GitLab { status, message }
     }
 
-    /// Handle response: check status, deserialize.
-    async fn handle_response<T: DeserializeOwned>(&self, resp: Response) -> Result<T, ApiError> {
+    async fn handle_response<T: DeserializeOwned>(&self, resp: Response) -> Result<T> {
         if resp.status().is_success() {
             let body = resp.text().await?;
             if body.is_empty() {
-                // Return default for empty responses
-                serde_json::from_str("null").map_err(|e| ApiError::Parse(e.to_string()))
+                Ok(serde_json::from_str("null")?)
             } else {
-                serde_json::from_str(&body).map_err(|e| ApiError::Parse(e.to_string()))
+                Ok(serde_json::from_str(&body)?)
             }
         } else {
             Err(self.extract_error(resp).await)
         }
-    }
-}
-
-/// API error types.
-#[derive(Debug)]
-pub enum ApiError {
-    GitLab { status: StatusCode, message: String },
-    Http(reqwest::Error),
-    Parse(String),
-}
-
-impl std::fmt::Display for ApiError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ApiError::GitLab { status, message } => {
-                write!(f, "GitLab API error ({status}): {message}")
-            }
-            ApiError::Http(e) => write!(f, "HTTP error: {e}"),
-            ApiError::Parse(e) => write!(f, "Parse error: {e}"),
-        }
-    }
-}
-
-impl std::error::Error for ApiError {}
-
-impl From<reqwest::Error> for ApiError {
-    fn from(e: reqwest::Error) -> Self {
-        ApiError::Http(e)
     }
 }

@@ -1,6 +1,7 @@
 //! GitLab repository tools: search code, tree, languages, compare, tags.
 
 use crate::client::GitLabClient;
+use crate::error::{Error, Result};
 use serde_json::Value;
 
 /// Search code across a project (GitLab blobs search).
@@ -10,7 +11,7 @@ pub async fn search_code(
     query: &str,
     ref_name: &str,
     per_page: u32,
-) -> Result<String, String> {
+) -> Result<String> {
     let encoded = urlencoding::encode(project_id);
     let per_page_str = per_page.to_string();
 
@@ -26,7 +27,7 @@ pub async fn search_code(
     let results: Vec<Value> = client
         .get(&format!("/projects/{encoded}/search"), &params)
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     if results.is_empty() {
         return Ok(format!("No results for '{query}' in {project_id}."));
@@ -60,15 +61,15 @@ pub async fn search_code(
 pub async fn get_languages(
     client: &GitLabClient,
     project_id: &str,
-) -> Result<String, String> {
+) -> Result<String> {
     let encoded = urlencoding::encode(project_id);
 
     let langs: Value = client
         .get(&format!("/projects/{encoded}/languages"), &[])
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
-    let obj = langs.as_object().ok_or("Invalid response")?;
+    let obj = langs.as_object().ok_or(Error::Other("Invalid response".into()))?;
     if obj.is_empty() {
         return Ok(format!("No language data for {project_id}."));
     }
@@ -98,7 +99,7 @@ pub async fn get_tree(
     ref_name: &str,
     recursive: bool,
     per_page: u32,
-) -> Result<String, String> {
+) -> Result<String> {
     let encoded = urlencoding::encode(project_id);
     let per_page_str = per_page.to_string();
     let recursive_str = if recursive { "true" } else { "false" };
@@ -117,7 +118,7 @@ pub async fn get_tree(
     let entries: Vec<Value> = client
         .get(&format!("/projects/{encoded}/repository/tree"), &params)
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     if entries.is_empty() {
         let path_str = if path.is_empty() { "root" } else { path };
@@ -154,7 +155,7 @@ pub async fn compare_branches(
     project_id: &str,
     from: &str,
     to: &str,
-) -> Result<String, String> {
+) -> Result<String> {
     let encoded = urlencoding::encode(project_id);
 
     let data: Value = client
@@ -163,7 +164,7 @@ pub async fn compare_branches(
             &[("from", from), ("to", to)],
         )
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     let commits = data["commits"].as_array().map(|a| a.len()).unwrap_or(0);
     let diffs = data["diffs"].as_array().map(|a| a.len()).unwrap_or(0);
@@ -232,7 +233,7 @@ pub async fn list_tags(
     project_id: &str,
     search: &str,
     per_page: u32,
-) -> Result<String, String> {
+) -> Result<String> {
     let encoded = urlencoding::encode(project_id);
     let per_page_str = per_page.to_string();
 
@@ -248,7 +249,7 @@ pub async fn list_tags(
     let tags: Vec<Value> = client
         .get(&format!("/projects/{encoded}/repository/tags"), &params)
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     if tags.is_empty() {
         return Ok("No tags found.".to_string());
@@ -274,7 +275,7 @@ pub async fn get_mr_approvals(
     client: &GitLabClient,
     project_id: &str,
     mr_iid: u64,
-) -> Result<String, String> {
+) -> Result<String> {
     let encoded = urlencoding::encode(project_id);
 
     let data: Value = client
@@ -283,7 +284,7 @@ pub async fn get_mr_approvals(
             &[],
         )
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     let approved = data["approved"].as_bool().unwrap_or(false);
     let approvals_required = data["approvals_required"].as_u64().unwrap_or(0);

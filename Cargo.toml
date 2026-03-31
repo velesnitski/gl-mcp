@@ -28,6 +28,7 @@ chrono = { version = "0.4", features = ["serde"] }
 urlencoding = "2"
 url = "2"
 anyhow = "1"
+thiserror = "2"
 
 [profile.release]
 strip = true
