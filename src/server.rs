@@ -512,10 +512,10 @@ fn parse_period(period: &str) -> u32 {
     }
 }
 
-fn resolve_client<'a>(resolver: &'a Resolver, instance: &Option<String>, id: &str) -> Result<&'a GitLabClient, McpError> {
+fn resolve_client<'a>(resolver: &'a Resolver, instance: &Option<String>, id: &str) -> std::result::Result<&'a GitLabClient, McpError> {
     resolver
         .resolve(instance.as_deref().unwrap_or(""), id)
-        .map_err(|e| McpError::internal_error(e, None))
+        .map_err(|e| McpError::internal_error(e.to_string(), None))
 }
 
 fn strip_markdown(text: &str) -> String {
@@ -559,8 +559,9 @@ macro_rules! tool_call {
                 Ok(CallToolResult::success(vec![Content::text(output)]))
             }
             Err(e) => {
-                timer.finish("error", 0, Some(e.clone()));
-                Ok(CallToolResult::error(vec![Content::text(e)]))
+                let msg = e.short_message();
+                timer.finish("error", 0, Some(msg.clone()));
+                Ok(CallToolResult::error(vec![Content::text(msg)]))
             }
         }
     }};

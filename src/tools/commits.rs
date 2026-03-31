@@ -1,6 +1,7 @@
 //! GitLab commit and diff tools with smart filtering and token compression.
 
 use crate::client::GitLabClient;
+use crate::error::{Error, Result};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -279,7 +280,7 @@ pub async fn list_commits(
     since: &str,
     until: &str,
     per_page: u32,
-) -> Result<String, String> {
+) -> Result<String> {
     let per_page_str = per_page.to_string();
     let path = format!(
         "/projects/{}/repository/commits",
@@ -300,7 +301,7 @@ pub async fn list_commits(
         params.push(("until", until));
     }
 
-    let all_commits: Vec<Value> = client.get(&path, &params).await.map_err(|e| e.to_string())?;
+    let all_commits: Vec<Value> = client.get(&path, &params).await?;
 
     // Client-side author filter: case-insensitive contains on name AND email
     let commits: Vec<&Value> = if author.is_empty() {
@@ -357,13 +358,13 @@ pub async fn get_commit_diff(
     summary_only: bool,
     file_filter: &str,
     compact: bool,
-) -> Result<String, String> {
+) -> Result<String> {
     let encoded = urlencoding::encode(project_id);
 
     let commit: Value = client
         .get(&format!("/projects/{encoded}/repository/commits/{sha}"), &[])
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     let title = commit["title"].as_str().unwrap_or("?");
     let author = commit["author_name"].as_str().unwrap_or("?");
@@ -375,7 +376,7 @@ pub async fn get_commit_diff(
     let diffs: Vec<Value> = client
         .get(&format!("/projects/{encoded}/repository/commits/{sha}/diff"), &[])
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     let (files, skipped) = process_diffs(&diffs, skip_generated, file_filter);
 
@@ -416,13 +417,13 @@ pub async fn get_mr_changes(
     summary_only: bool,
     file_filter: &str,
     compact: bool,
-) -> Result<String, String> {
+) -> Result<String> {
     let encoded = urlencoding::encode(project_id);
 
     let mr: Value = client
         .get(&format!("/projects/{encoded}/merge_requests/{mr_iid}"), &[])
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     let title = mr["title"].as_str().unwrap_or("?");
     let author = mr["author"]["username"].as_str().unwrap_or("?");
@@ -433,7 +434,7 @@ pub async fn get_mr_changes(
     let changes_data: Value = client
         .get(&format!("/projects/{encoded}/merge_requests/{mr_iid}/changes"), &[])
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     let changes = changes_data["changes"].as_array().cloned().unwrap_or_default();
     let (files, skipped) = process_diffs(&changes, skip_generated, file_filter);
@@ -470,7 +471,7 @@ pub async fn get_file_content(
     project_id: &str,
     file_path: &str,
     ref_name: &str,
-) -> Result<String, String> {
+) -> Result<String> {
     let encoded_project = urlencoding::encode(project_id);
     let encoded_file = urlencoding::encode(file_path);
 
@@ -480,7 +481,7 @@ pub async fn get_file_content(
             &[("ref", ref_name)],
         )
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     let content_b64 = data["content"].as_str().unwrap_or("");
     let encoding = data["encoding"].as_str().unwrap_or("base64");
@@ -488,7 +489,7 @@ pub async fn get_file_content(
     let lang = detect_language(file_path);
 
     let content = if encoding == "base64" {
-        let decoded = base64_decode(content_b64).map_err(|e| format!("Base64 decode error: {e}"))?;
+        let decoded = base64_decode(content_b64).map_err(|e| Error::Other(format!("Base64 decode error: {e}")))?;
         String::from_utf8_lossy(&decoded).to_string()
     } else {
         content_b64.to_string()
@@ -513,7 +514,7 @@ pub async fn fetch_user_events(
     client: &GitLabClient,
     user_id: u64,
     since_ts: i64,
-) -> Result<Vec<Value>, String> {
+) -> Result<Vec<Value>> {
     let mut all_events: Vec<Value> = Vec::new();
     let mut page = 1u32;
     loop {
@@ -524,7 +525,7 @@ pub async fn fetch_user_events(
                 &[("per_page", "100"), ("page", &page_str), ("sort", "desc")],
             )
             .await
-            .map_err(|e| e.to_string())?;
+            ?;
 
         if events.is_empty() {
             break;
@@ -604,14 +605,14 @@ pub async fn get_user_activity(
     client: &GitLabClient,
     username: &str,
     hours: u32,
-) -> Result<String, String> {
+) -> Result<String> {
     let users: Vec<Value> = client
         .get("/users", &[("username", username)])
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
-    let user = users.first().ok_or_else(|| format!("User @{username} not found"))?;
-    let user_id = user["id"].as_u64().ok_or("User has no ID")?;
+    let user = users.first().ok_or_else(|| Error::NotFound(format!("User @{username} not found")))?;
+    let user_id = user["id"].as_u64().ok_or(Error::Other("User has no ID".into()))?;
     let display_name = user["name"].as_str().unwrap_or(username);
 
     let since = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
@@ -746,7 +747,7 @@ pub async fn list_group_projects(
     client: &GitLabClient,
     group_path: &str,
     per_page: u32,
-) -> Result<String, String> {
+) -> Result<String> {
     let encoded = urlencoding::encode(group_path);
     let per_page_str = per_page.to_string();
 
@@ -761,7 +762,7 @@ pub async fn list_group_projects(
             ],
         )
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     if projects.is_empty() {
         return Ok(format!("No projects found in group '{group_path}'."));
@@ -782,7 +783,7 @@ pub async fn list_group_projects(
     Ok(lines.join("\n"))
 }
 
-fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
+fn base64_decode(input: &str) -> std::result::Result<Vec<u8>, String> {
     let clean: String = input.chars().filter(|c| !c.is_whitespace()).collect();
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = Vec::with_capacity(clean.len() * 3 / 4);

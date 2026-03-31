@@ -2,6 +2,7 @@
 
 pub mod client;
 pub mod config;
+pub mod error;
 pub mod logging;
 pub mod resolver;
 pub mod tools;
