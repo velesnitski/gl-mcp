@@ -248,8 +248,35 @@ fn resolve_client<'a>(resolver: &'a Resolver, instance: &Option<String>, id: &st
         .map_err(|e| McpError::internal_error(e, None))
 }
 
+/// Strip markdown formatting for compact mode (~40-60% token savings).
+fn strip_markdown(text: &str) -> String {
+    let mut out = text.replace("**", "").replace("__", "");
+    // Strip ## headers → plain text
+    out = out.lines().map(|line| {
+        if line.starts_with("### ") {
+            &line[4..]
+        } else if line.starts_with("## ") {
+            &line[3..]
+        } else if line.starts_with("# ") {
+            &line[2..]
+        } else {
+            line
+        }
+    }).collect::<Vec<_>>().join("\n");
+    // Collapse multiple blank lines
+    while out.contains("\n\n\n") {
+        out = out.replace("\n\n\n", "\n\n");
+    }
+    out
+}
+
 fn tool_ok(text: String) -> Result<CallToolResult, McpError> {
     Ok(CallToolResult::success(vec![Content::text(text)]))
+}
+
+fn tool_ok_compact(text: String, compact: bool) -> Result<CallToolResult, McpError> {
+    let output = if compact { strip_markdown(&text) } else { text };
+    Ok(CallToolResult::success(vec![Content::text(output)]))
 }
 
 fn tool_err(e: String) -> Result<CallToolResult, McpError> {
@@ -273,7 +300,7 @@ impl GlMcpServer {
     async fn list_projects(&self, Parameters(p): Parameters<ListProjectsParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         match tools::projects::list_projects(client, p.search.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await {
-            Ok(text) => tool_ok(text),
+            Ok(text) => tool_ok_compact(text, self.config.compact),
             Err(e) => tool_err(e),
         }
     }
@@ -282,7 +309,7 @@ impl GlMcpServer {
     async fn get_project(&self, Parameters(p): Parameters<GetProjectParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
         match tools::projects::get_project(client, &p.project_id).await {
-            Ok(text) => tool_ok(text),
+            Ok(text) => tool_ok_compact(text, self.config.compact),
             Err(e) => tool_err(e),
         }
     }
@@ -291,7 +318,7 @@ impl GlMcpServer {
     async fn list_members(&self, Parameters(p): Parameters<ListMembersParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         match tools::projects::list_members(client, &p.project_id).await {
-            Ok(text) => tool_ok(text),
+            Ok(text) => tool_ok_compact(text, self.config.compact),
             Err(e) => tool_err(e),
         }
     }
@@ -308,7 +335,7 @@ impl GlMcpServer {
             p.assignee.as_deref().unwrap_or(""),
             p.per_page.unwrap_or(20),
         ).await {
-            Ok(text) => tool_ok(text),
+            Ok(text) => tool_ok_compact(text, self.config.compact),
             Err(e) => tool_err(e),
         }
     }
@@ -317,7 +344,7 @@ impl GlMcpServer {
     async fn get_issue(&self, Parameters(p): Parameters<GetIssueParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         match tools::issues::get_issue(client, &p.project_id, p.issue_iid, p.include_notes.unwrap_or(true)).await {
-            Ok(text) => tool_ok(text),
+            Ok(text) => tool_ok_compact(text, self.config.compact),
             Err(e) => tool_err(e),
         }
     }
@@ -332,7 +359,7 @@ impl GlMcpServer {
             p.assignee.as_deref().unwrap_or(""),
             None,
         ).await {
-            Ok(text) => tool_ok(text),
+            Ok(text) => tool_ok_compact(text, self.config.compact),
             Err(e) => tool_err(e),
         }
     }
@@ -347,7 +374,7 @@ impl GlMcpServer {
             p.scope.as_deref().unwrap_or("all"),
             p.per_page.unwrap_or(20),
         ).await {
-            Ok(text) => tool_ok(text),
+            Ok(text) => tool_ok_compact(text, self.config.compact),
             Err(e) => tool_err(e),
         }
     }
@@ -356,7 +383,7 @@ impl GlMcpServer {
     async fn get_merge_request(&self, Parameters(p): Parameters<GetMergeRequestParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         match tools::merge_requests::get_merge_request(client, &p.project_id, p.mr_iid, p.include_notes.unwrap_or(true)).await {
-            Ok(text) => tool_ok(text),
+            Ok(text) => tool_ok_compact(text, self.config.compact),
             Err(e) => tool_err(e),
         }
     }
@@ -365,7 +392,7 @@ impl GlMcpServer {
     async fn list_pipelines(&self, Parameters(p): Parameters<ListPipelinesParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         match tools::pipelines::list_pipelines(client, &p.project_id, p.status.as_deref().unwrap_or(""), p.ref_name.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await {
-            Ok(text) => tool_ok(text),
+            Ok(text) => tool_ok_compact(text, self.config.compact),
             Err(e) => tool_err(e),
         }
     }
@@ -374,7 +401,7 @@ impl GlMcpServer {
     async fn get_pipeline(&self, Parameters(p): Parameters<GetPipelineParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         match tools::pipelines::get_pipeline(client, &p.project_id, p.pipeline_id).await {
-            Ok(text) => tool_ok(text),
+            Ok(text) => tool_ok_compact(text, self.config.compact),
             Err(e) => tool_err(e),
         }
     }
@@ -392,7 +419,7 @@ impl GlMcpServer {
             p.until.as_deref().unwrap_or(""),
             p.per_page.unwrap_or(20),
         ).await {
-            Ok(text) => tool_ok(text),
+            Ok(text) => tool_ok_compact(text, self.config.compact),
             Err(e) => tool_err(e),
         }
     }
@@ -400,15 +427,16 @@ impl GlMcpServer {
     #[tool(description = "Get the diff of a commit with smart filtering. Use summary_only=true first for overview (~10x smaller), then drill into specific files with file= parameter.")]
     async fn get_commit_diff(&self, Parameters(p): Parameters<GetCommitDiffParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
+        let compact = p.compact.unwrap_or(self.config.compact);
         match tools::commits::get_commit_diff(
             client, &p.project_id, &p.sha,
             p.max_lines_per_file.unwrap_or(200),
             p.skip_generated.unwrap_or(true),
             p.summary_only.unwrap_or(false),
             p.file.as_deref().unwrap_or(""),
-            p.compact.unwrap_or(false),
+            compact,
         ).await {
-            Ok(text) => tool_ok(text),
+            Ok(text) => tool_ok_compact(text, self.config.compact),
             Err(e) => tool_err(e),
         }
     }
@@ -416,15 +444,16 @@ impl GlMcpServer {
     #[tool(description = "Get all changes in a merge request. Use summary_only=true first, then file= for specific files. Grouped by language.")]
     async fn get_mr_changes(&self, Parameters(p): Parameters<GetMrChangesParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
+        let compact = p.compact.unwrap_or(self.config.compact);
         match tools::commits::get_mr_changes(
             client, &p.project_id, p.mr_iid,
             p.max_lines_per_file.unwrap_or(200),
             p.skip_generated.unwrap_or(true),
             p.summary_only.unwrap_or(false),
             p.file.as_deref().unwrap_or(""),
-            p.compact.unwrap_or(false),
+            compact,
         ).await {
-            Ok(text) => tool_ok(text),
+            Ok(text) => tool_ok_compact(text, self.config.compact),
             Err(e) => tool_err(e),
         }
     }
@@ -436,7 +465,7 @@ impl GlMcpServer {
             client, &p.project_id, &p.file_path,
             p.ref_name.as_deref().unwrap_or("HEAD"),
         ).await {
-            Ok(text) => tool_ok(text),
+            Ok(text) => tool_ok_compact(text, self.config.compact),
             Err(e) => tool_err(e),
         }
     }
@@ -447,7 +476,7 @@ impl GlMcpServer {
         match tools::commits::get_user_activity(
             client, &p.username, p.hours.unwrap_or(24),
         ).await {
-            Ok(text) => tool_ok(text),
+            Ok(text) => tool_ok_compact(text, self.config.compact),
             Err(e) => tool_err(e),
         }
     }
@@ -458,7 +487,7 @@ impl GlMcpServer {
         match tools::commits::list_group_projects(
             client, &p.group_path, p.per_page.unwrap_or(50),
         ).await {
-            Ok(text) => tool_ok(text),
+            Ok(text) => tool_ok_compact(text, self.config.compact),
             Err(e) => tool_err(e),
         }
     }
