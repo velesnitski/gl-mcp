@@ -8,6 +8,7 @@ pub async fn list_merge_requests(
     client: &GitLabClient,
     project_id: &str,
     state: &str,
+    author: &str,
     scope: &str,
     per_page: u32,
 ) -> Result<String, String> {
@@ -28,6 +29,9 @@ pub async fn list_merge_requests(
     ];
     if !state.is_empty() {
         params.push(("state", state));
+    }
+    if !author.is_empty() {
+        params.push(("author_username", author));
     }
     if !scope.is_empty() {
         params.push(("scope", scope));

@@ -1,5 +1,59 @@
 //! MCP server handler — wires GitLab tools to rmcp.
 
+// Flexible number deserializer: accepts both "20" and 20 from JSON.
+// MCP clients sometimes send numbers as strings.
+mod flex {
+    use serde::{self, Deserialize, Deserializer};
+
+    pub fn deserialize_opt_u32<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+    where D: Deserializer<'de> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum StringOrNum {
+            Str(String),
+            Num(u32),
+        }
+        let v = Option::<StringOrNum>::deserialize(deserializer)?;
+        Ok(match v {
+            Some(StringOrNum::Num(n)) => Some(n),
+            Some(StringOrNum::Str(s)) => s.parse().ok(),
+            None => None,
+        })
+    }
+
+    pub fn deserialize_opt_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+    where D: Deserializer<'de> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum StringOrNum {
+            Str(String),
+            Num(u64),
+        }
+        let v = Option::<StringOrNum>::deserialize(deserializer)?;
+        Ok(match v {
+            Some(StringOrNum::Num(n)) => Some(n),
+            Some(StringOrNum::Str(s)) => s.parse().ok(),
+            None => None,
+        })
+    }
+
+    pub fn deserialize_opt_usize<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
+    where D: Deserializer<'de> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum StringOrNum {
+            Str(String),
+            Num(usize),
+        }
+        let v = Option::<StringOrNum>::deserialize(deserializer)?;
+        Ok(match v {
+            Some(StringOrNum::Num(n)) => Some(n),
+            Some(StringOrNum::Str(s)) => s.parse().ok(),
+            None => None,
+        })
+    }
+}
+
 use rmcp::{
     handler::server::wrapper::Parameters,
     model::{
@@ -33,6 +87,7 @@ pub struct ListProjectsParams {
     #[schemars(description = "Search query to filter projects")]
     search: Option<String>,
     #[schemars(description = "Max results (default: 20)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     per_page: Option<u32>,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
@@ -67,6 +122,7 @@ pub struct SearchIssuesParams {
     #[schemars(description = "Filter by assignee username")]
     assignee: Option<String>,
     #[schemars(description = "Max results (default: 20)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     per_page: Option<u32>,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
@@ -140,9 +196,12 @@ pub struct ListMergeRequestsParams {
     project_id: Option<String>,
     #[schemars(description = "Filter by state: opened, closed, merged, all (default: opened)")]
     state: Option<String>,
+    #[schemars(description = "Filter by author username")]
+    author: Option<String>,
     #[schemars(description = "Scope: assigned_to_me, created_by_me, all (default: all)")]
     scope: Option<String>,
     #[schemars(description = "Max results (default: 20)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     per_page: Option<u32>,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
@@ -169,6 +228,7 @@ pub struct ListPipelinesParams {
     #[schemars(description = "Filter by git ref (branch/tag)")]
     ref_name: Option<String>,
     #[schemars(description = "Max results (default: 20)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     per_page: Option<u32>,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
@@ -191,6 +251,7 @@ pub struct GetJobLogParams {
     #[schemars(description = "Job ID")]
     job_id: u64,
     #[schemars(description = "Max lines from end of log (default: 100)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_usize")]
     tail: Option<usize>,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
@@ -223,6 +284,7 @@ pub struct ListBranchesParams {
     #[schemars(description = "Search branch name")]
     search: Option<String>,
     #[schemars(description = "Max results (default: 20)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     per_page: Option<u32>,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
@@ -241,6 +303,7 @@ pub struct ListCommitsParams {
     #[schemars(description = "ISO date: commits before this date")]
     until: Option<String>,
     #[schemars(description = "Max results (default: 20)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     per_page: Option<u32>,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
@@ -253,6 +316,7 @@ pub struct GetCommitDiffParams {
     #[schemars(description = "Commit SHA (full or short)")]
     sha: String,
     #[schemars(description = "Max diff lines per file (default: 200)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_usize")]
     max_lines_per_file: Option<usize>,
     #[schemars(description = "Skip lockfiles and generated code (default: true)")]
     skip_generated: Option<bool>,
@@ -273,6 +337,7 @@ pub struct GetMrChangesParams {
     #[schemars(description = "Merge request IID")]
     mr_iid: u64,
     #[schemars(description = "Max diff lines per file (default: 200)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_usize")]
     max_lines_per_file: Option<usize>,
     #[schemars(description = "Skip lockfiles and generated code (default: true)")]
     skip_generated: Option<bool>,
@@ -313,6 +378,7 @@ pub struct ListGroupProjectsParams {
     #[schemars(description = "Group path (e.g., 'example-org/software')")]
     group_path: String,
     #[schemars(description = "Max results (default: 50)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     per_page: Option<u32>,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
@@ -504,11 +570,11 @@ impl GlMcpServer {
 
     // ─── Merge Requests ───
 
-    #[tool(description = "List merge requests across all projects or within a specific project")]
+    #[tool(description = "List merge requests. Filter by project, state, author, scope.")]
     async fn list_merge_requests(&self, Parameters(p): Parameters<ListMergeRequestsParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         tool_call!(self, "list_merge_requests",
-            tools::merge_requests::list_merge_requests(client, p.project_id.as_deref().unwrap_or(""), p.state.as_deref().unwrap_or("opened"), p.scope.as_deref().unwrap_or("all"), p.per_page.unwrap_or(20)).await
+            tools::merge_requests::list_merge_requests(client, p.project_id.as_deref().unwrap_or(""), p.state.as_deref().unwrap_or("opened"), p.author.as_deref().unwrap_or(""), p.scope.as_deref().unwrap_or("all"), p.per_page.unwrap_or(20)).await
         )
     }
 
