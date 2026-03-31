@@ -1,6 +1,7 @@
 //! HTML report generation for developer daily activity.
 
 use crate::client::GitLabClient;
+use crate::error::{Error, Result};
 use crate::tools::commits;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -11,15 +12,15 @@ pub async fn generate_dev_report(
     username: &str,
     hours: u32,
     project_filter: &str,
-) -> Result<String, String> {
+) -> Result<String> {
     // 1. Resolve user
     let users: Vec<Value> = client
         .get("/users", &[("username", username)])
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
-    let user = users.first().ok_or_else(|| format!("User @{username} not found"))?;
-    let user_id = user["id"].as_u64().ok_or("User has no ID")?;
+    let user = users.first().ok_or_else(|| Error::NotFound(format!("User @{username} not found")))?;
+    let user_id = user["id"].as_u64().ok_or(Error::Other("User has no ID".into()))?;
     let display_name = user["name"].as_str().unwrap_or(username);
 
     // 2. Fetch events
