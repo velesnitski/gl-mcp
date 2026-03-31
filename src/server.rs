@@ -302,8 +302,8 @@ pub struct GetFileContentParams {
 pub struct GetUserActivityParams {
     #[schemars(description = "GitLab username")]
     username: String,
-    #[schemars(description = "Look back N hours (default: 24)")]
-    hours: Option<u32>,
+    #[schemars(description = "Period: 'today', 'yesterday', 'week' (since Monday), '3d', or hours as number (default: 24)")]
+    period: Option<String>,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
 }
@@ -319,6 +319,41 @@ pub struct ListGroupProjectsParams {
 }
 
 // ─── Helpers ───
+
+/// Parse human-readable period into hours.
+fn parse_period(period: &str) -> u32 {
+    let p = period.trim().to_lowercase();
+    match p.as_str() {
+        "today" => {
+            let now = chrono::Utc::now();
+            let midnight = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
+            let diff = now.naive_utc() - midnight;
+            diff.num_hours().max(1) as u32
+        }
+        "yesterday" => {
+            let now = chrono::Utc::now();
+            let yesterday_midnight = (now - chrono::Duration::days(1)).date_naive().and_hms_opt(0, 0, 0).unwrap();
+            let diff = now.naive_utc() - yesterday_midnight;
+            diff.num_hours().max(1) as u32
+        }
+        "week" => {
+            let now = chrono::Utc::now();
+            use chrono::Datelike;
+            let weekday = now.weekday().num_days_from_monday();
+            let monday = now - chrono::Duration::days(weekday as i64);
+            let monday_midnight = monday.date_naive().and_hms_opt(0, 0, 0).unwrap();
+            let diff = now.naive_utc() - monday_midnight;
+            diff.num_hours().max(1) as u32
+        }
+        _ if p.ends_with('d') => {
+            p.trim_end_matches('d').parse::<u32>().unwrap_or(1) * 24
+        }
+        _ if p.ends_with('h') => {
+            p.trim_end_matches('h').parse::<u32>().unwrap_or(24)
+        }
+        _ => p.parse::<u32>().unwrap_or(24),
+    }
+}
 
 fn resolve_client<'a>(resolver: &'a Resolver, instance: &Option<String>, id: &str) -> Result<&'a GitLabClient, McpError> {
     resolver
@@ -575,11 +610,12 @@ impl GlMcpServer {
         )
     }
 
-    #[tool(description = "Get developer activity: commits, MRs opened/merged/approved for the last N hours")]
+    #[tool(description = "Get developer daily activity across all projects: commits, MRs, grouped by day and project. Use period='today', 'yesterday', 'week', '3d', or hours.")]
     async fn get_user_activity(&self, Parameters(p): Parameters<GetUserActivityParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
+        let hours = parse_period(p.period.as_deref().unwrap_or("24"));
         tool_call!(self, "get_user_activity",
-            tools::commits::get_user_activity(client, &p.username, p.hours.unwrap_or(24)).await
+            tools::commits::get_user_activity(client, &p.username, hours).await
         )
     }
 }
