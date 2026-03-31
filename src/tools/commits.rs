@@ -583,6 +583,7 @@ async fn resolve_project_names(
 struct DayProjectStats {
     pushes: u64,
     commits: u64,
+    merges: u64,
     mr_opened: u64,
     mr_merged: u64,
     mr_approved: u64,
@@ -591,7 +592,7 @@ struct DayProjectStats {
 
 impl DayProjectStats {
     fn new() -> Self {
-        Self { pushes: 0, commits: 0, mr_opened: 0, mr_merged: 0, mr_approved: 0, other_events: 0 }
+        Self { pushes: 0, commits: 0, merges: 0, mr_opened: 0, mr_merged: 0, mr_approved: 0, other_events: 0 }
     }
     fn total(&self) -> u64 {
         self.pushes + self.mr_opened + self.mr_merged + self.mr_approved + self.other_events
@@ -651,11 +652,16 @@ pub async fn get_user_activity(
         let stats = by_day.entry(date).or_default().entry(pid).or_insert_with(DayProjectStats::new);
 
         if action == "pushed to" || action == "pushed new" {
-            let count = event["push_data"]["commit_count"].as_u64().unwrap_or(1);
+            let raw_count = event["push_data"]["commit_count"].as_u64().unwrap_or(1);
+            // Detect merge commits: >20 commits in a single push is almost certainly a branch merge
+            let is_merge = raw_count > 20;
+            let display_count = if is_merge { 1 } else { raw_count };
             stats.pushes += 1;
-            stats.commits += count;
+            stats.commits += display_count;
+            if is_merge { stats.merges += 1; }
             total.pushes += 1;
-            total.commits += count;
+            total.commits += display_count;
+            if is_merge { total.merges += 1; }
         } else if target_type == "MergeRequest" {
             match action {
                 "opened" => { stats.mr_opened += 1; total.mr_opened += 1; }
@@ -678,8 +684,8 @@ pub async fn get_user_activity(
             project_ids.len()
         ),
         format!(
-            "**Totals:** {} pushes ({} commits), {} MRs opened, {} merged, {} approved",
-            total.pushes, total.commits, total.mr_opened, total.mr_merged, total.mr_approved
+            "**Totals:** {} pushes ({} commits, {} branch merges), {} MRs opened, {} merged, {} approved",
+            total.pushes, total.commits, total.merges, total.mr_opened, total.mr_merged, total.mr_approved
         ),
         String::new(),
     ];
@@ -707,7 +713,12 @@ pub async fn get_user_activity(
 
             let mut parts = Vec::new();
             if stats.pushes > 0 {
-                parts.push(format!("{} pushes ({} commits)", stats.pushes, stats.commits));
+                let merge_note = if stats.merges > 0 {
+                    format!(" + {} branch merge", stats.merges)
+                } else {
+                    String::new()
+                };
+                parts.push(format!("{} pushes ({} commits{})", stats.pushes, stats.commits, merge_note));
             }
             if stats.mr_opened > 0 {
                 parts.push(format!("{} MR opened", stats.mr_opened));
