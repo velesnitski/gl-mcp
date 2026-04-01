@@ -96,6 +96,244 @@ pub async fn list_merge_requests(
     Ok(lines.join("\n"))
 }
 
+/// Smart MR title from branch name: "feature/PROJ-123-add-oauth" → "PROJ-123: Add OAuth"
+fn title_from_branch(branch: &str) -> String {
+    // Strip known prefixes
+    let stripped = branch
+        .trim_start_matches("feature/")
+        .trim_start_matches("feat/")
+        .trim_start_matches("hotfix/")
+        .trim_start_matches("bugfix/")
+        .trim_start_matches("fix/")
+        .trim_start_matches("chore/")
+        .trim_start_matches("docs/")
+        .trim_start_matches("test/")
+        .trim_start_matches("ci/")
+        .trim_start_matches("refactor/");
+
+    // Check for ticket prefix like PROJ-123
+    let re = regex::Regex::new(r"^([A-Z]+-\d+)-?(.*)$").unwrap();
+    if let Some(caps) = re.captures(stripped) {
+        let ticket = &caps[1];
+        let rest = caps[2].replace('-', " ").replace('_', " ");
+        let rest = rest.trim();
+        if rest.is_empty() {
+            return ticket.to_string();
+        }
+        // Capitalize first letter
+        let mut chars = rest.chars();
+        let first = chars.next().unwrap().to_uppercase().to_string();
+        return format!("{ticket}: {first}{}", chars.as_str());
+    }
+
+    // No ticket — just humanize
+    let humanized = stripped.replace('-', " ").replace('_', " ");
+    let humanized = humanized.trim();
+    if humanized.is_empty() {
+        return branch.to_string();
+    }
+    let mut chars = humanized.chars();
+    let first = chars.next().unwrap().to_uppercase().to_string();
+    format!("{first}{}", chars.as_str())
+}
+
+/// Create a merge request with smart defaults.
+pub async fn create_merge_request(
+    client: &GitLabClient,
+    project_id: &str,
+    source_branch: &str,
+    target_branch: &str,
+    title: &str,
+    description: &str,
+    labels: &str,
+    assignee: &str,
+    reviewers: &str,
+    squash: bool,
+    remove_source_branch: bool,
+    draft: bool,
+) -> Result<String> {
+    let enc = urlencoding::encode(project_id);
+
+    // 1. Resolve target branch if empty — use project default
+    let actual_target = if target_branch.is_empty() {
+        let proj: Value = client
+            .get(&format!("/projects/{enc}"), &[])
+            .await?;
+        proj["default_branch"]
+            .as_str()
+            .unwrap_or("main")
+            .to_string()
+    } else {
+        target_branch.to_string()
+    };
+
+    // 2. Check source branch exists
+    let branches_path = format!("/projects/{enc}/repository/branches/{}", urlencoding::encode(source_branch));
+    let branch_check: std::result::Result<Value, _> = client.get(&branches_path, &[]).await;
+    if branch_check.is_err() {
+        return Ok(format!("**Error:** Source branch `{source_branch}` not found in project `{project_id}`."));
+    }
+
+    // 3. Check for existing open MR with same source→target
+    let existing: Vec<Value> = client
+        .get(
+            &format!("/projects/{enc}/merge_requests"),
+            &[
+                ("source_branch", source_branch),
+                ("target_branch", &actual_target),
+                ("state", "opened"),
+            ],
+        )
+        .await?;
+    if !existing.is_empty() {
+        let mr = &existing[0];
+        let iid = mr["iid"].as_u64().unwrap_or(0);
+        let url = mr["web_url"].as_str().unwrap_or("?");
+        return Ok(format!(
+            "**MR already exists:** !{iid} ({source_branch} → {actual_target})\n**URL:** {url}"
+        ));
+    }
+
+    // 4. Auto-generate title from branch if not provided
+    let actual_title = if title.is_empty() {
+        title_from_branch(source_branch)
+    } else {
+        title.to_string()
+    };
+
+    // 5. Auto-generate description from commits between source and target
+    let actual_description = if description.is_empty() {
+        let compare: Value = client
+            .get(
+                &format!("/projects/{enc}/repository/compare"),
+                &[("from", actual_target.as_str()), ("to", source_branch)],
+            )
+            .await
+            .unwrap_or(Value::Null);
+
+        let commits = compare["commits"].as_array();
+        if let Some(commits) = commits {
+            if commits.is_empty() {
+                String::new()
+            } else {
+                let mut lines = vec!["## Commits".to_string(), String::new()];
+                for c in commits.iter().rev() {
+                    let short = c["short_id"].as_str().unwrap_or("?");
+                    let msg = c["title"].as_str().unwrap_or("?");
+                    lines.push(format!("- `{short}` {msg}"));
+                }
+                lines.join("\n")
+            }
+        } else {
+            String::new()
+        }
+    } else {
+        description.to_string()
+    };
+
+    // 6. Resolve assignee and reviewer user IDs
+    let mut body = serde_json::json!({
+        "source_branch": source_branch,
+        "target_branch": actual_target,
+        "title": if draft { format!("Draft: {actual_title}") } else { actual_title.clone() },
+        "squash": squash,
+        "remove_source_branch": remove_source_branch,
+    });
+
+    if !actual_description.is_empty() {
+        body["description"] = Value::String(actual_description);
+    }
+
+    if !labels.is_empty() {
+        body["labels"] = Value::String(labels.to_string());
+    }
+
+    if !assignee.is_empty() {
+        // Resolve username to ID
+        let users: Vec<Value> = client
+            .get("/users", &[("username", assignee)])
+            .await
+            .unwrap_or_default();
+        if let Some(user) = users.first() {
+            if let Some(id) = user["id"].as_u64() {
+                body["assignee_id"] = Value::Number(id.into());
+            }
+        }
+    }
+
+    if !reviewers.is_empty() {
+        let mut reviewer_ids = Vec::new();
+        for username in reviewers.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            let users: Vec<Value> = client
+                .get("/users", &[("username", username)])
+                .await
+                .unwrap_or_default();
+            if let Some(user) = users.first() {
+                if let Some(id) = user["id"].as_u64() {
+                    reviewer_ids.push(Value::Number(id.into()));
+                }
+            }
+        }
+        if !reviewer_ids.is_empty() {
+            body["reviewer_ids"] = Value::Array(reviewer_ids);
+        }
+    }
+
+    // 7. Create the MR
+    let mr: Value = client
+        .post(&format!("/projects/{enc}/merge_requests"), &body)
+        .await?;
+
+    let iid = mr["iid"].as_u64().unwrap_or(0);
+    let web_url = mr["web_url"].as_str().unwrap_or("?");
+    let state = mr["state"].as_str().unwrap_or("?");
+    let mr_title = mr["title"].as_str().unwrap_or("?");
+    let src = mr["source_branch"].as_str().unwrap_or("?");
+    let tgt = mr["target_branch"].as_str().unwrap_or("?");
+
+    // 8. Get diff stats for summary
+    let changes: std::result::Result<Value, _> = client
+        .get(
+            &format!("/projects/{enc}/merge_requests/{iid}/changes"),
+            &[("access_raw_diffs", "false")],
+        )
+        .await;
+
+    let diff_stats = if let Ok(ch) = changes {
+        let files = ch["changes"].as_array().map(|a| a.len()).unwrap_or(0);
+        let adds: i64 = ch["changes"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|f| f["diff"].as_str())
+                    .flat_map(|d| d.lines())
+                    .filter(|l| l.starts_with('+') && !l.starts_with("+++"))
+                    .count() as i64
+            })
+            .unwrap_or(0);
+        let dels: i64 = ch["changes"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|f| f["diff"].as_str())
+                    .flat_map(|d| d.lines())
+                    .filter(|l| l.starts_with('-') && !l.starts_with("---"))
+                    .count() as i64
+            })
+            .unwrap_or(0);
+        format!("{files} files (+{adds}, -{dels})")
+    } else {
+        "unknown".to_string()
+    };
+
+    Ok(format!(
+        "**Created: !{iid}** [{state}] {mr_title}\n\
+         **Branch:** {src} → {tgt}\n\
+         **Changes:** {diff_stats}\n\
+         **URL:** {web_url}"
+    ))
+}
+
 /// Get a single merge request with details.
 pub async fn get_merge_request(
     client: &GitLabClient,

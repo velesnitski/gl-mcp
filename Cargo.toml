@@ -2,7 +2,7 @@
 name = "gl-mcp"
 version = "0.7.0"
 edition = "2024"
-description = "GitLab MCP server for Claude Code — 53 tools for projects, issues, MRs, CI/CD, code review, and team analytics"
+description = "GitLab MCP server for Claude Code — 54 tools for projects, issues, MRs, CI/CD, code review, and team analytics"
 license = "MIT"
 authors = ["Alex Velesnitski <velesnitski@gmail.com>"]
 repository = "https://github.com/velesnitski/gl-mcp"
