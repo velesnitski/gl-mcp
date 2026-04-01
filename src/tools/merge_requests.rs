@@ -12,10 +12,14 @@ pub async fn list_merge_requests(
     author: &str,
     scope: &str,
     created_after: &str,
+    opened_before: &str,
+    group_id: &str,
     per_page: u32,
 ) -> Result<String> {
     let per_page_str = per_page.to_string();
-    let path = if project_id.is_empty() {
+    let path = if !group_id.is_empty() {
+        format!("/groups/{}/merge_requests", urlencoding::encode(group_id))
+    } else if project_id.is_empty() {
         "/merge_requests".to_string()
     } else {
         format!(
@@ -40,6 +44,9 @@ pub async fn list_merge_requests(
     }
     if !created_after.is_empty() {
         params.push(("created_after", created_after));
+    }
+    if !opened_before.is_empty() {
+        params.push(("created_before", opened_before));
     }
 
     let mrs: Vec<Value> = client.get(&path, &params).await?;
@@ -71,8 +78,17 @@ pub async fn list_merge_requests(
         let created = mr["created_at"].as_str().unwrap_or("?");
         let created_short = if created.len() > 10 { &created[..10] } else { created };
 
+        let pipeline_status = mr["head_pipeline"]["status"].as_str().or(mr["pipeline"]["status"].as_str()).unwrap_or("none");
+        let ci = if pipeline_status != "none" { format!(" [CI: {pipeline_status}]") } else { String::new() };
+
+        let reviewers: Vec<&str> = mr["reviewers"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v["username"].as_str()).collect())
+            .unwrap_or_default();
+        let rev_str = if reviewers.is_empty() { String::new() } else { format!(" reviewers: {}", reviewers.iter().map(|r| format!("@{r}")).collect::<Vec<_>>().join(", ")) };
+
         lines.push(format!(
-            "- **{project}** [{state}]{draft} {title} ({source} → {target}) by @{author} ({created_short})"
+            "- **{project}** [{state}]{draft}{ci} {title} ({source} → {target}) by @{author} ({created_short}){rev_str}"
         ));
     }
 

@@ -21,6 +21,7 @@ mod flex {
         })
     }
 
+    #[allow(dead_code)]
     pub fn deserialize_opt_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
     where D: Deserializer<'de> {
         #[derive(Deserialize)]
@@ -70,6 +71,7 @@ use crate::client::GitLabClient;
 use crate::config::Config;
 use crate::logging::ToolTimer;
 use crate::resolver::Resolver;
+use crate::teams::Teams;
 use crate::tools;
 
 /// The MCP server.
@@ -77,6 +79,7 @@ use crate::tools;
 pub struct GlMcpServer {
     resolver: std::sync::Arc<Resolver>,
     config: std::sync::Arc<Config>,
+    teams: std::sync::Arc<std::sync::Mutex<Teams>>,
     tool_router: rmcp::handler::server::tool::ToolRouter<Self>,
 }
 
@@ -194,6 +197,8 @@ pub struct AddNoteParams {
 pub struct ListMergeRequestsParams {
     #[schemars(description = "Project ID or path (empty = all projects)")]
     project_id: Option<String>,
+    #[schemars(description = "Group path to list MRs across all group projects (e.g., 'mxp/backend')")]
+    group_id: Option<String>,
     #[schemars(description = "Filter by state: opened, closed, merged, all (default: opened)")]
     state: Option<String>,
     #[schemars(description = "Filter by author username")]
@@ -202,6 +207,8 @@ pub struct ListMergeRequestsParams {
     scope: Option<String>,
     #[schemars(description = "Only MRs created after this date (ISO, e.g., '2026-03-01')")]
     created_after: Option<String>,
+    #[schemars(description = "Only MRs created before this date (ISO). Use to find stale/old MRs.")]
+    opened_before: Option<String>,
     #[schemars(description = "Max results (default: 20)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     per_page: Option<u32>,
@@ -376,6 +383,43 @@ pub struct GetUserActivityParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetTeamActivityParams {
+    #[schemars(description = "Team key from teams.json (e.g., 'devops', 'backend') OR comma-separated usernames")]
+    team: String,
+    #[schemars(description = "Period: 'today', 'yesterday', 'week', '3d', or hours (default: 24)")]
+    period: Option<String>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetGroupActivityParams {
+    #[schemars(description = "Group path (e.g., 'mxp/backend')")]
+    group_path: String,
+    #[schemars(description = "Period: 'today', 'yesterday', 'week', '3d', or hours (default: 24)")]
+    period: Option<String>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListTeamsParams {}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SaveTeamParams {
+    #[schemars(description = "Team key (e.g., 'devops')")]
+    key: String,
+    #[schemars(description = "Team display name")]
+    name: String,
+    #[schemars(description = "Comma-separated GitLab usernames")]
+    usernames: String,
+    #[schemars(description = "Comma-separated project paths (optional)")]
+    projects: Option<String>,
+    #[schemars(description = "Comma-separated instance names per user (optional, matches usernames order)")]
+    instances: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct GenerateDevReportParams {
     #[schemars(description = "GitLab username")]
     username: String,
@@ -473,6 +517,54 @@ pub struct GetMrApprovalsParams {
     mr_iid: u64,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateFileParams {
+    #[schemars(description = "Project ID or path")]
+    project_id: String,
+    #[schemars(description = "File path in the repository (e.g., 'README.md')")]
+    file_path: String,
+    #[schemars(description = "File content")]
+    content: String,
+    #[schemars(description = "Branch name to commit to (must NOT be main/master/develop)")]
+    branch: String,
+    #[schemars(description = "Commit message")]
+    commit_message: String,
+    #[schemars(description = "Source branch to create from (default: main)")]
+    source_branch: Option<String>,
+    #[schemars(description = "Create a merge request after commit (default: true)")]
+    create_mr: Option<bool>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+// ─── Lint params ───
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ValidateCommitParams {
+    #[schemars(description = "Project ID or path")]
+    project_id: String,
+    #[schemars(description = "Commit SHA")]
+    sha: String,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ValidateMrParams {
+    #[schemars(description = "Project ID or path")]
+    project_id: String,
+    #[schemars(description = "Merge request IID")]
+    mr_iid: u64,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListRulesParams {
+    #[schemars(description = "Language filter: PHP, Kotlin, TypeScript, Ansible (empty = all)")]
+    language: Option<String>,
 }
 
 // ─── Helpers ───
@@ -573,9 +665,15 @@ macro_rules! tool_call {
 impl GlMcpServer {
     pub fn new(config: Config) -> Self {
         let resolver = std::sync::Arc::new(Resolver::new(&config));
+        let teams = Teams::load();
+        let team_count = teams.list().len();
+        if team_count > 0 {
+            eprintln!("Loaded {} teams from teams.json", team_count);
+        }
         Self {
             resolver,
             config: std::sync::Arc::new(config),
+            teams: std::sync::Arc::new(std::sync::Mutex::new(teams)),
             tool_router: Self::tool_router(),
         }
     }
@@ -662,11 +760,11 @@ impl GlMcpServer {
 
     // ─── Merge Requests ───
 
-    #[tool(description = "List merge requests. Filter by project, state, author, scope, created_after.")]
+    #[tool(description = "List merge requests. Filter by project, group, state, author, scope, created_after, opened_before.")]
     async fn list_merge_requests(&self, Parameters(p): Parameters<ListMergeRequestsParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         tool_call!(self, "list_merge_requests",
-            tools::merge_requests::list_merge_requests(client, p.project_id.as_deref().unwrap_or(""), p.state.as_deref().unwrap_or("opened"), p.author.as_deref().unwrap_or(""), p.scope.as_deref().unwrap_or("all"), p.created_after.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
+            tools::merge_requests::list_merge_requests(client, p.project_id.as_deref().unwrap_or(""), p.state.as_deref().unwrap_or("opened"), p.author.as_deref().unwrap_or(""), p.scope.as_deref().unwrap_or("all"), p.created_after.as_deref().unwrap_or(""), p.opened_before.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
         )
     }
 
@@ -777,6 +875,106 @@ impl GlMcpServer {
         )
     }
 
+    #[tool(description = "Get team activity. Pass team key from teams.json (e.g., 'devops') or comma-separated usernames.")]
+    async fn get_team_activity(&self, Parameters(p): Parameters<GetTeamActivityParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        let hours = parse_period(p.period.as_deref().unwrap_or("24"));
+
+        // Resolve: team key from teams.json OR raw usernames
+        let raw_usernames: Vec<String> = {
+            let teams = self.teams.lock().unwrap();
+            if let Some(team) = teams.get(&p.team) {
+                team.members.iter().map(|m| m.username.clone()).collect()
+            } else {
+                p.team.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+            }
+        };
+        let usernames: Vec<&str> = raw_usernames.iter().map(|s| s.as_str()).collect();
+
+        tool_call!(self, "get_team_activity",
+            tools::commits::get_team_activity(client, &usernames, hours).await
+        )
+    }
+
+    #[tool(description = "Get activity for all members of a GitLab group. Auto-discovers members, no config needed.")]
+    async fn get_group_activity(&self, Parameters(p): Parameters<GetGroupActivityParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        let hours = parse_period(p.period.as_deref().unwrap_or("24"));
+        tool_call!(self, "get_group_activity",
+            tools::commits::get_group_activity(client, &p.group_path, hours).await
+        )
+    }
+
+    #[tool(description = "List configured teams from ~/.gl-mcp/teams.json")]
+    async fn list_teams(&self, Parameters(_p): Parameters<ListTeamsParams>) -> Result<CallToolResult, McpError> {
+        let teams = self.teams.lock().unwrap();
+        let list = teams.list();
+        if list.is_empty() {
+            return Ok(CallToolResult::success(vec![Content::text(
+                "No teams configured. Use save_team to add teams, or create ~/.gl-mcp/teams.json manually."
+            )]));
+        }
+        let mut lines = vec![format!("**Teams: {}**\n", list.len())];
+        for (key, team) in &list {
+            let members: Vec<&str> = team.members.iter().map(|m| m.username.as_str()).collect();
+            let projects: String = if team.projects.is_empty() {
+                "–".into()
+            } else {
+                team.projects.join(", ")
+            };
+            lines.push(format!(
+                "- **{}** ({}): {} | projects: {}",
+                key, team.name, members.join(", "), projects
+            ));
+        }
+        Ok(CallToolResult::success(vec![Content::text(lines.join("\n"))]))
+    }
+
+    #[tool(description = "Save a team to ~/.gl-mcp/teams.json (not committed to repo)")]
+    async fn save_team(&self, Parameters(p): Parameters<SaveTeamParams>) -> Result<CallToolResult, McpError> {
+        let instances_list: Vec<&str> = p.instances
+            .as_deref()
+            .unwrap_or("")
+            .split(',')
+            .map(|s| s.trim())
+            .collect();
+
+        let members: Vec<crate::teams::TeamMember> = p.usernames
+            .split(',')
+            .enumerate()
+            .map(|(i, s)| {
+                let username = s.trim().to_string();
+                let instance = instances_list.get(i).and_then(|s| {
+                    if s.is_empty() { None } else { Some(s.to_string()) }
+                });
+                crate::teams::TeamMember { username, name: String::new(), instance }
+            })
+            .filter(|m| !m.username.is_empty())
+            .collect();
+
+        let projects: Vec<String> = p.projects
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        let team = crate::teams::Team {
+            name: p.name.clone(),
+            members,
+            projects,
+        };
+
+        let mut teams = self.teams.lock().unwrap();
+        teams.set(p.key.clone(), team);
+        teams.save().map_err(|e| McpError::internal_error(format!("Failed to save teams.json: {e}"), None))?;
+
+        let count = teams.list().len();
+        Ok(CallToolResult::success(vec![Content::text(
+            format!("Saved team '{}' ({}). Total teams: {count}. File: ~/.gl-mcp/teams.json", p.key, p.name)
+        )]))
+    }
+
     #[tool(description = "Generate a complete HTML daily report for a developer. Returns full HTML with dark theme, commits, diffs, open MRs, and quality notes. Save to file and open in browser.")]
     async fn generate_dev_report(&self, Parameters(p): Parameters<GenerateDevReportParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
@@ -833,6 +1031,44 @@ impl GlMcpServer {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         tool_call!(self, "get_mr_approvals",
             tools::repository::get_mr_approvals(client, &p.project_id, p.mr_iid).await
+        )
+    }
+
+    #[tool(description = "Create or update a file in a GitLab repo. Always commits to a new branch (never main), optionally creates MR. Use for README fixes, translations, config updates.")]
+    async fn update_file(&self, Parameters(p): Parameters<UpdateFileParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "update_file");
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "update_file",
+            tools::repository::update_file(
+                client, &p.project_id, &p.file_path, &p.content, &p.branch,
+                &p.commit_message, p.source_branch.as_deref().unwrap_or(""),
+                p.create_mr.unwrap_or(true),
+            ).await
+        )
+    }
+
+    // ─── Lint ───
+
+    #[tool(description = "Validate a commit against coding rules (regex-based, zero LLM tokens). Returns only violations grouped by severity.")]
+    async fn validate_commit(&self, Parameters(p): Parameters<ValidateCommitParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "validate_commit",
+            tools::lint::validate_commit(client, &p.project_id, &p.sha).await
+        )
+    }
+
+    #[tool(description = "Validate all commits in a merge request against coding rules. Returns only violations.")]
+    async fn validate_mr(&self, Parameters(p): Parameters<ValidateMrParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "validate_mr",
+            tools::lint::validate_mr(client, &p.project_id, p.mr_iid).await
+        )
+    }
+
+    #[tool(description = "List available coding rules, optionally filtered by language.")]
+    async fn list_rules(&self, Parameters(p): Parameters<ListRulesParams>) -> Result<CallToolResult, McpError> {
+        tool_call!(self, "list_rules",
+            Ok::<String, crate::error::Error>(tools::lint::list_rules(p.language.as_deref().unwrap_or("")))
         )
     }
 }
