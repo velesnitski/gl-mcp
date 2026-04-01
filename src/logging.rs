@@ -6,7 +6,6 @@
 //! - Persistent instance_id
 //! - Safe param extraction (whitelist)
 
-use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -153,36 +152,6 @@ fn add_sentry_breadcrumb(tool: &str, duration_ms: u128, status: &str, error: Opt
     }
 }
 
-/// Parameters safe to log (no tokens, no secrets).
-#[allow(dead_code)]
-const SAFE_PARAMS: &[&str] = &[
-    "project_id", "query", "search", "instance", "state",
-    "scope", "per_page", "page", "ref_name", "branch",
-    "source_branch", "target_branch", "milestone",
-];
-
-/// Extract safe parameters from a JSON value for analytics.
-#[allow(dead_code)]
-pub fn extract_safe_params(params: &serde_json::Value) -> serde_json::Value {
-    if let Some(obj) = params.as_object() {
-        let safe: serde_json::Map<String, serde_json::Value> = obj
-            .iter()
-            .filter(|(k, _)| SAFE_PARAMS.contains(&k.as_str()))
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        serde_json::Value::Object(safe)
-    } else {
-        serde_json::Value::Null
-    }
-}
-
-/// Hash parameters for privacy-safe analytics.
-#[allow(dead_code)]
-pub fn hash_params(params: &serde_json::Value) -> String {
-    let bytes = serde_json::to_vec(params).unwrap_or_default();
-    let hash = Sha256::digest(&bytes);
-    format!("{:x}", hash)[..16].to_string()
-}
 
 /// Analytics event for tool calls.
 #[derive(serde::Serialize)]

@@ -9,7 +9,6 @@ use crate::tools::commits::detect_language;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::path::Path;
 
 // ─── Rule types ───
 
@@ -72,20 +71,6 @@ pub struct Violation {
 }
 
 // ─── Rule loading ───
-
-/// Map language name to rule file name.
-fn language_to_rule_file(lang: &str) -> Option<&str> {
-    match lang {
-        "PHP" => Some("php"),
-        "Kotlin" | "Java" => Some("kotlin"),
-        "TypeScript" | "JavaScript" | "Vue" => Some("typescript"),
-        "YAML/Ansible" | "Shell" => Some("ansible"),
-        "Go" => Some("go"),
-        "Rust" => Some("rust"),
-        "Python" => Some("python"),
-        _ => None,
-    }
-}
 
 /// Load rules from embedded strings (compiled into binary).
 /// Falls back to rules/ directory if available.
