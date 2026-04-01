@@ -22,6 +22,7 @@ use crate::server::GlMcpServer;
 async fn main() -> anyhow::Result<()> {
     // Logging to stderr (stdout is reserved for JSON-RPC)
     logging::setup_logging();
+    logging::setup_sentry();
     let instance_id = logging::instance_id();
     eprintln!("gl-mcp v{} starting (instance: {instance_id})", env!("CARGO_PKG_VERSION"));
 

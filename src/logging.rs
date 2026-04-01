@@ -14,6 +14,9 @@ use std::sync::OnceLock;
 use std::time::Instant;
 use uuid::Uuid;
 
+/// Sentry guard — must be held alive for the lifetime of the process.
+static SENTRY_GUARD: OnceLock<Option<sentry::ClientInitGuard>> = OnceLock::new();
+
 /// Persistent instance ID (8-char UUID).
 static INSTANCE_ID: OnceLock<String> = OnceLock::new();
 
@@ -61,6 +64,88 @@ pub fn setup_logging() {
         .with_writer(std::io::stderr)
         .with_target(false)
         .init();
+}
+
+/// Initialize Sentry if SENTRY_DSN is set.
+pub fn setup_sentry() {
+    SENTRY_GUARD.get_or_init(|| {
+        let dsn = std::env::var("SENTRY_DSN").ok()?;
+        if dsn.is_empty() {
+            return None;
+        }
+
+        let guard = sentry::init(sentry::ClientOptions {
+            dsn: dsn.parse().ok(),
+            release: Some(format!("gl-mcp@{}", env!("CARGO_PKG_VERSION")).into()),
+            environment: std::env::var("SENTRY_ENVIRONMENT")
+                .ok()
+                .map(Into::into)
+                .or(Some("production".into())),
+            sample_rate: 1.0,
+            traces_sample_rate: 0.0,
+            send_default_pii: false,
+            before_send: Some(std::sync::Arc::new(|mut event| {
+                // Scrub any token-like strings from exception messages
+                for e in event.exception.values.iter_mut() {
+                    if let Some(ref val) = e.value {
+                        e.value = Some(scrub_tokens(val));
+                    }
+                }
+                Some(event)
+            })),
+            ..Default::default()
+        });
+
+        sentry::configure_scope(|scope| {
+            scope.set_tag("instance_id", instance_id());
+        });
+
+        eprintln!("gl-mcp: Sentry enabled");
+        Some(guard)
+    });
+}
+
+/// Scrub GitLab tokens and other secrets from strings.
+fn scrub_tokens(s: &str) -> String {
+    let re = regex::Regex::new(r"glpat-[A-Za-z0-9_\-\.]+").unwrap();
+    re.replace_all(s, "glpat-[REDACTED]").to_string()
+}
+
+/// Add a Sentry breadcrumb for a tool call.
+fn add_sentry_breadcrumb(tool: &str, duration_ms: u128, status: &str, error: Option<&str>) {
+    if !sentry::Hub::current().client().is_some() {
+        return;
+    }
+    let mut data = std::collections::BTreeMap::new();
+    data.insert("tool".to_string(), sentry::protocol::Value::from(tool));
+    data.insert("duration_ms".to_string(), sentry::protocol::Value::from(duration_ms as f64));
+    data.insert("status".to_string(), sentry::protocol::Value::from(status));
+    if let Some(err) = error {
+        data.insert("error".to_string(), sentry::protocol::Value::from(err));
+    }
+
+    sentry::add_breadcrumb(sentry::Breadcrumb {
+        ty: "default".into(),
+        category: Some("tool_call".into()),
+        message: Some(format!("{tool}: {status} ({duration_ms}ms)")),
+        data,
+        level: if status == "error" {
+            sentry::Level::Error
+        } else {
+            sentry::Level::Info
+        },
+        ..Default::default()
+    });
+
+    // Capture errors as Sentry events
+    if status == "error" {
+        if let Some(err) = error {
+            sentry::capture_message(
+                &format!("Tool error: {tool}: {err}"),
+                sentry::Level::Error,
+            );
+        }
+    }
 }
 
 /// Parameters safe to log (no tokens, no secrets).
@@ -151,16 +236,18 @@ impl ToolTimer {
     }
 
     pub fn finish(&self, status: &str, response_size: usize, error: Option<String>) {
+        let duration_ms = self.start.elapsed().as_millis();
         let event = AnalyticsEvent {
             ts: chrono::Utc::now().to_rfc3339(),
             tool: self.tool_name.clone(),
-            duration_ms: self.start.elapsed().as_millis(),
+            duration_ms,
             status: status.to_string(),
             instance: instance_id().to_string(),
             params: self.params.clone(),
             response_size,
-            error,
+            error: error.clone(),
         };
         log_analytics(&event);
+        add_sentry_breadcrumb(&self.tool_name, duration_ms, status, error.as_deref());
     }
 }
