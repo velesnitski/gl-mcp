@@ -71,6 +71,7 @@ use crate::client::GitLabClient;
 use crate::config::Config;
 use crate::logging::ToolTimer;
 use crate::resolver::Resolver;
+use crate::teams::Teams;
 use crate::tools;
 
 /// The MCP server.
@@ -78,6 +79,7 @@ use crate::tools;
 pub struct GlMcpServer {
     resolver: std::sync::Arc<Resolver>,
     config: std::sync::Arc<Config>,
+    teams: std::sync::Arc<std::sync::Mutex<Teams>>,
     tool_router: rmcp::handler::server::tool::ToolRouter<Self>,
 }
 
@@ -378,12 +380,27 @@ pub struct GetUserActivityParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetTeamActivityParams {
-    #[schemars(description = "Comma-separated GitLab usernames")]
-    usernames: String,
+    #[schemars(description = "Team key from teams.json (e.g., 'devops', 'backend') OR comma-separated usernames")]
+    team: String,
     #[schemars(description = "Period: 'today', 'yesterday', 'week', '3d', or hours (default: 24)")]
     period: Option<String>,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListTeamsParams {}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SaveTeamParams {
+    #[schemars(description = "Team key (e.g., 'devops')")]
+    key: String,
+    #[schemars(description = "Team display name")]
+    name: String,
+    #[schemars(description = "Comma-separated GitLab usernames")]
+    usernames: String,
+    #[schemars(description = "Comma-separated project paths (optional)")]
+    projects: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -612,9 +629,15 @@ macro_rules! tool_call {
 impl GlMcpServer {
     pub fn new(config: Config) -> Self {
         let resolver = std::sync::Arc::new(Resolver::new(&config));
+        let teams = Teams::load();
+        let team_count = teams.list().len();
+        if team_count > 0 {
+            eprintln!("Loaded {} teams from teams.json", team_count);
+        }
         Self {
             resolver,
             config: std::sync::Arc::new(config),
+            teams: std::sync::Arc::new(std::sync::Mutex::new(teams)),
             tool_router: Self::tool_router(),
         }
     }
@@ -816,14 +839,82 @@ impl GlMcpServer {
         )
     }
 
-    #[tool(description = "Get team activity — multiple users in one call. Returns table with commits, MRs, projects per person.")]
+    #[tool(description = "Get team activity. Pass team key from teams.json (e.g., 'devops') or comma-separated usernames.")]
     async fn get_team_activity(&self, Parameters(p): Parameters<GetTeamActivityParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         let hours = parse_period(p.period.as_deref().unwrap_or("24"));
-        let usernames: Vec<&str> = p.usernames.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+
+        // Resolve: team key from teams.json OR raw usernames
+        let raw_usernames: Vec<String> = {
+            let teams = self.teams.lock().unwrap();
+            if let Some(team) = teams.get(&p.team) {
+                team.members.iter().map(|m| m.username.clone()).collect()
+            } else {
+                p.team.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+            }
+        };
+        let usernames: Vec<&str> = raw_usernames.iter().map(|s| s.as_str()).collect();
+
         tool_call!(self, "get_team_activity",
             tools::commits::get_team_activity(client, &usernames, hours).await
         )
+    }
+
+    #[tool(description = "List configured teams from ~/.gl-mcp/teams.json")]
+    async fn list_teams(&self, Parameters(_p): Parameters<ListTeamsParams>) -> Result<CallToolResult, McpError> {
+        let teams = self.teams.lock().unwrap();
+        let list = teams.list();
+        if list.is_empty() {
+            return Ok(CallToolResult::success(vec![Content::text(
+                "No teams configured. Use save_team to add teams, or create ~/.gl-mcp/teams.json manually."
+            )]));
+        }
+        let mut lines = vec![format!("**Teams: {}**\n", list.len())];
+        for (key, team) in &list {
+            let members: Vec<&str> = team.members.iter().map(|m| m.username.as_str()).collect();
+            let projects: String = if team.projects.is_empty() {
+                "–".into()
+            } else {
+                team.projects.join(", ")
+            };
+            lines.push(format!(
+                "- **{}** ({}): {} | projects: {}",
+                key, team.name, members.join(", "), projects
+            ));
+        }
+        Ok(CallToolResult::success(vec![Content::text(lines.join("\n"))]))
+    }
+
+    #[tool(description = "Save a team to ~/.gl-mcp/teams.json (not committed to repo)")]
+    async fn save_team(&self, Parameters(p): Parameters<SaveTeamParams>) -> Result<CallToolResult, McpError> {
+        let members: Vec<crate::teams::TeamMember> = p.usernames
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|u| crate::teams::TeamMember { username: u.to_string(), name: String::new() })
+            .collect();
+
+        let projects: Vec<String> = p.projects
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        let team = crate::teams::Team {
+            name: p.name.clone(),
+            members,
+            projects,
+        };
+
+        let mut teams = self.teams.lock().unwrap();
+        teams.set(p.key.clone(), team);
+        teams.save().map_err(|e| McpError::internal_error(format!("Failed to save teams.json: {e}"), None))?;
+
+        let count = teams.list().len();
+        Ok(CallToolResult::success(vec![Content::text(
+            format!("Saved team '{}' ({}). Total teams: {count}. File: ~/.gl-mcp/teams.json", p.key, p.name)
+        )]))
     }
 
     #[tool(description = "Generate a complete HTML daily report for a developer. Returns full HTML with dark theme, commits, diffs, open MRs, and quality notes. Save to file and open in browser.")]
