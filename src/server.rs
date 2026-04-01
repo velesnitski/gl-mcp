@@ -197,6 +197,8 @@ pub struct AddNoteParams {
 pub struct ListMergeRequestsParams {
     #[schemars(description = "Project ID or path (empty = all projects)")]
     project_id: Option<String>,
+    #[schemars(description = "Group path to list MRs across all group projects (e.g., 'mxp/backend')")]
+    group_id: Option<String>,
     #[schemars(description = "Filter by state: opened, closed, merged, all (default: opened)")]
     state: Option<String>,
     #[schemars(description = "Filter by author username")]
@@ -205,6 +207,8 @@ pub struct ListMergeRequestsParams {
     scope: Option<String>,
     #[schemars(description = "Only MRs created after this date (ISO, e.g., '2026-03-01')")]
     created_after: Option<String>,
+    #[schemars(description = "Only MRs created before this date (ISO). Use to find stale/old MRs.")]
+    opened_before: Option<String>,
     #[schemars(description = "Max results (default: 20)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     per_page: Option<u32>,
@@ -389,6 +393,16 @@ pub struct GetTeamActivityParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetGroupActivityParams {
+    #[schemars(description = "Group path (e.g., 'mxp/backend')")]
+    group_path: String,
+    #[schemars(description = "Period: 'today', 'yesterday', 'week', '3d', or hours (default: 24)")]
+    period: Option<String>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListTeamsParams {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -401,6 +415,8 @@ pub struct SaveTeamParams {
     usernames: String,
     #[schemars(description = "Comma-separated project paths (optional)")]
     projects: Option<String>,
+    #[schemars(description = "Comma-separated instance names per user (optional, matches usernames order)")]
+    instances: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -744,11 +760,11 @@ impl GlMcpServer {
 
     // ─── Merge Requests ───
 
-    #[tool(description = "List merge requests. Filter by project, state, author, scope, created_after.")]
+    #[tool(description = "List merge requests. Filter by project, group, state, author, scope, created_after, opened_before.")]
     async fn list_merge_requests(&self, Parameters(p): Parameters<ListMergeRequestsParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         tool_call!(self, "list_merge_requests",
-            tools::merge_requests::list_merge_requests(client, p.project_id.as_deref().unwrap_or(""), p.state.as_deref().unwrap_or("opened"), p.author.as_deref().unwrap_or(""), p.scope.as_deref().unwrap_or("all"), p.created_after.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
+            tools::merge_requests::list_merge_requests(client, p.project_id.as_deref().unwrap_or(""), p.state.as_deref().unwrap_or("opened"), p.author.as_deref().unwrap_or(""), p.scope.as_deref().unwrap_or("all"), p.created_after.as_deref().unwrap_or(""), p.opened_before.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
         )
     }
 
@@ -880,6 +896,15 @@ impl GlMcpServer {
         )
     }
 
+    #[tool(description = "Get activity for all members of a GitLab group. Auto-discovers members, no config needed.")]
+    async fn get_group_activity(&self, Parameters(p): Parameters<GetGroupActivityParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        let hours = parse_period(p.period.as_deref().unwrap_or("24"));
+        tool_call!(self, "get_group_activity",
+            tools::commits::get_group_activity(client, &p.group_path, hours).await
+        )
+    }
+
     #[tool(description = "List configured teams from ~/.gl-mcp/teams.json")]
     async fn list_teams(&self, Parameters(_p): Parameters<ListTeamsParams>) -> Result<CallToolResult, McpError> {
         let teams = self.teams.lock().unwrap();
@@ -907,11 +932,24 @@ impl GlMcpServer {
 
     #[tool(description = "Save a team to ~/.gl-mcp/teams.json (not committed to repo)")]
     async fn save_team(&self, Parameters(p): Parameters<SaveTeamParams>) -> Result<CallToolResult, McpError> {
-        let members: Vec<crate::teams::TeamMember> = p.usernames
+        let instances_list: Vec<&str> = p.instances
+            .as_deref()
+            .unwrap_or("")
             .split(',')
             .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|u| crate::teams::TeamMember { username: u.to_string(), name: String::new() })
+            .collect();
+
+        let members: Vec<crate::teams::TeamMember> = p.usernames
+            .split(',')
+            .enumerate()
+            .map(|(i, s)| {
+                let username = s.trim().to_string();
+                let instance = instances_list.get(i).and_then(|s| {
+                    if s.is_empty() { None } else { Some(s.to_string()) }
+                });
+                crate::teams::TeamMember { username, name: String::new(), instance }
+            })
+            .filter(|m| !m.username.is_empty())
             .collect();
 
         let projects: Vec<String> = p.projects

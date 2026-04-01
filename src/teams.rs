@@ -11,6 +11,8 @@ pub struct TeamMember {
     pub username: String,
     #[serde(default)]
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
