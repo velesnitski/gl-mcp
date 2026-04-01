@@ -539,6 +539,54 @@ pub struct UpdateFileParams {
     instance: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetMrTurnaroundParams {
+    #[schemars(description = "Project ID or path (optional if group_id set)")]
+    project_id: Option<String>,
+    #[schemars(description = "Group path for cross-project stats (e.g., 'my-org/backend')")]
+    group_id: Option<String>,
+    #[schemars(description = "Number of days to analyze (default: 7)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    days: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListEnvironmentsParams {
+    #[schemars(description = "Project ID or path")]
+    project_id: String,
+    #[schemars(description = "Max results (default: 20)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    per_page: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetContributorsParams {
+    #[schemars(description = "Project ID or path")]
+    project_id: String,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetApprovalRulesParams {
+    #[schemars(description = "Project ID or path")]
+    project_id: String,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetMrDashboardParams {
+    #[schemars(description = "Group path (e.g., 'my-org/backend')")]
+    group_id: String,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
 // ─── Lint params ───
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -773,6 +821,22 @@ impl GlMcpServer {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         tool_call!(self, "get_merge_request",
             tools::merge_requests::get_merge_request(client, &p.project_id, p.mr_iid, p.include_notes.unwrap_or(true)).await
+        )
+    }
+
+    #[tool(description = "Get MR review turnaround stats: avg/median time to merge, slowest MRs, per-author breakdown.")]
+    async fn get_mr_turnaround(&self, Parameters(p): Parameters<GetMrTurnaroundParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        tool_call!(self, "get_mr_turnaround",
+            tools::merge_requests::get_mr_turnaround(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.days.unwrap_or(7)).await
+        )
+    }
+
+    #[tool(description = "Compact MR dashboard for a group: open count, avg age, reviewer bottlenecks, stale MRs.")]
+    async fn get_mr_dashboard(&self, Parameters(p): Parameters<GetMrDashboardParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        tool_call!(self, "get_mr_dashboard",
+            tools::merge_requests::get_mr_dashboard(client, &p.group_id).await
         )
     }
 
@@ -1044,6 +1108,30 @@ impl GlMcpServer {
                 &p.commit_message, p.source_branch.as_deref().unwrap_or(""),
                 p.create_mr.unwrap_or(true),
             ).await
+        )
+    }
+
+    #[tool(description = "List project environments with last deployment info (SHA, branch, status, deployer).")]
+    async fn list_environments(&self, Parameters(p): Parameters<ListEnvironmentsParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "list_environments",
+            tools::repository::list_environments(client, &p.project_id, p.per_page.unwrap_or(20)).await
+        )
+    }
+
+    #[tool(description = "Get all-time contributor stats: commits, additions, deletions per person.")]
+    async fn get_contributors(&self, Parameters(p): Parameters<GetContributorsParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "get_contributors",
+            tools::repository::get_contributors(client, &p.project_id).await
+        )
+    }
+
+    #[tool(description = "Get project-level MR approval rules: who must approve, required count.")]
+    async fn get_approval_rules(&self, Parameters(p): Parameters<GetApprovalRulesParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "get_approval_rules",
+            tools::repository::get_approval_rules(client, &p.project_id).await
         )
     }
 
