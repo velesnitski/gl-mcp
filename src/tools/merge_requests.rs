@@ -16,6 +16,7 @@ pub async fn list_merge_requests(
     opened_before: &str,
     group_id: &str,
     per_page: u32,
+    summary_only: bool,
 ) -> Result<String> {
     let per_page_str = per_page.to_string();
     let path = if !group_id.is_empty() {
@@ -54,6 +55,21 @@ pub async fn list_merge_requests(
 
     if mrs.is_empty() {
         return Ok("No merge requests found.".to_string());
+    }
+
+    if summary_only {
+        // Compact: one line per MR, pipe-delimited
+        let mut lines = vec![format!("{} merge requests", mrs.len())];
+        for mr in &mrs {
+            let iid = mr["iid"].as_u64().unwrap_or(0);
+            let title = mr["title"].as_str().unwrap_or("?");
+            let state = mr["state"].as_str().unwrap_or("?");
+            let author = mr["author"]["username"].as_str().unwrap_or("?");
+            let project = mr["references"]["full"].as_str().unwrap_or("?");
+            let draft = if mr["draft"].as_bool().unwrap_or(false) { "D" } else { "" };
+            lines.push(format!("{project}!{iid}|{state}{draft}|{author}|{title}"));
+        }
+        return Ok(lines.join("\n"));
     }
 
     let mut lines = vec![format!("**Found: {} merge requests**\n", mrs.len())];
@@ -112,7 +128,9 @@ fn title_from_branch(branch: &str) -> String {
         .trim_start_matches("refactor/");
 
     // Check for ticket prefix like PROJ-123
-    let re = regex::Regex::new(r"^([A-Z]+-\d+)-?(.*)$").unwrap();
+    static RE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"^([A-Z]+-\d+)-?(.*)$").unwrap());
+    let re = &*RE;
     if let Some(caps) = re.captures(stripped) {
         let ticket = &caps[1];
         let rest = caps[2].replace('-', " ").replace('_', " ");

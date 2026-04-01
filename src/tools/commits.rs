@@ -262,21 +262,6 @@ fn format_full_diffs(
     parts
 }
 
-// ─── Response size warning ───
-
-const RESPONSE_SIZE_WARN: usize = 15000;
-
-fn maybe_warn_size(text: &str) -> String {
-    if text.len() > RESPONSE_SIZE_WARN {
-        let kb = text.len() / 1024;
-        format!(
-            "*Warning: Large response ({kb}KB). Use `summary_only=true` or `file=\"specific.php\"` to reduce token usage.*\n\n{text}"
-        )
-    } else {
-        text.to_string()
-    }
-}
-
 // ─── Tool implementations ───
 
 /// List commits for a project.
@@ -288,6 +273,7 @@ pub async fn list_commits(
     since: &str,
     until: &str,
     per_page: u32,
+    summary_only: bool,
 ) -> Result<String> {
     let per_page_str = per_page.to_string();
     let path = format!(
@@ -325,6 +311,18 @@ pub async fn list_commits(
 
     if commits.is_empty() {
         return Ok("No commits found.".to_string());
+    }
+
+    if summary_only {
+        // Compact: one line per commit
+        let mut lines = vec![format!("{} commits", commits.len())];
+        for c in &commits {
+            let sha = c["short_id"].as_str().unwrap_or("?");
+            let title = c["title"].as_str().unwrap_or("?");
+            let author = c["author_name"].as_str().unwrap_or("?");
+            lines.push(format!("{sha}|{author}|{title}"));
+        }
+        return Ok(lines.join("\n"));
     }
 
     let mut by_author: BTreeMap<String, Vec<&&Value>> = BTreeMap::new();
@@ -412,7 +410,7 @@ pub async fn get_commit_diff(
     }
 
     let result = parts.join("\n");
-    Ok(maybe_warn_size(&result))
+    Ok(result)
 }
 
 /// Get MR changes (aggregated diff across all commits).
@@ -470,7 +468,7 @@ pub async fn get_mr_changes(
     }
 
     let result = parts.join("\n");
-    Ok(maybe_warn_size(&result))
+    Ok(result)
 }
 
 /// Get file content at a specific ref.
@@ -513,7 +511,7 @@ pub async fn get_file_content(
     ];
 
     let result = parts.join("\n");
-    Ok(maybe_warn_size(&result))
+    Ok(result)
 }
 
 /// Get user activity (events) for the last N hours.

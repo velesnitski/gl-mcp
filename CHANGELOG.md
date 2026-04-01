@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `create_merge_request` - smart MR creation with auto-title from branch name, auto-description from commits, duplicate detection, reviewer/assignee resolution
 - Sentry error tracking (optional, via `SENTRY_DSN` env var) with tool call breadcrumbs and PII scrubbing
+- `summary_only` parameter for `list_merge_requests` and `list_commits` (~3-5x smaller responses)
+- Global response size warning (>15KB) in `tool_call!` macro — all 54 tools now auto-warn
+
+### Changed
+- `GitLabClient::new` returns `Result` instead of panicking on invalid tokens
+- Reports capped at 50 commits / 10 projects to prevent unbounded responses
+
+### Fixed
+- Regex in `create_merge_request` title parser now compiled once via `LazyLock`
+
+### Removed
+- Dead code: `extract_safe_params`, `hash_params`, `SAFE_PARAMS`, `deserialize_opt_u64`, `default_client`, `language_to_rule_file`
+- `sha2` dependency (no longer needed)
 
 ## [0.7.0] - 2026-04-01
 
