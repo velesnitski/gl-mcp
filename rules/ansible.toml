@@ -1,0 +1,55 @@
+# Ansible / YAML / Infrastructure rules
+
+[[rule]]
+id = "ANS001"
+severity = "critical"
+name = "Plain text password"
+pattern = '(?i)(password|passwd|secret):\s*["\x27]?[A-Za-z0-9]{6,}'
+negative_pattern = '(?i)(vault|{{|lookup|no_log)'
+message = "Plain text password — use ansible-vault or variable lookup"
+
+[[rule]]
+id = "ANS002"
+severity = "warning"
+name = "Missing no_log on sensitive task"
+pattern = '(?i)(password|token|secret|key|credential)'
+negative_pattern = 'no_log:\s*true'
+message = "Task handles sensitive data without no_log: true"
+
+[[rule]]
+id = "ANS003"
+severity = "warning"
+name = "Hardcoded IP address"
+pattern = '\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b'
+negative_pattern = '(127\.0\.0\.1|0\.0\.0\.0|localhost|inventory|host_vars|group_vars)'
+message = "Hardcoded IP — use inventory variables"
+
+[[rule]]
+id = "ANS004"
+severity = "info"
+name = "Shell instead of module"
+pattern = '^\s*(shell|command|raw):'
+message = "Using shell/command — prefer Ansible modules for idempotency"
+
+[[rule]]
+id = "ANS005"
+severity = "warning"
+name = "Missing become for privileged task"
+pattern = '(apt|yum|systemd|service|mount|iptables):'
+negative_pattern = 'become:\s*(yes|true)'
+message = "Privileged module without become: true"
+
+[[rule]]
+id = "ANS006"
+severity = "critical"
+name = "chmod 777"
+pattern = 'mode:\s*["\x27]?0?777'
+message = "chmod 777 is insecure — use least-privilege permissions"
+
+[[rule]]
+id = "ANS007"
+severity = "warning"
+name = "Docker image without tag"
+pattern = 'image:\s*["\x27]?[a-z0-9/]+["\x27]?\s*$'
+negative_pattern = '(image:.*:|image:.*@sha256)'
+message = "Docker image without version tag — pin to specific version"
