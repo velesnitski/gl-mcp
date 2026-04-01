@@ -315,3 +315,97 @@ pub async fn get_mr_approvals(
 
     Ok(lines.join("\n"))
 }
+
+/// Create or update a file in a GitLab repository.
+/// Always creates a new branch — never writes to main/master directly.
+pub async fn update_file(
+    client: &GitLabClient,
+    project_id: &str,
+    file_path: &str,
+    content: &str,
+    branch: &str,
+    commit_message: &str,
+    source_branch: &str,
+    create_mr: bool,
+) -> Result<String> {
+    let encoded_project = urlencoding::encode(project_id);
+    let encoded_file = urlencoding::encode(file_path);
+
+    // Safety: never write to main/master/develop directly
+    let protected = ["main", "master", "develop", "release", "production"];
+    if protected.iter().any(|p| branch.eq_ignore_ascii_case(p)) {
+        return Err(Error::Other(format!(
+            "Cannot write directly to protected branch '{branch}'. Use a feature branch."
+        )));
+    }
+
+    let from_branch = if source_branch.is_empty() { "main" } else { source_branch };
+
+    // Check if file exists (create vs update)
+    let action = {
+        let check = client
+            .get::<Value>(
+                &format!("/projects/{encoded_project}/repository/files/{encoded_file}"),
+                &[("ref", from_branch)],
+            )
+            .await;
+        if check.is_ok() { "update" } else { "create" }
+    };
+
+    // Commit via commits API (handles branch creation automatically)
+    let payload = serde_json::json!({
+        "branch": branch,
+        "start_branch": from_branch,
+        "commit_message": commit_message,
+        "actions": [{
+            "action": action,
+            "file_path": file_path,
+            "content": content,
+        }]
+    });
+
+    let result: Value = client
+        .post(&format!("/projects/{encoded_project}/repository/commits"), &payload)
+        .await?;
+
+    let sha = result["id"].as_str().unwrap_or("?");
+    let short_sha = if sha.len() > 8 { &sha[..8] } else { sha };
+    let web_url = result["web_url"].as_str().unwrap_or("");
+
+    let mut lines = vec![
+        format!("**{action}d** `{file_path}` on branch `{branch}`"),
+        format!("**Commit:** `{short_sha}` — {commit_message}"),
+    ];
+
+    if !web_url.is_empty() {
+        lines.push(format!("**URL:** {web_url}"));
+    }
+
+    if create_mr {
+        let mr_payload = serde_json::json!({
+            "source_branch": branch,
+            "target_branch": from_branch,
+            "title": commit_message,
+            "remove_source_branch": true,
+        });
+
+        match client
+            .post::<Value>(
+                &format!("/projects/{encoded_project}/merge_requests"),
+                &mr_payload,
+            )
+            .await
+        {
+            Ok(mr) => {
+                let mr_iid = mr["iid"].as_u64().unwrap_or(0);
+                let mr_url = mr["web_url"].as_str().unwrap_or("");
+                lines.push(format!("**MR:** !{mr_iid} — {mr_url}"));
+            }
+            Err(e) => {
+                lines.push(format!("**MR creation failed:** {e}"));
+            }
+        }
+    }
+
+    Ok(lines.join("\n"))
+}

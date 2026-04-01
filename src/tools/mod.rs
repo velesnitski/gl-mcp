@@ -19,6 +19,7 @@ pub const WRITE_TOOLS: &[&str] = &[
     "retry_pipeline",
     "cancel_pipeline",
     "save_team",
+    "update_file",
 ];
 
 /// Check if a tool should be available given config.
