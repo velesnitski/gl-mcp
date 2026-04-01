@@ -85,11 +85,15 @@ pub fn setup_sentry() {
             traces_sample_rate: 0.0,
             send_default_pii: false,
             before_send: Some(std::sync::Arc::new(|mut event| {
-                // Scrub any token-like strings from exception messages
+                // Scrub token-like strings from exception values
                 for e in event.exception.values.iter_mut() {
                     if let Some(ref val) = e.value {
                         e.value = Some(scrub_tokens(val));
                     }
+                }
+                // Scrub message field
+                if let Some(ref msg) = event.message {
+                    event.message = Some(scrub_tokens(msg));
                 }
                 Some(event)
             })),
@@ -107,13 +111,14 @@ pub fn setup_sentry() {
 
 /// Scrub GitLab tokens and other secrets from strings.
 fn scrub_tokens(s: &str) -> String {
-    let re = regex::Regex::new(r"glpat-[A-Za-z0-9_\-\.]+").unwrap();
-    re.replace_all(s, "glpat-[REDACTED]").to_string()
+    static RE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"glpat-[A-Za-z0-9_\-\.]+").unwrap());
+    RE.replace_all(s, "glpat-[REDACTED]").to_string()
 }
 
 /// Add a Sentry breadcrumb for a tool call.
 fn add_sentry_breadcrumb(tool: &str, duration_ms: u128, status: &str, error: Option<&str>) {
-    if !sentry::Hub::current().client().is_some() {
+    if sentry::Hub::current().client().is_none() {
         return;
     }
     let mut data = std::collections::BTreeMap::new();
