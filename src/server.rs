@@ -377,6 +377,16 @@ pub struct GetUserActivityParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetTeamActivityParams {
+    #[schemars(description = "Comma-separated GitLab usernames")]
+    usernames: String,
+    #[schemars(description = "Period: 'today', 'yesterday', 'week', '3d', or hours (default: 24)")]
+    period: Option<String>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct GenerateDevReportParams {
     #[schemars(description = "GitLab username")]
     username: String,
@@ -803,6 +813,16 @@ impl GlMcpServer {
         let hours = parse_period(p.period.as_deref().unwrap_or("24"));
         tool_call!(self, "get_user_activity",
             tools::commits::get_user_activity(client, &p.username, hours).await
+        )
+    }
+
+    #[tool(description = "Get team activity — multiple users in one call. Returns table with commits, MRs, projects per person.")]
+    async fn get_team_activity(&self, Parameters(p): Parameters<GetTeamActivityParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        let hours = parse_period(p.period.as_deref().unwrap_or("24"));
+        let usernames: Vec<&str> = p.usernames.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        tool_call!(self, "get_team_activity",
+            tools::commits::get_team_activity(client, &usernames, hours).await
         )
     }
 
