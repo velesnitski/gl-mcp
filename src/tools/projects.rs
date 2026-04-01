@@ -198,3 +198,102 @@ pub async fn list_branches(
 
     Ok(lines.join("\n"))
 }
+
+/// Find stale branches: merged but not deleted, or inactive for N days.
+pub async fn get_stale_branches(
+    client: &GitLabClient,
+    project_id: &str,
+    inactive_days: u32,
+) -> Result<String> {
+    let encoded = urlencoding::encode(project_id);
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(inactive_days as i64);
+    let cutoff_ts = cutoff.timestamp();
+
+    // Fetch all branches (paginate)
+    let mut all_branches: Vec<Value> = Vec::new();
+    let mut page = 1u32;
+    loop {
+        let page_str = page.to_string();
+        let branches: Vec<Value> = client.get(
+            &format!("/projects/{encoded}/repository/branches"),
+            &[("per_page", "100"), ("page", &page_str)],
+        ).await?;
+        if branches.is_empty() { break; }
+        let count = branches.len();
+        all_branches.extend(branches);
+        if count < 100 { break; }
+        page += 1;
+        if page > 10 { break; } // cap at 1000 branches
+    }
+
+    if all_branches.is_empty() {
+        return Ok(format!("No branches found for {project_id}."));
+    }
+
+    let total = all_branches.len();
+    let mut stale: Vec<(String, String, String, bool)> = Vec::new(); // (name, last_commit_date, author, is_merged)
+
+    for b in &all_branches {
+        let name = b["name"].as_str().unwrap_or("?");
+        let is_default = b["default"].as_bool().unwrap_or(false);
+        let is_protected = b["protected"].as_bool().unwrap_or(false);
+        let merged = b["merged"].as_bool().unwrap_or(false);
+
+        // Skip default and protected branches
+        if is_default || is_protected { continue; }
+
+        let committed_date = b["commit"]["committed_date"]
+            .as_str()
+            .or(b["commit"]["created_at"].as_str())
+            .unwrap_or("");
+
+        let is_old = chrono::DateTime::parse_from_rfc3339(committed_date)
+            .ok()
+            .map(|dt| dt.timestamp() < cutoff_ts)
+            .unwrap_or(false);
+
+        if merged || is_old {
+            let date_short = if committed_date.len() > 10 { &committed_date[..10] } else { committed_date };
+            let author = b["commit"]["author_name"].as_str().unwrap_or("?");
+            stale.push((name.to_string(), date_short.to_string(), author.to_string(), merged));
+        }
+    }
+
+    if stale.is_empty() {
+        return Ok(format!("No stale branches in {project_id} ({total} branches, cutoff: {inactive_days} days)."));
+    }
+
+    let merged_count = stale.iter().filter(|s| s.3).count();
+    let inactive_count = stale.iter().filter(|s| !s.3).count();
+
+    let mut lines = vec![
+        format!("**Stale Branches: {project_id}** ({} stale / {total} total)\n", stale.len()),
+        format!("| Type | Count |"),
+        format!("|------|-------|"),
+        format!("| Merged (safe to delete) | {merged_count} |"),
+        format!("| Inactive (>{inactive_days}d, not merged) | {inactive_count} |"),
+    ];
+
+    // List merged first (safe to delete)
+    if merged_count > 0 {
+        lines.push(String::new());
+        lines.push("**Merged (safe to delete):**".to_string());
+        for (name, date, author, merged) in &stale {
+            if *merged {
+                lines.push(format!("- `{name}` last: {date} by {author}"));
+            }
+        }
+    }
+
+    if inactive_count > 0 {
+        lines.push(String::new());
+        lines.push(format!("**Inactive (>{inactive_days}d, NOT merged):**"));
+        for (name, date, author, merged) in &stale {
+            if !*merged {
+                lines.push(format!("- `{name}` last: {date} by {author}"));
+            }
+        }
+    }
+
+    Ok(lines.join("\n"))
+}

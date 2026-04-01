@@ -46,10 +46,10 @@ pub async fn generate_dev_report(
         mr_approved: u64,
     }
     let mut by_project: BTreeMap<u64, ProjectStats> = BTreeMap::new();
-    let mut total_commits: u64 = 0;
+    let mut _total_commits: u64 = 0;
     let mut total_additions: u64 = 0;
     let mut total_deletions: u64 = 0;
-    let mut total_mr_opened: u64 = 0;
+    let mut _total_mr_opened: u64 = 0;
     let mut total_mr_merged: u64 = 0;
 
     for event in &events {
@@ -66,10 +66,10 @@ pub async fn generate_dev_report(
             stats.pushes += 1;
             stats.commits += if is_merge { 1 } else { raw };
             if is_merge { stats.merges += 1; }
-            total_commits += if is_merge { 1 } else { raw };
+            _total_commits += if is_merge { 1 } else { raw };
         } else if target_type == "MergeRequest" {
             match action {
-                "opened" => { stats.mr_opened += 1; total_mr_opened += 1; }
+                "opened" => { stats.mr_opened += 1; _total_mr_opened += 1; }
                 "accepted" => { stats.mr_merged += 1; total_mr_merged += 1; }
                 "approved" => { stats.mr_approved += 1; }
                 _ => {}
@@ -78,6 +78,7 @@ pub async fn generate_dev_report(
     }
 
     // 5. For each active project, fetch recent commits by this author and their diffs
+    #[allow(dead_code)]
     struct CommitInfo {
         sha: String,
         short_sha: String,

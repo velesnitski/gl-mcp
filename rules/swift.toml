@@ -1,0 +1,97 @@
+# Swift / iOS rules
+
+[[rule]]
+id = "SW001"
+severity = "warning"
+name = "print() left in code"
+pattern = '\bprint\s*\('
+negative_pattern = '(logger|os_log|Logger)'
+message = "print() left in code — use OSLog or Logger"
+
+[[rule]]
+id = "SW002"
+severity = "warning"
+name = "Force unwrap"
+pattern = '[a-zA-Z0-9_]+!'
+negative_pattern = '(IBOutlet|IBAction|@objc|!=|!\.)'
+message = "Force unwrap (!) — use guard let, if let, or ??"
+
+[[rule]]
+id = "SW003"
+severity = "warning"
+name = "Force try"
+pattern = '\btry!'
+message = "try! will crash on error — use try? or do/catch"
+
+[[rule]]
+id = "SW004"
+severity = "warning"
+name = "Force cast"
+pattern = '\bas!\s'
+message = "Force cast (as!) — use as? with optional binding"
+
+[[rule]]
+id = "SW005"
+severity = "critical"
+name = "Hardcoded API key"
+pattern = '(?i)(apiKey|api_key|accessToken)\s*[:=]\s*"[A-Za-z0-9_-]{10,}'
+message = "Hardcoded API key — use Keychain or config"
+
+[[rule]]
+id = "SW006"
+severity = "warning"
+name = "DispatchQueue.main.sync"
+pattern = 'DispatchQueue\.main\.sync'
+message = "DispatchQueue.main.sync can deadlock — use .async"
+
+[[rule]]
+id = "SW007"
+severity = "info"
+name = "Large class"
+applies_to = "file_stats"
+max_additions = 300
+message = "Large file change — consider splitting into extensions or separate types"
+
+[[rule]]
+id = "SW008"
+severity = "warning"
+name = "NSLog usage"
+pattern = '\bNSLog\s*\('
+message = "NSLog is slow — use os_log or Logger"
+
+[[rule]]
+id = "SW009"
+severity = "warning"
+name = "Retain cycle risk"
+pattern = '\{\s*\[?\s*self\b'
+negative_pattern = '\[weak self\]|\[unowned self\]'
+message = "Closure captures self strongly — use [weak self] to avoid retain cycles"
+
+[[rule]]
+id = "SW010"
+severity = "critical"
+name = "UserDefaults for sensitive data"
+pattern = 'UserDefaults.*(?i)(password|token|secret|key)'
+message = "UserDefaults is not secure — use Keychain for sensitive data"
+
+[[rule]]
+id = "SW011"
+severity = "warning"
+name = "sleep() in code"
+pattern = 'Thread\.sleep\|usleep\s*\('
+message = "Thread.sleep blocks thread — use Task.sleep or DispatchQueue.asyncAfter"
+
+[[rule]]
+id = "SW012"
+severity = "info"
+name = "Hardcoded string in UI"
+pattern = '(Text|Label)\s*\(\s*"[A-Za-z]{3,}'
+negative_pattern = '(NSLocalizedString|LocalizedStringKey|\.localized|Localizable)'
+message = "Hardcoded UI string — use localization"
+
+[[rule]]
+id = "SW013"
+severity = "info"
+name = "Commented-out code"
+pattern = '^\s*//\s*(let|var|func|if|guard|return|class|import|override|case)\b'
+message = "Commented-out code — remove or use version control"

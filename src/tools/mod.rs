@@ -9,6 +9,7 @@ pub mod pipelines;
 pub mod commits;
 pub mod reports;
 pub mod repository;
+pub mod lint;
 
 /// Tools that modify data — blocked in read-only mode.
 pub const WRITE_TOOLS: &[&str] = &[
@@ -17,6 +18,8 @@ pub const WRITE_TOOLS: &[&str] = &[
     "add_note",
     "retry_pipeline",
     "cancel_pipeline",
+    "save_team",
+    "update_file",
 ];
 
 /// Check if a tool should be available given config.

@@ -1,6 +1,10 @@
 # gl-mcp
 
-GitLab MCP server for Claude Code. Single Rust binary, 4MB, 16 tools.
+[![CI](https://github.com/velesnitski/gl-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/velesnitski/gl-mcp/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.7.0-green.svg)](CHANGELOG.md)
+
+GitLab MCP server for Claude Code. Single Rust binary, ~5MB, 53 tools.
 
 ## Quick Start
 
@@ -26,15 +30,17 @@ EOF
 
 Restart Claude Code. The `gitlab` MCP server will be available.
 
-## Tools (16)
+## Tools (53)
 
-### Projects
+### Projects & Branches
 | Tool | Description |
 |------|-------------|
 | `list_projects` | List accessible projects |
 | `get_project` | Project details (stars, forks, topics) |
 | `list_members` | Project members with access levels |
 | `list_group_projects` | All projects in a group (with subgroups) |
+| `list_branches` | List branches, filtered by name |
+| `get_stale_branches` | Find merged-but-not-deleted and inactive branches |
 
 ### Issues
 | Tool | Description |
@@ -42,18 +48,30 @@ Restart Claude Code. The `gitlab` MCP server will be available.
 | `search_issues` | Search across projects, filter by state/labels/assignee |
 | `get_issue` | Full details with description and comments |
 | `create_issue` | Create issue with labels and assignee |
+| `update_issue` | Update title, description, state, labels, assignee |
+| `add_note` | Add comment to issue or MR |
 
 ### Merge Requests
 | Tool | Description |
 |------|-------------|
-| `list_merge_requests` | List MRs, filter by state/scope |
+| `list_merge_requests` | List MRs with pipeline status, reviewers; filter by group/state/author/date |
 | `get_merge_request` | Full MR details with pipeline status and comments |
+| `get_mr_turnaround` | Avg/median merge time, per-author and per-merger breakdown |
+| `get_mr_dashboard` | Compact group dashboard: open count, avg age, reviewer bottlenecks |
+| `get_mr_review_depth` | Comments/discussions per MR, zero-review detection |
+| `get_mr_categories` | Classify MRs by branch convention (feature/hotfix/bugfix/chore) |
+| `get_mr_timeline` | Decompose merge time into queue vs review phases |
+| `get_org_mr_dashboard` | Cross-group MR aggregation with reviewer load |
+| `get_cross_instance_dashboard` | Aggregate MR stats across multiple GitLab instances |
 
 ### CI/CD Pipelines
 | Tool | Description |
 |------|-------------|
 | `list_pipelines` | List pipelines, filter by status/ref |
 | `get_pipeline` | Pipeline details with jobs grouped by stage |
+| `get_job_log` | Job log output (tail N lines) |
+| `retry_pipeline` | Retry a failed pipeline |
+| `cancel_pipeline` | Cancel a running pipeline |
 
 ### Commits & Code Review
 | Tool | Description |
@@ -62,7 +80,38 @@ Restart Claude Code. The `gitlab` MCP server will be available.
 | `get_commit_diff` | Commit diff with smart filtering and language grouping |
 | `get_mr_changes` | MR unified diff with smart filtering |
 | `get_file_content` | File content at any branch/tag/SHA |
-| `get_user_activity` | Developer metrics: commits, MRs opened/merged/approved |
+| `get_user_activity` | Developer daily activity across all projects |
+| `get_team_activity` | Multiple users in one call (from teams.json or comma-separated) |
+| `get_group_activity` | Auto-discover group members and aggregate activity |
+
+### Repository
+| Tool | Description |
+|------|-------------|
+| `search_code` | Search code with regex, returns file paths and snippets |
+| `get_languages` | Project language breakdown with visual bars |
+| `get_tree` | Repository directory listing (recursive optional) |
+| `compare_branches` | Compare two refs with commit and file lists |
+| `list_tags` | Tags/releases with commit info |
+| `get_mr_approvals` | MR approval status: who approved, how many remaining |
+| `get_approval_rules` | Project-level approval rules configuration |
+| `get_contributors` | All-time contributor stats (commits, LOC per person) |
+| `list_environments` | Environments with last deployment info |
+| `get_deploy_frequency` | DORA metric: deploys per day by environment and deployer |
+| `update_file` | Create/update file with branch protection and auto-MR |
+
+### Lint & Quality
+| Tool | Description |
+|------|-------------|
+| `validate_commit` | Regex-based commit validation (zero LLM tokens) |
+| `validate_mr` | Validate all commits in an MR against coding rules |
+| `list_rules` | Show available rules by language |
+
+### Teams & Reports
+| Tool | Description |
+|------|-------------|
+| `list_teams` | Show configured teams from `~/.gl-mcp/teams.json` |
+| `save_team` | Create/update team config |
+| `generate_dev_report` | Full HTML daily report with dark theme |
 
 ## Token Compression
 
