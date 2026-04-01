@@ -86,3 +86,17 @@ name = "No newline at EOF"
 applies_to = "file_end"
 pattern = '\\No newline at end of file'
 message = "Missing newline at end of file (PSR-12)"
+
+[[rule]]
+id = "PHP013"
+severity = "info"
+name = "Commented-out code"
+pattern = '^\s*//\s*\$\w+.*[;={]|^\s*//\s*(return|if|foreach|while|class|function|public|private|protected)\b'
+message = "Commented-out code — remove or use version control"
+
+[[rule]]
+id = "PHP014"
+severity = "info"
+name = "TODO without ticket"
+pattern = '//\s*TODO(?!.*\b[A-Z]+-\d+)'
+message = "TODO without issue reference — add ticket ID"
