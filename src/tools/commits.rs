@@ -750,6 +750,144 @@ pub async fn get_user_activity(
     Ok(lines.join("\n"))
 }
 
+/// Get team activity — multiple users in one call.
+pub async fn get_team_activity(
+    client: &GitLabClient,
+    usernames: &[&str],
+    hours: u32,
+) -> Result<String> {
+    let since = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
+    let since_ts = since.timestamp();
+
+    struct UserSummary {
+        display_name: String,
+        events: u64,
+        pushes: u64,
+        commits: u64,
+        merges: u64,
+        mr_opened: u64,
+        mr_merged: u64,
+        mr_approved: u64,
+        projects: std::collections::BTreeSet<String>,
+    }
+
+    let mut all_project_ids: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
+    let mut user_summaries: Vec<(String, UserSummary)> = Vec::new();
+
+    for &username in usernames {
+        // Resolve user
+        let users: Vec<serde_json::Value> = client
+            .get("/users", &[("username", username)])
+            .await?;
+
+        let user = match users.first() {
+            Some(u) => u,
+            None => continue,
+        };
+        let user_id = match user["id"].as_u64() {
+            Some(id) => id,
+            None => continue,
+        };
+        let display_name = user["name"].as_str().unwrap_or(username).to_string();
+
+        // Fetch events
+        let events = fetch_user_events(client, user_id, since_ts).await?;
+
+        let mut summary = UserSummary {
+            display_name,
+            events: events.len() as u64,
+            pushes: 0, commits: 0, merges: 0,
+            mr_opened: 0, mr_merged: 0, mr_approved: 0,
+            projects: std::collections::BTreeSet::new(),
+        };
+
+        for event in &events {
+            let action = event["action_name"].as_str().unwrap_or("");
+            let target_type = event["target_type"].as_str().unwrap_or("");
+
+            if let Some(pid) = event["project_id"].as_u64() {
+                summary.projects.insert(pid.to_string());
+                all_project_ids.insert(pid);
+            }
+
+            if action == "pushed to" || action == "pushed new" {
+                let raw = event["push_data"]["commit_count"].as_u64().unwrap_or(1);
+                let is_merge = raw > 20;
+                summary.pushes += 1;
+                summary.commits += if is_merge { 1 } else { raw };
+                if is_merge { summary.merges += 1; }
+            } else if target_type == "MergeRequest" {
+                match action {
+                    "opened" => summary.mr_opened += 1,
+                    "accepted" => summary.mr_merged += 1,
+                    "approved" => summary.mr_approved += 1,
+                    _ => {}
+                }
+            }
+        }
+
+        user_summaries.push((username.to_string(), summary));
+    }
+
+    if user_summaries.is_empty() {
+        return Ok("No users found.".to_string());
+    }
+
+    // Resolve project names
+    let project_names = resolve_project_names(client, &all_project_ids).await;
+
+    // Format
+    let total_events: u64 = user_summaries.iter().map(|(_, s)| s.events).sum();
+    let total_commits: u64 = user_summaries.iter().map(|(_, s)| s.commits).sum();
+
+    let mut lines = vec![
+        format!("## Team Activity ({} members, last {hours}h)", user_summaries.len()),
+        format!("**Total:** {total_events} events, {total_commits} commits, {} projects\n", all_project_ids.len()),
+        format!(
+            "| Developer | Events | Commits | MRs opened | MRs merged | Approved | Projects |"
+        ),
+        "|-----------|--------|---------|------------|------------|----------|----------|".to_string(),
+    ];
+
+    // Sort by events descending
+    user_summaries.sort_by(|a, b| b.1.events.cmp(&a.1.events));
+
+    for (username, s) in &user_summaries {
+        let proj_names: Vec<String> = s.projects.iter().filter_map(|pid_str| {
+            pid_str.parse::<u64>().ok().and_then(|pid| {
+                project_names.get(&pid).map(|name| {
+                    name.rsplit('/').next().unwrap_or(name).to_string()
+                })
+            })
+        }).collect();
+
+        let proj_str = if proj_names.is_empty() {
+            "–".to_string()
+        } else {
+            proj_names.join(", ")
+        };
+
+        lines.push(format!(
+            "| @{} ({}) | {} | {} | {} | {} | {} | {} |",
+            username, s.display_name,
+            s.events, s.commits, s.mr_opened, s.mr_merged, s.mr_approved, proj_str
+        ));
+    }
+
+    // Flag inactive users
+    let inactive: Vec<&str> = user_summaries.iter()
+        .filter(|(_, s)| s.events == 0)
+        .map(|(u, _)| u.as_str())
+        .collect();
+
+    if !inactive.is_empty() {
+        lines.push(String::new());
+        lines.push(format!("**Inactive:** {}", inactive.join(", ")));
+    }
+
+    Ok(lines.join("\n"))
+}
+
 /// List projects in a GitLab group (with subgroups).
 pub async fn list_group_projects(
     client: &GitLabClient,
