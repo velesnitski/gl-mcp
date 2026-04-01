@@ -409,3 +409,140 @@ pub async fn update_file(
 
     Ok(lines.join("\n"))
 }
+
+/// List project environments (deployments).
+pub async fn list_environments(
+    client: &GitLabClient,
+    project_id: &str,
+    per_page: u32,
+) -> Result<String> {
+    let encoded = urlencoding::encode(project_id);
+    let per_page_str = per_page.to_string();
+
+    let envs: Vec<Value> = client
+        .get(
+            &format!("/projects/{encoded}/environments"),
+            &[("per_page", &per_page_str)],
+        )
+        .await?;
+
+    if envs.is_empty() {
+        return Ok(format!("No environments found for {project_id}."));
+    }
+
+    let mut lines = vec![format!("**{project_id} — {} environments**\n", envs.len())];
+
+    for env in &envs {
+        let name = env["name"].as_str().unwrap_or("?");
+        let state = env["state"].as_str().unwrap_or("?");
+        let url = env["external_url"].as_str().unwrap_or("");
+
+        let deploy = &env["last_deployment"];
+        let deploy_info = if deploy.is_null() {
+            "no deployments".to_string()
+        } else {
+            let sha = deploy["sha"].as_str().unwrap_or("?");
+            let short_sha = if sha.len() > 8 { &sha[..8] } else { sha };
+            let ref_name = deploy["ref"].as_str().unwrap_or("?");
+            let status = deploy["status"].as_str().unwrap_or("?");
+            let created = deploy["created_at"].as_str().unwrap_or("?");
+            let date_short = if created.len() > 16 { &created[..16] } else { created };
+            let deployer = deploy["user"]["username"].as_str().unwrap_or("?");
+            format!("`{short_sha}` on `{ref_name}` [{status}] by @{deployer} ({date_short})")
+        };
+
+        let url_str = if url.is_empty() { String::new() } else { format!(" — {url}") };
+        lines.push(format!("- **{name}** [{state}]{url_str}"));
+        lines.push(format!("  Last deploy: {deploy_info}"));
+    }
+
+    Ok(lines.join("\n"))
+}
+
+/// Get project contributor stats (all-time).
+pub async fn get_contributors(
+    client: &GitLabClient,
+    project_id: &str,
+) -> Result<String> {
+    let encoded = urlencoding::encode(project_id);
+
+    let contributors: Vec<Value> = client
+        .get(&format!("/projects/{encoded}/repository/contributors"), &[("order_by", "commits"), ("sort", "desc")])
+        .await?;
+
+    if contributors.is_empty() {
+        return Ok(format!("No contributor data for {project_id}."));
+    }
+
+    let total_commits: u64 = contributors.iter().map(|c| c["commits"].as_u64().unwrap_or(0)).sum();
+    let total_add: u64 = contributors.iter().map(|c| c["additions"].as_u64().unwrap_or(0)).sum();
+    let total_del: u64 = contributors.iter().map(|c| c["deletions"].as_u64().unwrap_or(0)).sum();
+
+    let mut lines = vec![
+        format!("**{project_id} — {} contributors**", contributors.len()),
+        format!("**Total:** {total_commits} commits, +{total_add} -{total_del}\n"),
+        format!("| Contributor | Commits | Additions | Deletions | % |"),
+        format!("|------------|---------|-----------|-----------|---|"),
+    ];
+
+    for c in contributors.iter().take(20) {
+        let name = c["name"].as_str().unwrap_or("?");
+        let email = c["email"].as_str().unwrap_or("?");
+        let commits = c["commits"].as_u64().unwrap_or(0);
+        let additions = c["additions"].as_u64().unwrap_or(0);
+        let deletions = c["deletions"].as_u64().unwrap_or(0);
+        let pct = if total_commits > 0 { commits as f64 / total_commits as f64 * 100.0 } else { 0.0 };
+
+        lines.push(format!("| {name} ({email}) | {commits} | +{additions} | -{deletions} | {pct:.0}% |"));
+    }
+
+    if contributors.len() > 20 {
+        lines.push(format!("| ...and {} more | | | | |", contributors.len() - 20));
+    }
+
+    Ok(lines.join("\n"))
+}
+
+/// Get project-level MR approval rules.
+pub async fn get_approval_rules(
+    client: &GitLabClient,
+    project_id: &str,
+) -> Result<String> {
+    let encoded = urlencoding::encode(project_id);
+
+    let rules: Vec<Value> = client
+        .get(&format!("/projects/{encoded}/approval_rules"), &[])
+        .await?;
+
+    if rules.is_empty() {
+        return Ok(format!("No approval rules configured for {project_id}."));
+    }
+
+    let mut lines = vec![format!("**{project_id} — {} approval rules**\n", rules.len())];
+
+    for rule in &rules {
+        let name = rule["name"].as_str().unwrap_or("?");
+        let approvals_required = rule["approvals_required"].as_u64().unwrap_or(0);
+        let rule_type = rule["rule_type"].as_str().unwrap_or("?");
+
+        let eligible: Vec<&str> = rule["eligible_approvers"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v["username"].as_str()).collect())
+            .unwrap_or_default();
+
+        let groups: Vec<&str> = rule["groups"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v["name"].as_str()).collect())
+            .unwrap_or_default();
+
+        lines.push(format!("- **{name}** (type: {rule_type}, required: {approvals_required})"));
+        if !eligible.is_empty() {
+            lines.push(format!("  Approvers: {}", eligible.iter().map(|u| format!("@{u}")).collect::<Vec<_>>().join(", ")));
+        }
+        if !groups.is_empty() {
+            lines.push(format!("  Groups: {}", groups.join(", ")));
+        }
+    }
+
+    Ok(lines.join("\n"))
+}
