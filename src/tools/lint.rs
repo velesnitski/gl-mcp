@@ -18,6 +18,30 @@ pub struct RuleFile {
     pub rule: Vec<Rule>,
 }
 
+/// Max violations per rule per file before collapsing.
+const MAX_VIOLATIONS_PER_RULE_PER_FILE: usize = 3;
+
+/// Files to always skip during linting (data files, generated, binary-like).
+const SKIP_FILE_EXTENSIONS: &[&str] = &[
+    ".list", ".csv", ".tsv", ".dat", ".log",
+    ".lock", ".sum", ".map",
+    ".min.js", ".min.css",
+    ".png", ".jpg", ".gif", ".ico", ".svg", ".woff", ".woff2", ".ttf",
+    ".zip", ".tar", ".gz",
+];
+
+const SKIP_FILE_PATTERNS: &[&str] = &[
+    "vendor/", "node_modules/", "dist/", "build/",
+    "__generated__", ".pb.go",
+    "package-lock.json", "yarn.lock", "composer.lock",
+    "go.sum", "Cargo.lock",
+];
+
+fn should_skip_lint_file(path: &str) -> bool {
+    SKIP_FILE_EXTENSIONS.iter().any(|ext| path.ends_with(ext))
+        || SKIP_FILE_PATTERNS.iter().any(|pat| path.contains(pat))
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct Rule {
     pub id: String,
@@ -181,9 +205,19 @@ pub async fn validate_commit(
     }
 
     // Check each diff file
+    // Track per-rule-per-file violation counts for capping
+    let mut rule_file_counts: BTreeMap<(String, String), usize> = BTreeMap::new();
+    let mut suppressed: BTreeMap<(String, String), usize> = BTreeMap::new();
+
     for diff in &diffs {
         let file_path = diff["new_path"].as_str().unwrap_or("?");
         let diff_text = diff["diff"].as_str().unwrap_or("");
+
+        // Skip data files, generated code, binary-like files
+        if should_skip_lint_file(file_path) {
+            continue;
+        }
+
         let lang = detect_language(file_path);
         let rules = load_rules_for_language(lang);
 
@@ -202,15 +236,23 @@ pub async fn validate_commit(
             for rule in &rules {
                 if rule.applies_to.is_empty() || rule.applies_to == "line" {
                     if matches_rule(rule, clean_line, file_path) {
-                        violations.push(Violation {
-                            rule_id: rule.id.clone(),
-                            severity: rule.severity.clone(),
-                            name: rule.name.clone(),
-                            file: file_path.to_string(),
-                            line: i + 1,
-                            code: clean_line.chars().take(120).collect(),
-                            message: rule.message.clone(),
-                        });
+                        let key = (rule.id.clone(), file_path.to_string());
+                        let count = rule_file_counts.entry(key.clone()).or_insert(0);
+                        *count += 1;
+
+                        if *count <= MAX_VIOLATIONS_PER_RULE_PER_FILE {
+                            violations.push(Violation {
+                                rule_id: rule.id.clone(),
+                                severity: rule.severity.clone(),
+                                name: rule.name.clone(),
+                                file: file_path.to_string(),
+                                line: i + 1,
+                                code: clean_line.chars().take(120).collect(),
+                                message: rule.message.clone(),
+                            });
+                        } else {
+                            *suppressed.entry(key).or_insert(0) += 1;
+                        }
                     }
                 }
             }
@@ -259,11 +301,14 @@ pub async fn validate_commit(
         by_severity.entry(v.severity.clone()).or_default().push(v);
     }
 
+    let total_suppressed: usize = suppressed.values().sum();
+    let total_shown = violations.len();
+
     let severity_order = ["critical", "warning", "info"];
     let mut lines = vec![
         format!(
             "**{project_id} `{short_sha}`** by {author} — **{} violations** ({} files)",
-            violations.len(),
+            total_shown + total_suppressed,
             diffs.len()
         ),
         String::new(),
@@ -295,6 +340,15 @@ pub async fn validate_commit(
                 ));
             }
             lines.push(String::new());
+        }
+    }
+
+    // Show suppressed violations summary
+    if total_suppressed > 0 {
+        lines.push(format!("*{total_suppressed} more violations suppressed (max {MAX_VIOLATIONS_PER_RULE_PER_FILE} per rule per file):*"));
+        for ((rule_id, file), count) in &suppressed {
+            let short_file = file.rsplit('/').next().unwrap_or(file);
+            lines.push(format!("- [{rule_id}] {short_file}: +{count} more"));
         }
     }
 
