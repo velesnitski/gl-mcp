@@ -48,9 +48,17 @@ pub fn detect_language(path: &str) -> &str {
         Some("xml") => "XML",
         Some("md") => "Markdown",
         Some("gradle") => "Gradle",
+        Some("j2") => "Jinja2/Ansible",
+        Some("cfg" | "ini" | "conf") => "Config",
+        Some("csv") => "CSV",
+        Some("tf" | "tfvars") => "Terraform",
+        Some("hcl") => "HCL",
         _ if path.contains("Dockerfile") => "Docker",
         _ if path.contains("Makefile") => "Make",
         _ if path.contains(".github/") || path.contains(".gitlab-ci") => "CI/CD",
+        _ if path.contains("inventory/") => "Ansible/Inventory",
+        _ if path.contains("ansible/") && !path.contains('.') => "Ansible/Inventory",
+        _ if path.contains("ansible/") => "YAML/Ansible",
         _ => "Other",
     }
 }
