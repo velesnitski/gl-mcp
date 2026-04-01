@@ -16,6 +16,7 @@ pub const WRITE_TOOLS: &[&str] = &[
     "create_issue",
     "update_issue",
     "add_note",
+    "create_merge_request",
     "retry_pipeline",
     "cancel_pipeline",
     "save_team",
