@@ -548,6 +548,213 @@ pub async fn get_mr_review_depth(
     Ok(lines.join("\n"))
 }
 
+/// Classify MRs by category (feature, hotfix, bugfix, chore) based on branch names and titles.
+pub async fn get_mr_categories(
+    client: &GitLabClient,
+    project_id: &str,
+    group_id: &str,
+    state: &str,
+    days: u32,
+) -> Result<String> {
+    let since = (chrono::Utc::now() - chrono::Duration::days(days as i64))
+        .format("%Y-%m-%dT00:00:00Z")
+        .to_string();
+
+    let path = if !group_id.is_empty() {
+        format!("/groups/{}/merge_requests", urlencoding::encode(group_id))
+    } else if !project_id.is_empty() {
+        format!("/projects/{}/merge_requests", urlencoding::encode(project_id))
+    } else {
+        "/merge_requests".to_string()
+    };
+
+    let state_param = if state.is_empty() { "all" } else { state };
+    let mrs: Vec<Value> = client.get(&path, &[
+        ("state", state_param),
+        ("created_after", &since),
+        ("per_page", "100"),
+        ("order_by", "created_at"),
+        ("sort", "desc"),
+    ]).await?;
+
+    if mrs.is_empty() {
+        return Ok("No MRs found in this period.".to_string());
+    }
+
+    fn classify(branch: &str, title: &str) -> &'static str {
+        let b = branch.to_lowercase();
+        let t = title.to_lowercase();
+        if b.starts_with("hotfix/") || b.starts_with("hotfix-") || t.starts_with("hotfix") { return "hotfix"; }
+        if b.starts_with("bugfix/") || b.starts_with("fix/") || t.starts_with("fix") { return "bugfix"; }
+        if b.starts_with("feature/") || b.starts_with("feat/") || t.starts_with("feat") { return "feature"; }
+        if b.starts_with("chore/") || b.starts_with("refactor/") || t.starts_with("chore") || t.starts_with("refactor") { return "chore"; }
+        if b.starts_with("docs/") || t.starts_with("docs") { return "docs"; }
+        if b.starts_with("test/") || t.starts_with("test") { return "test"; }
+        if b.starts_with("ci/") || b.starts_with("devops/") { return "ci/devops"; }
+        "other"
+    }
+
+    let mut by_category: BTreeMap<&str, Vec<(&str, &str, &str)>> = BTreeMap::new(); // category -> [(title, author, state)]
+    let mut by_author_cat: BTreeMap<String, BTreeMap<&str, u32>> = BTreeMap::new();
+
+    for mr in &mrs {
+        let branch = mr["source_branch"].as_str().unwrap_or("");
+        let title = mr["title"].as_str().unwrap_or("?");
+        let author = mr["author"]["username"].as_str().unwrap_or("?");
+        let mr_state = mr["state"].as_str().unwrap_or("?");
+        let cat = classify(branch, title);
+        by_category.entry(cat).or_default().push((title, author, mr_state));
+        *by_author_cat.entry(author.to_string()).or_default().entry(cat).or_default() += 1;
+    }
+
+    let scope = if !group_id.is_empty() { group_id } else { project_id };
+    let mut lines = vec![
+        format!("**MR Categories: {scope}** (last {days}d, {} MRs, state: {state_param})\n", mrs.len()),
+        "| Category | Count | % |".to_string(),
+        "|----------|-------|---|".to_string(),
+    ];
+
+    let total = mrs.len() as f64;
+    let mut sorted_cats: Vec<_> = by_category.iter().collect();
+    sorted_cats.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+
+    for (cat, items) in &sorted_cats {
+        let pct = items.len() as f64 / total * 100.0;
+        lines.push(format!("| {} | {} | {:.0}% |", cat, items.len(), pct));
+    }
+
+    // Author x Category matrix
+    lines.push(String::new());
+    lines.push("**By author:**".to_string());
+    for (author, cats) in &by_author_cat {
+        let parts: Vec<String> = cats.iter().map(|(cat, count)| format!("{cat}: {count}")).collect();
+        lines.push(format!("- @{author}: {}", parts.join(", ")));
+    }
+
+    Ok(lines.join("\n"))
+}
+
+/// Decompose MR merge time into queue time (creation → first review) and review time (first review → merge).
+pub async fn get_mr_timeline(
+    client: &GitLabClient,
+    project_id: &str,
+    group_id: &str,
+    days: u32,
+) -> Result<String> {
+    let since = (chrono::Utc::now() - chrono::Duration::days(days as i64))
+        .format("%Y-%m-%dT00:00:00Z")
+        .to_string();
+
+    let path = if !group_id.is_empty() {
+        format!("/groups/{}/merge_requests", urlencoding::encode(group_id))
+    } else if !project_id.is_empty() {
+        format!("/projects/{}/merge_requests", urlencoding::encode(project_id))
+    } else {
+        "/merge_requests".to_string()
+    };
+
+    let mrs: Vec<Value> = client.get(&path, &[
+        ("state", "merged"),
+        ("created_after", &since),
+        ("per_page", "30"),
+        ("order_by", "updated_at"),
+        ("sort", "desc"),
+    ]).await?;
+
+    if mrs.is_empty() {
+        return Ok("No merged MRs found in this period.".to_string());
+    }
+
+    struct Timeline {
+        iid: u64,
+        project: String,
+        title: String,
+        author: String,
+        total_hours: f64,
+        queue_hours: f64,   // creation → first non-author action
+        review_hours: f64,  // first non-author action → merge
+        had_review: bool,
+    }
+
+    let mut timelines: Vec<Timeline> = Vec::new();
+
+    for mr in &mrs {
+        let created_str = mr["created_at"].as_str().unwrap_or("");
+        let merged_str = mr["merged_at"].as_str().unwrap_or("");
+        let created = chrono::DateTime::parse_from_rfc3339(created_str).ok();
+        let merged = chrono::DateTime::parse_from_rfc3339(merged_str).ok();
+        let (Some(created_dt), Some(merged_dt)) = (created, merged) else { continue };
+
+        let iid = mr["iid"].as_u64().unwrap_or(0);
+        let title = mr["title"].as_str().unwrap_or("?").to_string();
+        let author = mr["author"]["username"].as_str().unwrap_or("?").to_string();
+        let project_id_num = mr["source_project_id"].as_u64().unwrap_or(0);
+        let project = mr["references"]["full"].as_str()
+            .unwrap_or("").split('!').next().unwrap_or("?").to_string();
+
+        let total_hours = (merged_dt - created_dt).num_minutes() as f64 / 60.0;
+
+        // Fetch notes to find first non-author action
+        let notes_path = format!("/projects/{}/merge_requests/{}/notes", project_id_num, iid);
+        let notes: Vec<Value> = client.get(&notes_path, &[("per_page", "50"), ("sort", "asc")]).await.unwrap_or_default();
+
+        let first_review_ts = notes.iter().find_map(|n| {
+            let note_author = n["author"]["username"].as_str().unwrap_or("");
+            let is_system = n["system"].as_bool().unwrap_or(false);
+            // Find first non-author activity (comment or system approval)
+            if note_author != author || (is_system && n["body"].as_str().unwrap_or("").contains("approved")) {
+                n["created_at"].as_str()
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            } else {
+                None
+            }
+        });
+
+        let (queue_hours, review_hours, had_review) = if let Some(review_dt) = first_review_ts {
+            let q = (review_dt - created_dt).num_minutes() as f64 / 60.0;
+            let r = (merged_dt - review_dt).num_minutes() as f64 / 60.0;
+            (q.max(0.0), r.max(0.0), true)
+        } else {
+            (total_hours, 0.0, false)
+        };
+
+        timelines.push(Timeline { iid, project, title, author, total_hours, queue_hours, review_hours, had_review });
+    }
+
+    if timelines.is_empty() {
+        return Ok("No MRs with valid timestamps found.".to_string());
+    }
+
+    let count = timelines.len();
+    let avg_total = timelines.iter().map(|t| t.total_hours).sum::<f64>() / count as f64;
+    let avg_queue = timelines.iter().map(|t| t.queue_hours).sum::<f64>() / count as f64;
+    let avg_review = timelines.iter().filter(|t| t.had_review).map(|t| t.review_hours).sum::<f64>() / timelines.iter().filter(|t| t.had_review).count().max(1) as f64;
+    let no_review_count = timelines.iter().filter(|t| !t.had_review).count();
+
+    let scope = if !group_id.is_empty() { group_id } else { project_id };
+    let mut lines = vec![
+        format!("**MR Timeline: {scope}** (last {days}d, {count} MRs)\n"),
+        "| Phase | Avg Time |".to_string(),
+        "|-------|----------|".to_string(),
+        format!("| Total (creation → merge) | {:.1}h |", avg_total),
+        format!("| Queue (creation → first review) | {:.1}h |", avg_queue),
+        format!("| Review (first review → merge) | {:.1}h |", avg_review),
+        format!("| No review activity | {} ({:.0}%) |", no_review_count, no_review_count as f64 / count as f64 * 100.0),
+    ];
+
+    // Longest queue times
+    timelines.sort_by(|a, b| b.queue_hours.partial_cmp(&a.queue_hours).unwrap());
+    lines.push(String::new());
+    lines.push("**Longest queue (waiting for first review):**".to_string());
+    for t in timelines.iter().take(5) {
+        let queue_str = if t.queue_hours > 24.0 { format!("{:.1}d", t.queue_hours / 24.0) } else { format!("{:.1}h", t.queue_hours) };
+        let review_note = if t.had_review { format!(", review: {:.1}h", t.review_hours) } else { ", no review".to_string() };
+        lines.push(format!("- {}!{} {} (@{}) — queue: {queue_str}{review_note}", t.project, t.iid, t.title, t.author));
+    }
+
+    Ok(lines.join("\n"))
+}
+
 /// Cross-group MR dashboard: aggregates multiple groups.
 pub async fn get_org_mr_dashboard(
     client: &GitLabClient,

@@ -609,6 +609,42 @@ pub struct GetOrgMrDashboardParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetMrCategoriesParams {
+    #[schemars(description = "Project ID or path (optional if group_id set)")]
+    project_id: Option<String>,
+    #[schemars(description = "Group path for cross-project stats")]
+    group_id: Option<String>,
+    #[schemars(description = "Filter by state: opened, merged, closed, all (default: all)")]
+    state: Option<String>,
+    #[schemars(description = "Number of days to analyze (default: 7)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    days: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetMrTimelineParams {
+    #[schemars(description = "Project ID or path (optional if group_id set)")]
+    project_id: Option<String>,
+    #[schemars(description = "Group path for cross-project stats")]
+    group_id: Option<String>,
+    #[schemars(description = "Number of days to analyze (default: 7)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    days: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetCrossInstanceDashboardParams {
+    #[schemars(description = "Comma-separated 'instance:group' pairs (e.g., 'staging:my-org/backend,production:my-org/frontend'). Groups within same instance are batched.")]
+    targets: String,
+    #[schemars(description = "Default instance if not specified per-group")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetDeployFrequencyParams {
     #[schemars(description = "Project ID or path")]
     project_id: String,
@@ -901,6 +937,65 @@ impl GlMcpServer {
         tool_call!(self, "get_org_mr_dashboard",
             tools::merge_requests::get_org_mr_dashboard(client, &groups).await
         )
+    }
+
+    #[tool(description = "Classify MRs by category (feature, hotfix, bugfix, chore) based on branch naming conventions.")]
+    async fn get_mr_categories(&self, Parameters(p): Parameters<GetMrCategoriesParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        tool_call!(self, "get_mr_categories",
+            tools::merge_requests::get_mr_categories(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.state.as_deref().unwrap_or(""), p.days.unwrap_or(7)).await
+        )
+    }
+
+    #[tool(description = "Decompose MR merge time into queue time (waiting for review) and review time. Shows which MRs sat longest.")]
+    async fn get_mr_timeline(&self, Parameters(p): Parameters<GetMrTimelineParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        tool_call!(self, "get_mr_timeline",
+            tools::merge_requests::get_mr_timeline(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.days.unwrap_or(7)).await
+        )
+    }
+
+    #[tool(description = "Cross-instance MR dashboard: aggregate MR stats across multiple GitLab instances and groups.")]
+    async fn get_cross_instance_dashboard(&self, Parameters(p): Parameters<GetCrossInstanceDashboardParams>) -> Result<CallToolResult, McpError> {
+        // Parse targets: "instance:group,instance:group" or just "group,group" with default instance
+        let default_instance = p.instance.as_deref().unwrap_or("");
+        let mut by_instance: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+
+        for target in p.targets.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            if let Some((inst, group)) = target.split_once(':') {
+                by_instance.entry(inst.to_string()).or_default().push(group.to_string());
+            } else {
+                by_instance.entry(default_instance.to_string()).or_default().push(target.to_string());
+            }
+        }
+
+        let mut all_output: Vec<String> = Vec::new();
+
+        for (inst, groups) in &by_instance {
+            let inst_opt = if inst.is_empty() { None } else { Some(inst.as_str()) };
+            let client = self.resolver
+                .resolve(inst_opt.unwrap_or(""), "")
+                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            let group_refs: Vec<&str> = groups.iter().map(|s| s.as_str()).collect();
+
+            match tools::merge_requests::get_org_mr_dashboard(client, &group_refs).await {
+                Ok(text) => {
+                    let header = if by_instance.len() > 1 {
+                        format!("## Instance: {}\n\n", if inst.is_empty() { "default" } else { inst })
+                    } else {
+                        String::new()
+                    };
+                    all_output.push(format!("{header}{text}"));
+                }
+                Err(e) => {
+                    all_output.push(format!("**Error on instance {inst}:** {}", e.short_message()));
+                }
+            }
+        }
+
+        let output = all_output.join("\n\n---\n\n");
+        let output = if self.config.compact { strip_markdown(&output) } else { output };
+        Ok(CallToolResult::success(vec![Content::text(output)]))
     }
 
     // ─── Pipelines ───
