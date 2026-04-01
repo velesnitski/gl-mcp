@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.7.0-green.svg)](CHANGELOG.md)
 
-GitLab MCP server for Claude Code. Single Rust binary, ~5MB, 53 tools.
+GitLab MCP server for Claude Code. Single Rust binary, ~5MB, 54 tools.
 
 ## Quick Start
 
@@ -30,7 +30,7 @@ EOF
 
 Restart Claude Code. The `gitlab` MCP server will be available.
 
-## Tools (53)
+## Tools (54)
 
 ### Projects & Branches
 | Tool | Description |
@@ -55,6 +55,7 @@ Restart Claude Code. The `gitlab` MCP server will be available.
 | Tool | Description |
 |------|-------------|
 | `list_merge_requests` | List MRs with pipeline status, reviewers; filter by group/state/author/date |
+| `create_merge_request` | Smart MR creation: auto-title from branch, auto-description from commits, duplicate check |
 | `get_merge_request` | Full MR details with pipeline status and comments |
 | `get_mr_turnaround` | Avg/median merge time, per-author and per-merger breakdown |
 | `get_mr_dashboard` | Compact group dashboard: open count, avg age, reviewer bottlenecks |

@@ -217,6 +217,34 @@ pub struct ListMergeRequestsParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateMergeRequestParams {
+    #[schemars(description = "Project ID or path")]
+    project_id: String,
+    #[schemars(description = "Source branch (your feature branch)")]
+    source_branch: String,
+    #[schemars(description = "Target branch (default: project default branch)")]
+    target_branch: Option<String>,
+    #[schemars(description = "MR title (default: auto-generated from branch name, e.g., 'feature/PROJ-123-add-auth' → 'PROJ-123: Add auth')")]
+    title: Option<String>,
+    #[schemars(description = "MR description in markdown (default: auto-generated commit list)")]
+    description: Option<String>,
+    #[schemars(description = "Comma-separated labels")]
+    labels: Option<String>,
+    #[schemars(description = "Assignee username")]
+    assignee: Option<String>,
+    #[schemars(description = "Comma-separated reviewer usernames")]
+    reviewers: Option<String>,
+    #[schemars(description = "Squash commits on merge (default: true)")]
+    squash: Option<bool>,
+    #[schemars(description = "Delete source branch after merge (default: true)")]
+    remove_source_branch: Option<bool>,
+    #[schemars(description = "Create as draft MR (default: false)")]
+    draft: Option<bool>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetMergeRequestParams {
     #[schemars(description = "Project ID or path")]
     project_id: String,
@@ -894,6 +922,28 @@ impl GlMcpServer {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         tool_call!(self, "list_merge_requests",
             tools::merge_requests::list_merge_requests(client, p.project_id.as_deref().unwrap_or(""), p.state.as_deref().unwrap_or("opened"), p.author.as_deref().unwrap_or(""), p.scope.as_deref().unwrap_or("all"), p.created_after.as_deref().unwrap_or(""), p.opened_before.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
+        )
+    }
+
+    #[tool(description = "Create a merge request with smart defaults. Auto-generates title from branch name (e.g., 'feature/PROJ-123-add-auth' → 'PROJ-123: Add auth'), auto-fills description from commit list, validates source branch exists, checks for duplicate MRs. Returns MR URL + diff stats.")]
+    async fn create_merge_request(&self, Parameters(p): Parameters<CreateMergeRequestParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "create_merge_request");
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "create_merge_request",
+            tools::merge_requests::create_merge_request(
+                client,
+                &p.project_id,
+                &p.source_branch,
+                p.target_branch.as_deref().unwrap_or(""),
+                p.title.as_deref().unwrap_or(""),
+                p.description.as_deref().unwrap_or(""),
+                p.labels.as_deref().unwrap_or(""),
+                p.assignee.as_deref().unwrap_or(""),
+                p.reviewers.as_deref().unwrap_or(""),
+                p.squash.unwrap_or(true),
+                p.remove_source_branch.unwrap_or(true),
+                p.draft.unwrap_or(false),
+            ).await
         )
     }
 
