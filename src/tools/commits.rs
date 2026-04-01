@@ -888,6 +888,93 @@ pub async fn get_team_activity(
     Ok(lines.join("\n"))
 }
 
+/// Get activity for all members of a GitLab group.
+pub async fn get_group_activity(
+    client: &GitLabClient,
+    group_path: &str,
+    hours: u32,
+) -> Result<String> {
+    // Get group members
+    let path = format!("/groups/{}/members", urlencoding::encode(group_path));
+    let members: Vec<Value> = client.get(&path, &[("per_page", "100")]).await?;
+
+    if members.is_empty() {
+        return Ok(format!("No members found in group {group_path}"));
+    }
+
+    let since = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
+    let since_ts = since.timestamp();
+
+    let mut lines = vec![format!("**Group activity: {group_path}**\nPeriod: last {hours}h\n")];
+    let mut total_commits = 0u64;
+    let mut total_mrs = 0u64;
+    let mut active_count = 0u32;
+
+    for member in &members {
+        let username = match member["username"].as_str() {
+            Some(u) => u,
+            None => continue,
+        };
+        let name = member["name"].as_str().unwrap_or(username);
+        let user_id = match member["id"].as_u64() {
+            Some(id) => id,
+            None => continue,
+        };
+
+        // Skip bots
+        if username.contains("bot") || username.starts_with("group_") {
+            continue;
+        }
+
+        let events = fetch_user_events(client, user_id, since_ts).await?;
+        if events.is_empty() {
+            lines.push(format!("- @{username} ({name}): no activity"));
+            continue;
+        }
+
+        active_count += 1;
+        let mut commits = 0u64;
+        let mut mrs_opened = 0u64;
+        let mut mrs_merged = 0u64;
+        let mut project_ids: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
+
+        for event in &events {
+            let action = event["action_name"].as_str().unwrap_or("");
+            let target_type = event["target_type"].as_str().unwrap_or("");
+            let project_id = event["project_id"].as_u64().unwrap_or(0);
+
+            if action == "pushed to" || action == "pushed new" {
+                let push_commits = event["push_data"]["commit_count"].as_u64().unwrap_or(0);
+                commits += push_commits;
+            }
+            if target_type == "MergeRequest" {
+                if action == "opened" { mrs_opened += 1; }
+                if action == "accepted" { mrs_merged += 1; }
+            }
+            if project_id > 0 {
+                project_ids.insert(project_id);
+            }
+        }
+
+        // Resolve project names
+        let project_names = resolve_project_names(client, &project_ids).await;
+        let proj_list: Vec<&str> = project_names.values().map(|s| s.as_str()).collect();
+
+        total_commits += commits;
+        total_mrs += mrs_opened;
+
+        lines.push(format!(
+            "- @{username} ({name}): {commits} commits, {mrs_opened} MRs opened, {mrs_merged} merged | {}",
+            if proj_list.is_empty() { "\u{2013}".to_string() } else { proj_list.join(", ") }
+        ));
+    }
+
+    lines.insert(1, format!("Active: {active_count}/{} members | {total_commits} commits, {total_mrs} MRs\n",
+        members.iter().filter(|m| !m["username"].as_str().unwrap_or("").contains("bot")).count()));
+
+    Ok(lines.join("\n"))
+}
+
 /// List projects in a GitLab group (with subgroups).
 pub async fn list_group_projects(
     client: &GitLabClient,
