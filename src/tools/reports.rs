@@ -96,11 +96,18 @@ pub async fn generate_dev_report(
         lang: String,
     }
 
+    const MAX_COMMITS: usize = 50;
+    const MAX_PROJECTS: usize = 10;
+
     let mut all_commits: Vec<(String, CommitInfo)> = Vec::new(); // (project_path, commit)
     let mut all_files: u64 = 0;
+    let mut projects_processed: usize = 0;
 
     let since_str = since.to_rfc3339();
     for (&pid, _stats) in &by_project {
+        if projects_processed >= MAX_PROJECTS {
+            break;
+        }
         let proj_path = project_names.get(&pid).cloned().unwrap_or_else(|| pid.to_string());
 
         if !project_filter.is_empty() && !proj_path.contains(project_filter) {
@@ -125,7 +132,12 @@ pub async fn generate_dev_report(
                 || email.contains(&username.to_lowercase())
         }).collect();
 
+        projects_processed += 1;
+
         for commit in &user_commits {
+            if all_commits.len() >= MAX_COMMITS {
+                break;
+            }
             let sha = commit["id"].as_str().unwrap_or("").to_string();
             let short_sha = commit["short_id"].as_str().unwrap_or("?").to_string();
             let title = commit["title"].as_str().unwrap_or("?").to_string();

@@ -20,26 +20,27 @@ pub struct GitLabClient {
 }
 
 impl GitLabClient {
-    pub fn new(instance: &GitLabInstance) -> Self {
+    pub fn new(instance: &GitLabInstance) -> Result<Self> {
+        let token_header = instance.token.parse().map_err(|_| {
+            Error::Config(format!("Invalid token for instance '{}': not a valid HTTP header value", instance.name))
+        })?;
+
         let http = Client::builder()
             .default_headers({
                 let mut h = reqwest::header::HeaderMap::new();
-                h.insert(
-                    "PRIVATE-TOKEN",
-                    instance.token.parse().expect("invalid token header"),
-                );
+                h.insert("PRIVATE-TOKEN", token_header);
                 h
             })
             .timeout(std::time::Duration::from_secs(30))
             .pool_max_idle_per_host(10)
             .build()
-            .expect("failed to build HTTP client");
+            .map_err(|e| Error::Config(format!("Failed to build HTTP client for '{}': {e}", instance.name)))?;
 
-        Self {
+        Ok(Self {
             name: instance.name.clone(),
             base_url: format!("{}/api/v4", instance.url),
             http,
-        }
+        })
     }
 
     /// GET request, returning deserialized JSON.
