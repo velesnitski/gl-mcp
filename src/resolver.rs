@@ -22,7 +22,10 @@ impl Resolver {
     pub fn new(config: &Config) -> Self {
         let mut clients = HashMap::new();
         for inst in &config.instances {
-            clients.insert(inst.name.clone(), GitLabClient::new(inst));
+            match GitLabClient::new(inst) {
+                Ok(client) => { clients.insert(inst.name.clone(), client); }
+                Err(e) => { eprintln!("Warning: skipping instance '{}': {e}", inst.name); }
+            }
         }
 
         let default_name = config
@@ -71,9 +74,4 @@ impl Resolver {
             .ok_or_else(|| Error::Config("No default instance configured".into()))
     }
 
-    /// Shorthand: resolve with no instance hint and no identifier.
-    #[allow(dead_code)]
-    pub fn default_client(&self) -> Result<&GitLabClient> {
-        self.resolve("", "")
-    }
 }

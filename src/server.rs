@@ -21,23 +21,6 @@ mod flex {
         })
     }
 
-    #[allow(dead_code)]
-    pub fn deserialize_opt_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
-    where D: Deserializer<'de> {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum StringOrNum {
-            Str(String),
-            Num(u64),
-        }
-        let v = Option::<StringOrNum>::deserialize(deserializer)?;
-        Ok(match v {
-            Some(StringOrNum::Num(n)) => Some(n),
-            Some(StringOrNum::Str(s)) => s.parse().ok(),
-            None => None,
-        })
-    }
-
     pub fn deserialize_opt_usize<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
     where D: Deserializer<'de> {
         #[derive(Deserialize)]
@@ -212,6 +195,8 @@ pub struct ListMergeRequestsParams {
     #[schemars(description = "Max results (default: 20)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     per_page: Option<u32>,
+    #[schemars(description = "Return compact one-line-per-MR summary (~5x smaller). Use first to scan, then get_merge_request to drill in.")]
+    summary_only: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
 }
@@ -342,6 +327,8 @@ pub struct ListCommitsParams {
     #[schemars(description = "Max results (default: 20)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     per_page: Option<u32>,
+    #[schemars(description = "Return compact one-line-per-commit summary (~3x smaller). Use first to scan, then get_commit_diff to drill in.")]
+    summary_only: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
     instance: Option<String>,
 }
@@ -797,14 +784,22 @@ macro_rules! write_guard {
     };
 }
 
-/// Tool call wrapper: handles compact mode + analytics logging.
+const RESPONSE_SIZE_WARN: usize = 15000;
+
+/// Tool call wrapper: handles compact mode, size warnings, analytics logging.
 macro_rules! tool_call {
     ($self:expr, $name:literal, $body:expr) => {{
         let timer = ToolTimer::start($name, None);
         match $body {
             Ok(text) => {
                 timer.finish("ok", text.len(), None);
-                let output = if $self.config.compact { strip_markdown(&text) } else { text };
+                let mut output = if $self.config.compact { strip_markdown(&text) } else { text };
+                if output.len() > RESPONSE_SIZE_WARN {
+                    let kb = output.len() / 1024;
+                    output = format!(
+                        "*Warning: Large response ({kb}KB). Use `summary_only=true` or filter parameters to reduce token usage.*\n\n{output}"
+                    );
+                }
                 Ok(CallToolResult::success(vec![Content::text(output)]))
             }
             Err(e) => {
@@ -921,7 +916,7 @@ impl GlMcpServer {
     async fn list_merge_requests(&self, Parameters(p): Parameters<ListMergeRequestsParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         tool_call!(self, "list_merge_requests",
-            tools::merge_requests::list_merge_requests(client, p.project_id.as_deref().unwrap_or(""), p.state.as_deref().unwrap_or("opened"), p.author.as_deref().unwrap_or(""), p.scope.as_deref().unwrap_or("all"), p.created_after.as_deref().unwrap_or(""), p.opened_before.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
+            tools::merge_requests::list_merge_requests(client, p.project_id.as_deref().unwrap_or(""), p.state.as_deref().unwrap_or("opened"), p.author.as_deref().unwrap_or(""), p.scope.as_deref().unwrap_or("all"), p.created_after.as_deref().unwrap_or(""), p.opened_before.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.per_page.unwrap_or(20), p.summary_only.unwrap_or(false)).await
         )
     }
 
@@ -1116,7 +1111,7 @@ impl GlMcpServer {
     async fn list_commits(&self, Parameters(p): Parameters<ListCommitsParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         tool_call!(self, "list_commits",
-            tools::commits::list_commits(client, &p.project_id, p.branch.as_deref().unwrap_or(""), p.author.as_deref().unwrap_or(""), p.since.as_deref().unwrap_or(""), p.until.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
+            tools::commits::list_commits(client, &p.project_id, p.branch.as_deref().unwrap_or(""), p.author.as_deref().unwrap_or(""), p.since.as_deref().unwrap_or(""), p.until.as_deref().unwrap_or(""), p.per_page.unwrap_or(20), p.summary_only.unwrap_or(false)).await
         )
     }
 
