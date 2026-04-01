@@ -64,6 +64,7 @@ pub fn setup_logging() {
 }
 
 /// Parameters safe to log (no tokens, no secrets).
+#[allow(dead_code)]
 const SAFE_PARAMS: &[&str] = &[
     "project_id", "query", "search", "instance", "state",
     "scope", "per_page", "page", "ref_name", "branch",
@@ -71,6 +72,7 @@ const SAFE_PARAMS: &[&str] = &[
 ];
 
 /// Extract safe parameters from a JSON value for analytics.
+#[allow(dead_code)]
 pub fn extract_safe_params(params: &serde_json::Value) -> serde_json::Value {
     if let Some(obj) = params.as_object() {
         let safe: serde_json::Map<String, serde_json::Value> = obj
@@ -85,6 +87,7 @@ pub fn extract_safe_params(params: &serde_json::Value) -> serde_json::Value {
 }
 
 /// Hash parameters for privacy-safe analytics.
+#[allow(dead_code)]
 pub fn hash_params(params: &serde_json::Value) -> String {
     let bytes = serde_json::to_vec(params).unwrap_or_default();
     let hash = Sha256::digest(&bytes);

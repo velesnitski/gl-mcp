@@ -23,7 +23,7 @@ fn test_language_detection() {
     assert_eq!(detect_language("Makefile"), "Make");
     assert_eq!(detect_language(".github/workflows/ci.yml"), "YAML/Ansible"); // .yml extension matches first
     assert_eq!(detect_language(".gitlab-ci.yml"), "YAML/Ansible");
-    assert_eq!(detect_language(".github/workflows/ci.conf"), "CI/CD"); // non-yml CI file matches path
+    assert_eq!(detect_language(".github/workflows/ci.conf"), "Config"); // .conf extension matches before path
     assert_eq!(detect_language("build.gradle"), "Gradle");
     assert_eq!(detect_language("script.py"), "Python");
     assert_eq!(detect_language("deploy.sh"), "Shell");
@@ -32,6 +32,11 @@ fn test_language_detection() {
     assert_eq!(detect_language("layout.xml"), "XML");
     assert_eq!(detect_language("template.html"), "HTML");
     assert_eq!(detect_language("random.xyz"), "Other");
+    // Infrastructure
+    assert_eq!(detect_language("roles/xray/templates/docker-compose.j2"), "Jinja2/Ansible");
+    assert_eq!(detect_language("ansible/inventory/myapp/prod-node-bg25"), "Ansible/Inventory");
+    assert_eq!(detect_language("ansible/scripts/myapp/proxy_node_in"), "Ansible/Inventory");
+    assert_eq!(detect_language("main.tf"), "Terraform");
 }
 
 #[test]
