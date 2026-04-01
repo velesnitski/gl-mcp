@@ -37,6 +37,7 @@ anyhow = "1"
 thiserror = "2"
 toml = "0.8"
 regex = "1"
+sentry = { version = "0.37", default-features = false, features = ["reqwest", "rustls"] }
 
 [profile.release]
 strip = true

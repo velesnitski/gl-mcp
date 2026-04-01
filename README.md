@@ -156,6 +156,8 @@ Language detection for: PHP, Go, Kotlin, Java, Swift, TypeScript, JavaScript, Ru
 | `GITLAB_COMPACT` | No | Strip markdown formatting (`1`/`true`/`yes`) |
 | `GITLAB_READ_ONLY` | No | Disable write tools (`1`/`true`/`yes`) |
 | `DISABLED_TOOLS` | No | Comma-separated tools to disable |
+| `SENTRY_DSN` | No | Sentry DSN for error tracking |
+| `SENTRY_ENVIRONMENT` | No | Sentry environment (default: `production`) |
 | `GITLAB_ALLOW_HTTP` | No | Allow non-HTTPS URLs |
 
 ### Multi-Instance
