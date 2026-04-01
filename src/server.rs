@@ -587,6 +587,51 @@ pub struct GetMrDashboardParams {
     instance: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetMrReviewDepthParams {
+    #[schemars(description = "Project ID or path (optional if group_id set)")]
+    project_id: Option<String>,
+    #[schemars(description = "Group path for cross-project stats")]
+    group_id: Option<String>,
+    #[schemars(description = "Number of days to analyze (default: 7)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    days: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetOrgMrDashboardParams {
+    #[schemars(description = "Comma-separated group paths (e.g., 'mxp/backend,mxp/frontend,mxp/infrastructure')")]
+    groups: String,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetDeployFrequencyParams {
+    #[schemars(description = "Project ID or path")]
+    project_id: String,
+    #[schemars(description = "Filter by environment name (e.g., 'production')")]
+    environment: Option<String>,
+    #[schemars(description = "Number of days to analyze (default: 30)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    days: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetStaleBranchesParams {
+    #[schemars(description = "Project ID or path")]
+    project_id: String,
+    #[schemars(description = "Days of inactivity to consider stale (default: 30)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    inactive_days: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
 // ─── Lint params ───
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -840,6 +885,24 @@ impl GlMcpServer {
         )
     }
 
+    #[tool(description = "Get MR review depth: how many comments/discussions per MR before merge. Shows zero-review MRs.")]
+    async fn get_mr_review_depth(&self, Parameters(p): Parameters<GetMrReviewDepthParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        tool_call!(self, "get_mr_review_depth",
+            tools::merge_requests::get_mr_review_depth(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.days.unwrap_or(7)).await
+        )
+    }
+
+    #[tool(description = "Cross-group MR dashboard: aggregate open MRs, reviewer load, stale counts across multiple groups.")]
+    async fn get_org_mr_dashboard(&self, Parameters(p): Parameters<GetOrgMrDashboardParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        let groups_raw: Vec<String> = p.groups.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        let groups: Vec<&str> = groups_raw.iter().map(|s| s.as_str()).collect();
+        tool_call!(self, "get_org_mr_dashboard",
+            tools::merge_requests::get_org_mr_dashboard(client, &groups).await
+        )
+    }
+
     // ─── Pipelines ───
 
     #[tool(description = "List CI/CD pipelines for a project")]
@@ -891,6 +954,14 @@ impl GlMcpServer {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         tool_call!(self, "list_branches",
             tools::projects::list_branches(client, &p.project_id, p.search.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
+        )
+    }
+
+    #[tool(description = "Find stale branches: merged but not deleted, or inactive for N days. Helps with repo hygiene.")]
+    async fn get_stale_branches(&self, Parameters(p): Parameters<GetStaleBranchesParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "get_stale_branches",
+            tools::projects::get_stale_branches(client, &p.project_id, p.inactive_days.unwrap_or(30)).await
         )
     }
 
@@ -1132,6 +1203,14 @@ impl GlMcpServer {
         let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
         tool_call!(self, "get_approval_rules",
             tools::repository::get_approval_rules(client, &p.project_id).await
+        )
+    }
+
+    #[tool(description = "Get deployment frequency (DORA metric): deploys per day, by environment and deployer.")]
+    async fn get_deploy_frequency(&self, Parameters(p): Parameters<GetDeployFrequencyParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "get_deploy_frequency",
+            tools::repository::get_deploy_frequency(client, &p.project_id, p.environment.as_deref().unwrap_or(""), p.days.unwrap_or(30)).await
         )
     }
 

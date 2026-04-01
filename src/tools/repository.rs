@@ -3,6 +3,7 @@
 use crate::client::GitLabClient;
 use crate::error::{Error, Result};
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 /// Search code across a project (GitLab blobs search).
 pub async fn search_code(
@@ -541,6 +542,98 @@ pub async fn get_approval_rules(
         }
         if !groups.is_empty() {
             lines.push(format!("  Groups: {}", groups.join(", ")));
+        }
+    }
+
+    Ok(lines.join("\n"))
+}
+
+/// Get deployment frequency for a project (DORA metric).
+pub async fn get_deploy_frequency(
+    client: &GitLabClient,
+    project_id: &str,
+    environment: &str,
+    days: u32,
+) -> Result<String> {
+    let encoded = urlencoding::encode(project_id);
+    let since = (chrono::Utc::now() - chrono::Duration::days(days as i64))
+        .format("%Y-%m-%dT00:00:00Z")
+        .to_string();
+
+    let mut params: Vec<(&str, &str)> = vec![
+        ("per_page", "100"),
+        ("updated_after", &since),
+        ("order_by", "updated_at"),
+        ("sort", "desc"),
+        ("status", "success"),
+    ];
+    if !environment.is_empty() {
+        params.push(("environment", environment));
+    }
+
+    let deployments: Vec<Value> = client
+        .get(&format!("/projects/{encoded}/deployments"), &params)
+        .await?;
+
+    if deployments.is_empty() {
+        return Ok(format!("No successful deployments in the last {days} days for {project_id}."));
+    }
+
+    // Group by day and environment
+    let mut by_env: BTreeMap<String, BTreeMap<String, u32>> = BTreeMap::new();
+    let mut deployers: BTreeMap<String, u32> = BTreeMap::new();
+
+    for d in &deployments {
+        let env_name = d["environment"]["name"].as_str().unwrap_or("?").to_string();
+        let created = d["created_at"].as_str().unwrap_or("");
+        let day = if created.len() >= 10 { &created[..10] } else { created };
+        let deployer = d["user"]["username"].as_str().unwrap_or("?").to_string();
+
+        *by_env.entry(env_name).or_default().entry(day.to_string()).or_default() += 1;
+        *deployers.entry(deployer).or_default() += 1;
+    }
+
+    let total = deployments.len();
+    let freq = total as f64 / days as f64;
+
+    let mut lines = vec![
+        format!("**Deploy Frequency: {project_id}** (last {days}d)\n"),
+        format!("| Metric | Value |"),
+        format!("|--------|-------|"),
+        format!("| Total deploys | {} |", total),
+        format!("| Per day | {:.1} |", freq),
+    ];
+
+    // Per-environment breakdown
+    lines.push(String::new());
+    lines.push("**By environment:**".to_string());
+    for (env, days_map) in &by_env {
+        let env_total: u32 = days_map.values().sum();
+        let env_freq = env_total as f64 / days as f64;
+        lines.push(format!("- **{env}**: {env_total} deploys ({env_freq:.1}/day)"));
+    }
+
+    // Per-deployer
+    lines.push(String::new());
+    lines.push("**By deployer:**".to_string());
+    let mut sorted_deployers: Vec<_> = deployers.iter().collect();
+    sorted_deployers.sort_by(|a, b| b.1.cmp(a.1));
+    for (deployer, count) in sorted_deployers {
+        lines.push(format!("- @{deployer}: {count} deploys"));
+    }
+
+    // Daily timeline (last 7 days max)
+    let mut all_days: BTreeMap<String, u32> = BTreeMap::new();
+    for days_map in by_env.values() {
+        for (day, count) in days_map {
+            *all_days.entry(day.clone()).or_default() += count;
+        }
+    }
+    if all_days.len() > 1 {
+        lines.push(String::new());
+        lines.push("**Daily:**".to_string());
+        for (day, count) in all_days.iter().rev().take(7) {
+            lines.push(format!("- {day}: {count} deploys"));
         }
     }
 
