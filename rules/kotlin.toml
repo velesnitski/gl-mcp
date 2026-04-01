@@ -57,3 +57,10 @@ name = "Large composable function"
 applies_to = "file_stats"
 max_additions = 200
 message = "Large composable — consider splitting into smaller components"
+
+[[rule]]
+id = "KT009"
+severity = "info"
+name = "Commented-out code"
+pattern = '^\s*//\s*(val|var|fun|if|when|return|class|import|override)\b'
+message = "Commented-out code — remove or use version control"

@@ -88,3 +88,10 @@ name = "Hardcoded string in UI"
 pattern = '(Text|Label)\s*\(\s*"[A-Za-z]{3,}'
 negative_pattern = '(NSLocalizedString|LocalizedStringKey|\.localized|Localizable)'
 message = "Hardcoded UI string — use localization"
+
+[[rule]]
+id = "SW013"
+severity = "info"
+name = "Commented-out code"
+pattern = '^\s*//\s*(let|var|func|if|guard|return|class|import|override|case)\b'
+message = "Commented-out code — remove or use version control"
