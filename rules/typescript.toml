@@ -1,0 +1,60 @@
+# TypeScript / JavaScript rules
+
+[[rule]]
+id = "TS001"
+severity = "warning"
+name = "console.log left in code"
+pattern = '\bconsole\.(log|debug|info)\s*\('
+message = "console.log left in code — remove or use proper logger"
+
+[[rule]]
+id = "TS002"
+severity = "warning"
+name = "any type usage"
+pattern = ':\s*any\b'
+message = "Using 'any' type — provide specific type"
+
+[[rule]]
+id = "TS003"
+severity = "warning"
+name = "Non-null assertion"
+pattern = '!\.'
+negative_pattern = '!=='
+message = "Non-null assertion (!) — handle null explicitly"
+
+[[rule]]
+id = "TS004"
+severity = "critical"
+name = "eval() usage"
+pattern = '\beval\s*\('
+message = "eval() is a security risk — never use in production"
+
+[[rule]]
+id = "TS005"
+severity = "warning"
+name = "alert() in code"
+pattern = '\balert\s*\('
+message = "alert() left in code — use proper UI notification"
+
+[[rule]]
+id = "TS006"
+severity = "info"
+name = "Disabled ESLint rule"
+pattern = '(?i)eslint-disable'
+message = "ESLint rule disabled — document why"
+
+[[rule]]
+id = "TS007"
+severity = "warning"
+name = "Unhandled promise"
+pattern = '(?:^|\s)(?:async\s+)?\w+\([^)]*\)\s*(?:;|$)'
+negative_pattern = '(await|\.then|\.catch|void\s)'
+message = "Possible unhandled promise — add await or .catch()"
+
+[[rule]]
+id = "TS008"
+severity = "warning"
+name = "Hardcoded URL"
+pattern = '(?i)(https?://[a-z0-9][a-z0-9.-]+\.[a-z]{2,})'
+negative_pattern = '(localhost|127\.0\.0\.1|example\.com|schema\.org|json-schema|crates\.io)'
+message = "Hardcoded URL — use environment config"
