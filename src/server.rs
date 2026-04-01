@@ -503,6 +503,26 @@ pub struct GetMrApprovalsParams {
     instance: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateFileParams {
+    #[schemars(description = "Project ID or path")]
+    project_id: String,
+    #[schemars(description = "File path in the repository (e.g., 'README.md')")]
+    file_path: String,
+    #[schemars(description = "File content")]
+    content: String,
+    #[schemars(description = "Branch name to commit to (must NOT be main/master/develop)")]
+    branch: String,
+    #[schemars(description = "Commit message")]
+    commit_message: String,
+    #[schemars(description = "Source branch to create from (default: main)")]
+    source_branch: Option<String>,
+    #[schemars(description = "Create a merge request after commit (default: true)")]
+    create_mr: Option<bool>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    instance: Option<String>,
+}
+
 // ─── Lint params ───
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -973,6 +993,19 @@ impl GlMcpServer {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         tool_call!(self, "get_mr_approvals",
             tools::repository::get_mr_approvals(client, &p.project_id, p.mr_iid).await
+        )
+    }
+
+    #[tool(description = "Create or update a file in a GitLab repo. Always commits to a new branch (never main), optionally creates MR. Use for README fixes, translations, config updates.")]
+    async fn update_file(&self, Parameters(p): Parameters<UpdateFileParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "update_file");
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "update_file",
+            tools::repository::update_file(
+                client, &p.project_id, &p.file_path, &p.content, &p.branch,
+                &p.commit_message, p.source_branch.as_deref().unwrap_or(""),
+                p.create_mr.unwrap_or(true),
+            ).await
         )
     }
 
