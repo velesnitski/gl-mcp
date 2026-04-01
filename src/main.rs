@@ -9,6 +9,7 @@ mod error;
 mod logging;
 mod resolver;
 mod server;
+mod teams;
 mod tools;
 
 use rmcp::ServiceExt;
