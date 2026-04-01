@@ -1,0 +1,60 @@
+# Go rules
+
+[[rule]]
+id = "GO001"
+severity = "critical"
+name = "Unchecked error"
+pattern = '[a-zA-Z0-9_]+,\s*_\s*:?=.*\.\w+\('
+message = "Error discarded with _ — handle or explicitly document why"
+
+[[rule]]
+id = "GO002"
+severity = "warning"
+name = "fmt.Println left in code"
+pattern = '\bfmt\.Print'
+negative_pattern = 'fmt\.Fprintf.*os\.Stderr'
+message = "fmt.Print left in code — use structured logging"
+
+[[rule]]
+id = "GO003"
+severity = "warning"
+name = "panic() in library code"
+pattern = '\bpanic\s*\('
+message = "panic() in non-main code — return error instead"
+
+[[rule]]
+id = "GO004"
+severity = "warning"
+name = "Goroutine without context"
+pattern = '\bgo\s+func\s*\('
+negative_pattern = 'ctx|context'
+message = "Goroutine without context — pass context for cancellation"
+
+[[rule]]
+id = "GO005"
+severity = "warning"
+name = "defer in loop"
+pattern = 'for.*\{[\s\S]*defer\b'
+message = "defer in loop — defers stack until function returns, not loop iteration"
+
+[[rule]]
+id = "GO006"
+severity = "info"
+name = "TODO in code"
+pattern = '//\s*TODO'
+message = "TODO comment — track in issue tracker"
+
+[[rule]]
+id = "GO007"
+severity = "critical"
+name = "Hardcoded credentials"
+pattern = '(?i)(password|secret|token|apiKey)\s*[:=]\s*"[^"]{8,}'
+message = "Hardcoded credential — use environment variables"
+
+[[rule]]
+id = "GO008"
+severity = "warning"
+name = "time.Sleep in production"
+pattern = 'time\.Sleep'
+negative_pattern = '_test\.go'
+message = "time.Sleep blocks goroutine — use ticker, timer, or context with deadline"

@@ -77,6 +77,8 @@ fn load_rules_for_language(lang: &str) -> Vec<Rule> {
     let lang_rules = match lang {
         "PHP" => Some(include_str!("../../rules/php.toml")),
         "Kotlin" | "Java" => Some(include_str!("../../rules/kotlin.toml")),
+        "Swift" => Some(include_str!("../../rules/swift.toml")),
+        "Go" => Some(include_str!("../../rules/go.toml")),
         "TypeScript" | "JavaScript" | "Vue" => Some(include_str!("../../rules/typescript.toml")),
         "YAML/Ansible" | "Shell" => Some(include_str!("../../rules/ansible.toml")),
         _ => None,
@@ -373,7 +375,7 @@ pub fn list_rules(language: &str) -> String {
     let rules = if language.is_empty() {
         // All rules
         let mut all = Vec::new();
-        for lang in &["global", "PHP", "Kotlin", "TypeScript", "YAML/Ansible"] {
+        for lang in &["global", "PHP", "Kotlin", "Swift", "Go", "TypeScript", "YAML/Ansible"] {
             all.extend(load_rules_for_language(lang));
         }
         // Dedup by ID
