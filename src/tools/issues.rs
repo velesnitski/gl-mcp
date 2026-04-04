@@ -4,10 +4,11 @@ use crate::client::GitLabClient;
 use crate::error::Result;
 use serde_json::Value;
 
-/// Search issues across projects or within a project.
+/// Search issues across projects, within a project, or within a group.
 pub async fn search_issues(
     client: &GitLabClient,
     project_id: &str,
+    group_id: &str,
     search: &str,
     state: &str,
     labels: &str,
@@ -15,7 +16,9 @@ pub async fn search_issues(
     per_page: u32,
 ) -> Result<String> {
     let per_page_str = per_page.to_string();
-    let path = if project_id.is_empty() {
+    let path = if !group_id.is_empty() {
+        format!("/groups/{}/issues", urlencoding::encode(group_id))
+    } else if project_id.is_empty() {
         "/issues".to_string()
     } else {
         format!("/projects/{}/issues", urlencoding::encode(project_id))

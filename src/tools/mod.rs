@@ -21,6 +21,7 @@ pub const WRITE_TOOLS: &[&str] = &[
     "cancel_pipeline",
     "save_team",
     "update_file",
+    "delete_branch",
 ];
 
 /// Check if a tool should be available given config.

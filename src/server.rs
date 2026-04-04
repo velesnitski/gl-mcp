@@ -184,11 +184,11 @@ impl GlMcpServer {
 
     // ─── Issues ───
 
-    #[tool(description = "Search GitLab issues across all projects or within a specific project")]
+    #[tool(description = "Search GitLab issues across all projects, within a specific project, or within a group")]
     async fn search_issues(&self, Parameters(p): Parameters<SearchIssuesParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         tool_call!(self, "search_issues",
-            tools::issues::search_issues(client, p.project_id.as_deref().unwrap_or(""), p.search.as_deref().unwrap_or(""), p.state.as_deref().unwrap_or("opened"), p.labels.as_deref().unwrap_or(""), p.assignee.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
+            tools::issues::search_issues(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.search.as_deref().unwrap_or(""), p.state.as_deref().unwrap_or("opened"), p.labels.as_deref().unwrap_or(""), p.assignee.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
         )
     }
 
@@ -387,6 +387,14 @@ impl GlMcpServer {
         )
     }
 
+    #[tool(description = "List pipelines for a merge request, showing status, ref, SHA, and creation time")]
+    async fn get_mr_pipelines(&self, Parameters(p): Parameters<GetMrPipelinesParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "get_mr_pipelines",
+            tools::pipelines::get_mr_pipelines(client, &p.project_id, p.mr_iid).await
+        )
+    }
+
     #[tool(description = "Retry a failed pipeline")]
     async fn retry_pipeline(&self, Parameters(p): Parameters<RetryPipelineParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "retry_pipeline");
@@ -420,6 +428,23 @@ impl GlMcpServer {
         let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
         tool_call!(self, "get_stale_branches",
             tools::projects::get_stale_branches(client, &p.project_id, p.inactive_days.unwrap_or(30)).await
+        )
+    }
+
+    #[tool(description = "Delete a branch from a project")]
+    async fn delete_branch(&self, Parameters(p): Parameters<DeleteBranchParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "delete_branch");
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "delete_branch",
+            tools::projects::delete_branch(client, &p.project_id, &p.branch).await
+        )
+    }
+
+    #[tool(description = "Look up a GitLab user by username or numeric ID. Returns profile info, state, and admin status.")]
+    async fn get_user(&self, Parameters(p): Parameters<GetUserParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        tool_call!(self, "get_user",
+            tools::projects::get_user(client, p.username.as_deref().unwrap_or(""), p.user_id).await
         )
     }
 
