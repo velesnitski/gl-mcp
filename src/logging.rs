@@ -109,7 +109,7 @@ pub fn setup_sentry() {
 }
 
 /// Scrub GitLab tokens and other secrets from strings.
-fn scrub_tokens(s: &str) -> String {
+pub(crate) fn scrub_tokens(s: &str) -> String {
     static RE: std::sync::LazyLock<regex::Regex> =
         std::sync::LazyLock::new(|| {
             regex::Regex::new(r"(?:glpat-[A-Za-z0-9_\-\.]+|(?i)(?:bearer|private-token)\s+[A-Za-z0-9_\-\.]{20,})").unwrap()
@@ -225,5 +225,30 @@ impl ToolTimer {
         };
         log_analytics(&event);
         add_sentry_breadcrumb(&self.tool_name, duration_ms, status, error.as_deref());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_scrub_tokens() {
+        assert_eq!(scrub_tokens("token glpat-abc123_def"), "token [REDACTED]");
+        assert_eq!(scrub_tokens("no tokens here"), "no tokens here");
+    }
+
+    #[test]
+    fn test_scrub_tokens_bearer() {
+        let input = "bearer ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        let result = scrub_tokens(input);
+        assert_eq!(result, "[REDACTED]");
+    }
+
+    #[test]
+    fn test_scrub_tokens_private_token_header() {
+        let input = "private-token abcdefghijklmnopqrstuvwxyz1234";
+        let result = scrub_tokens(input);
+        assert_eq!(result, "[REDACTED]");
     }
 }

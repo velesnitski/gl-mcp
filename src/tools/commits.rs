@@ -521,37 +521,13 @@ pub async fn fetch_user_events(
     user_id: u64,
     since_ts: i64,
 ) -> Result<Vec<Value>> {
-    let mut all_events: Vec<Value> = Vec::new();
-    let mut page = 1u32;
-    loop {
-        let page_str = page.to_string();
-        let events: Vec<Value> = client
-            .get(
-                &format!("/users/{user_id}/events"),
-                &[("per_page", "100"), ("page", &page_str), ("sort", "desc")],
-            )
-            .await
-            ?;
-
-        if events.is_empty() {
-            break;
-        }
-
-        let oldest_in_window = events.iter().any(|e| {
-            e["created_at"]
-                .as_str()
-                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                .map(|dt| dt.timestamp() >= since_ts)
-                .unwrap_or(false)
-        });
-
-        all_events.extend(events);
-        page += 1;
-
-        if !oldest_in_window || page > 10 {
-            break;
-        }
-    }
+    let all_events: Vec<Value> = client
+        .get_all_pages(
+            &format!("/users/{user_id}/events"),
+            &[("sort", "desc")],
+            10,
+        )
+        .await?;
 
     Ok(all_events
         .into_iter()
@@ -575,8 +551,9 @@ pub async fn resolve_project_names(
     let futures: Vec<_> = project_ids.iter().map(|&pid| {
         let client = client.clone();
         async move {
+            let cache_key = format!("project:{pid}");
             let name = client
-                .get::<Value>(&format!("/projects/{pid}"), &[("simple", "true")])
+                .get_cached::<Value>(&cache_key, &format!("/projects/{pid}"), &[("simple", "true")], 60)
                 .await
                 .ok()
                 .and_then(|proj| proj["path_with_namespace"].as_str().map(|s| s.to_string()))
@@ -614,8 +591,9 @@ pub async fn get_user_activity(
     username: &str,
     hours: u32,
 ) -> Result<String> {
+    let cache_key = format!("user:{username}");
     let users: Vec<Value> = client
-        .get("/users", &[("username", username)])
+        .get_cached(&cache_key, "/users", &[("username", username)], 60)
         .await
         ?;
 
@@ -777,8 +755,9 @@ pub async fn get_team_activity(
     let user_futures: Vec<_> = usernames.iter().map(|&username| {
         let client = client.clone();
         async move {
+            let cache_key = format!("user:{username}");
             let users: Vec<serde_json::Value> = match client
-                .get("/users", &[("username", username)])
+                .get_cached(&cache_key, "/users", &[("username", username)], 60)
                 .await
             {
                 Ok(u) => u,
