@@ -565,25 +565,27 @@ pub async fn fetch_user_events(
         .collect())
 }
 
-/// Resolve project IDs to names via batch lookup. Caches per-call.
+/// Resolve project IDs to names via concurrent batch lookup.
 pub async fn resolve_project_names(
     client: &GitLabClient,
     project_ids: &std::collections::BTreeSet<u64>,
 ) -> BTreeMap<u64, String> {
-    let mut names = BTreeMap::new();
-    for &pid in project_ids {
-        if let Ok(proj) = client
-            .get::<Value>(&format!("/projects/{pid}"), &[("simple", "true")])
-            .await
-        {
-            let name = proj["path_with_namespace"]
-                .as_str()
-                .unwrap_or("?")
-                .to_string();
-            names.insert(pid, name);
+    use futures::future::join_all;
+
+    let futures: Vec<_> = project_ids.iter().map(|&pid| {
+        let client = client.clone();
+        async move {
+            let name = client
+                .get::<Value>(&format!("/projects/{pid}"), &[("simple", "true")])
+                .await
+                .ok()
+                .and_then(|proj| proj["path_with_namespace"].as_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| "?".to_string());
+            (pid, name)
         }
-    }
-    names
+    }).collect();
+
+    join_all(futures).await.into_iter().collect()
 }
 
 /// Per-day, per-project activity struct.
@@ -770,27 +772,34 @@ pub async fn get_team_activity(
     }
 
     let mut all_project_ids: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
+
+    // Resolve all users and fetch events concurrently
+    let user_futures: Vec<_> = usernames.iter().map(|&username| {
+        let client = client.clone();
+        async move {
+            let users: Vec<serde_json::Value> = match client
+                .get("/users", &[("username", username)])
+                .await
+            {
+                Ok(u) => u,
+                Err(_) => return None,
+            };
+
+            let user = users.first()?;
+            let user_id = user["id"].as_u64()?;
+            let display_name = user["name"].as_str().unwrap_or(username).to_string();
+
+            let events = fetch_user_events(&client, user_id, since_ts).await.ok()?;
+
+            Some((username.to_string(), display_name, events))
+        }
+    }).collect();
+
+    let results = futures::future::join_all(user_futures).await;
+
     let mut user_summaries: Vec<(String, UserSummary)> = Vec::new();
-
-    for &username in usernames {
-        // Resolve user
-        let users: Vec<serde_json::Value> = client
-            .get("/users", &[("username", username)])
-            .await?;
-
-        let user = match users.first() {
-            Some(u) => u,
-            None => continue,
-        };
-        let user_id = match user["id"].as_u64() {
-            Some(id) => id,
-            None => continue,
-        };
-        let display_name = user["name"].as_str().unwrap_or(username).to_string();
-
-        // Fetch events
-        let events = fetch_user_events(client, user_id, since_ts).await?;
-
+    for result in results.into_iter().flatten() {
+        let (username, display_name, events) = result;
         let mut summary = UserSummary {
             display_name,
             events: events.len() as u64,
@@ -824,7 +833,7 @@ pub async fn get_team_activity(
             }
         }
 
-        user_summaries.push((username.to_string(), summary));
+        user_summaries.push((username, summary));
     }
 
     if user_summaries.is_empty() {

@@ -524,7 +524,7 @@ pub async fn get_mr_turnaround(
     let avg = total / stats.len() as f64;
     let median = {
         let mut sorted: Vec<f64> = stats.iter().map(|s| s.hours_to_merge).collect();
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         sorted[sorted.len() / 2]
     };
     let max = stats.iter().map(|s| s.hours_to_merge).fold(0.0f64, f64::max);

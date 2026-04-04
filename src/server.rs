@@ -4,16 +4,20 @@
 // MCP clients sometimes send numbers as strings.
 mod flex {
     use serde::{self, Deserialize, Deserializer};
+    use std::str::FromStr;
 
-    pub fn deserialize_opt_u32<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
-    where D: Deserializer<'de> {
+    fn deserialize_opt_num<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: FromStr + Deserialize<'de>,
+    {
         #[derive(Deserialize)]
         #[serde(untagged)]
-        enum StringOrNum {
+        enum StringOrNum<T> {
             Str(String),
-            Num(u32),
+            Num(T),
         }
-        let v = Option::<StringOrNum>::deserialize(deserializer)?;
+        let v = Option::<StringOrNum<T>>::deserialize(deserializer)?;
         Ok(match v {
             Some(StringOrNum::Num(n)) => Some(n),
             Some(StringOrNum::Str(s)) => s.parse().ok(),
@@ -21,20 +25,14 @@ mod flex {
         })
     }
 
+    pub fn deserialize_opt_u32<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+    where D: Deserializer<'de> {
+        deserialize_opt_num(deserializer)
+    }
+
     pub fn deserialize_opt_usize<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
     where D: Deserializer<'de> {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum StringOrNum {
-            Str(String),
-            Num(usize),
-        }
-        let v = Option::<StringOrNum>::deserialize(deserializer)?;
-        Ok(match v {
-            Some(StringOrNum::Num(n)) => Some(n),
-            Some(StringOrNum::Str(s)) => s.parse().ok(),
-            None => None,
-        })
+        deserialize_opt_num(deserializer)
     }
 }
 
@@ -719,13 +717,13 @@ fn parse_period(period: &str) -> u32 {
     match p.as_str() {
         "today" => {
             let now = chrono::Utc::now();
-            let midnight = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
+            let midnight = now.date_naive().and_time(chrono::NaiveTime::MIN);
             let diff = now.naive_utc() - midnight;
             diff.num_hours().max(1) as u32
         }
         "yesterday" => {
             let now = chrono::Utc::now();
-            let yesterday_midnight = (now - chrono::Duration::days(1)).date_naive().and_hms_opt(0, 0, 0).unwrap();
+            let yesterday_midnight = (now - chrono::Duration::days(1)).date_naive().and_time(chrono::NaiveTime::MIN);
             let diff = now.naive_utc() - yesterday_midnight;
             diff.num_hours().max(1) as u32
         }
@@ -734,7 +732,7 @@ fn parse_period(period: &str) -> u32 {
             use chrono::Datelike;
             let weekday = now.weekday().num_days_from_monday();
             let monday = now - chrono::Duration::days(weekday as i64);
-            let monday_midnight = monday.date_naive().and_hms_opt(0, 0, 0).unwrap();
+            let monday_midnight = monday.date_naive().and_time(chrono::NaiveTime::MIN);
             let diff = now.naive_utc() - monday_midnight;
             diff.num_hours().max(1) as u32
         }
@@ -1157,7 +1155,7 @@ impl GlMcpServer {
 
         // Resolve: team key from teams.json OR raw usernames
         let raw_usernames: Vec<String> = {
-            let teams = self.teams.lock().unwrap();
+            let teams = self.teams.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(team) = teams.get(&p.team) {
                 team.members.iter().map(|m| m.username.clone()).collect()
             } else {
@@ -1182,7 +1180,7 @@ impl GlMcpServer {
 
     #[tool(description = "List configured teams from ~/.gl-mcp/teams.json")]
     async fn list_teams(&self, Parameters(_p): Parameters<ListTeamsParams>) -> Result<CallToolResult, McpError> {
-        let teams = self.teams.lock().unwrap();
+        let teams = self.teams.lock().unwrap_or_else(|e| e.into_inner());
         let list = teams.list();
         if list.is_empty() {
             return Ok(CallToolResult::success(vec![Content::text(
@@ -1240,7 +1238,7 @@ impl GlMcpServer {
             projects,
         };
 
-        let mut teams = self.teams.lock().unwrap();
+        let mut teams = self.teams.lock().unwrap_or_else(|e| e.into_inner());
         teams.set(p.key.clone(), team);
         teams.save().map_err(|e| McpError::internal_error(format!("Failed to save teams.json: {e}"), None))?;
 

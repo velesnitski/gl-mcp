@@ -46,7 +46,8 @@ pub async fn search_code(
 
         // Truncate long matches
         let preview = if data.len() > 200 {
-            format!("{}...", &data[..200])
+            let truncated: String = data.chars().take(200).collect();
+            format!("{truncated}...")
         } else {
             data.to_string()
         };

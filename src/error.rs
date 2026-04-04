@@ -31,13 +31,22 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 impl Error {
-    /// Truncated display for analytics logging.
+    /// Truncated display for analytics logging (UTF-8 safe).
     pub fn short_message(&self) -> String {
         let msg = self.to_string();
         if msg.len() > 200 {
-            format!("{}...", &msg[..200])
+            let truncated: String = msg.chars().take(200).collect();
+            format!("{truncated}...")
         } else {
             msg
         }
+    }
+
+    pub fn config(msg: impl Into<String>) -> Self {
+        Error::Config(msg.into())
+    }
+
+    pub fn other(msg: impl Into<String>) -> Self {
+        Error::Other(msg.into())
     }
 }

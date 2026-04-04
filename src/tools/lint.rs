@@ -9,6 +9,7 @@ use crate::tools::commits::detect_language;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
 
 // ─── Rule types ───
 
@@ -70,77 +71,124 @@ pub struct Violation {
     pub message: String,
 }
 
-// ─── Rule loading ───
+// ─── Compiled rule with pre-built regexes ───
 
-/// Load rules from embedded strings (compiled into binary).
-/// Falls back to rules/ directory if available.
-fn load_rules_for_language(lang: &str) -> Vec<Rule> {
-    let mut rules = Vec::new();
+struct CompiledRule {
+    rule: Rule,
+    pattern_re: Option<regex::Regex>,
+    neg_pattern_re: Option<regex::Regex>,
+    neg_file_re: Option<regex::Regex>,
+}
 
-    // Always load global rules
-    if let Some(global) = parse_embedded_rules(include_str!("../../rules/global.toml")) {
-        rules.extend(global);
+impl CompiledRule {
+    fn compile(rule: Rule) -> Self {
+        let pattern_re = if rule.pattern.is_empty() {
+            None
+        } else {
+            regex::Regex::new(&rule.pattern).ok()
+        };
+        let neg_pattern_re = if rule.negative_pattern.is_empty() {
+            None
+        } else {
+            regex::Regex::new(&rule.negative_pattern).ok()
+        };
+        let neg_file_re = if rule.negative_file_pattern.is_empty() {
+            None
+        } else {
+            regex::Regex::new(&rule.negative_file_pattern).ok()
+        };
+        Self { rule, pattern_re, neg_pattern_re, neg_file_re }
+    }
+}
+
+// ─── Rule loading (cached, parsed once) ───
+
+fn parse_embedded_rules(content: &str) -> Vec<Rule> {
+    toml::from_str::<RuleFile>(content)
+        .map(|rf| rf.rule)
+        .unwrap_or_default()
+}
+
+/// Pre-compiled rules per language, parsed and compiled once at first use.
+static COMPILED_RULES: LazyLock<BTreeMap<&'static str, Vec<CompiledRule>>> = LazyLock::new(|| {
+    let global = parse_embedded_rules(include_str!("../../rules/global.toml"));
+
+    let lang_sources: &[(&str, &str)] = &[
+        ("PHP", include_str!("../../rules/php.toml")),
+        ("Kotlin", include_str!("../../rules/kotlin.toml")),
+        ("Swift", include_str!("../../rules/swift.toml")),
+        ("Go", include_str!("../../rules/go.toml")),
+        ("TypeScript", include_str!("../../rules/typescript.toml")),
+        ("YAML/Ansible", include_str!("../../rules/ansible.toml")),
+    ];
+
+    let mut map: BTreeMap<&str, Vec<CompiledRule>> = BTreeMap::new();
+
+    // Global-only entry
+    map.insert("global", global.iter().cloned().map(CompiledRule::compile).collect());
+
+    for &(lang, content) in lang_sources {
+        let mut rules = global.clone();
+        rules.extend(parse_embedded_rules(content));
+        map.insert(lang, rules.into_iter().map(CompiledRule::compile).collect());
     }
 
-    // Load language-specific rules
-    let lang_rules = match lang {
-        "PHP" => Some(include_str!("../../rules/php.toml")),
-        "Kotlin" | "Java" => Some(include_str!("../../rules/kotlin.toml")),
-        "Swift" => Some(include_str!("../../rules/swift.toml")),
-        "Go" => Some(include_str!("../../rules/go.toml")),
-        "TypeScript" | "JavaScript" | "Vue" => Some(include_str!("../../rules/typescript.toml")),
-        "YAML/Ansible" | "Jinja2/Ansible" | "Ansible/Inventory" | "Shell" => Some(include_str!("../../rules/ansible.toml")),
-        _ => None,
-    };
-
-    if let Some(content) = lang_rules {
-        if let Some(parsed) = parse_embedded_rules(content) {
-            rules.extend(parsed);
+    // Aliases
+    let alias_map: &[(&str, &str)] = &[
+        ("Java", "Kotlin"),
+        ("JavaScript", "TypeScript"),
+        ("Vue", "TypeScript"),
+        ("Jinja2/Ansible", "YAML/Ansible"),
+        ("Ansible/Inventory", "YAML/Ansible"),
+        ("Shell", "YAML/Ansible"),
+    ];
+    for &(alias, target) in alias_map {
+        if let Some(rules) = map.get(target) {
+            let cloned: Vec<CompiledRule> = rules.iter().map(|cr| CompiledRule::compile(cr.rule.clone())).collect();
+            map.insert(alias, cloned);
         }
     }
 
-    rules
+    map
+});
+
+fn get_compiled_rules(lang: &str) -> &'static [CompiledRule] {
+    COMPILED_RULES
+        .get(lang)
+        .map(|v| v.as_slice())
+        .unwrap_or_else(|| COMPILED_RULES.get("global").map(|v| v.as_slice()).unwrap_or(&[]))
 }
 
-fn parse_embedded_rules(content: &str) -> Option<Vec<Rule>> {
-    toml::from_str::<RuleFile>(content)
-        .ok()
-        .map(|rf| rf.rule)
+/// Load raw rules for display purposes (list_rules).
+fn load_rules_for_language(lang: &str) -> Vec<Rule> {
+    get_compiled_rules(lang).iter().map(|cr| cr.rule.clone()).collect()
 }
 
 // ─── Pattern matching ───
 
-fn matches_rule(rule: &Rule, line: &str, file_path: &str) -> bool {
-    if rule.pattern.is_empty() {
-        return false;
-    }
+fn matches_compiled_rule(cr: &CompiledRule, line: &str, file_path: &str) -> bool {
+    // Must have a pattern
+    let pattern_re = match &cr.pattern_re {
+        Some(re) => re,
+        None => return false,
+    };
 
     // Skip if file matches negative_file_pattern
-    if !rule.negative_file_pattern.is_empty() {
-        if let Ok(re) = regex::Regex::new(&rule.negative_file_pattern) {
-            if re.is_match(file_path) {
-                return false;
-            }
+    if let Some(ref re) = cr.neg_file_re {
+        if re.is_match(file_path) {
+            return false;
         }
     }
 
     // Check main pattern
-    let main_match = if let Ok(re) = regex::Regex::new(&rule.pattern) {
-        re.is_match(line)
-    } else {
-        line.contains(&rule.pattern)
-    };
-
-    if !main_match {
+    if !pattern_re.is_match(line) {
         return false;
     }
 
     // Check negative pattern (should NOT match)
-    if !rule.negative_pattern.is_empty() {
-        if let Ok(re) = regex::Regex::new(&rule.negative_pattern) {
-            if re.is_match(line) {
-                return false; // negative pattern matched = skip
-            }
+    if let Some(ref re) = cr.neg_pattern_re {
+        if re.is_match(line) {
+            return false;
         }
     }
 
@@ -174,17 +222,17 @@ pub async fn validate_commit(
     let mut violations: Vec<Violation> = Vec::new();
 
     // Check commit message rules
-    let global_rules = load_rules_for_language("global");
-    for rule in &global_rules {
-        if rule.applies_to == "commit_message" && matches_rule(rule, message.trim(), "") {
+    let global_rules = get_compiled_rules("global");
+    for cr in global_rules {
+        if cr.rule.applies_to == "commit_message" && matches_compiled_rule(cr, message.trim(), "") {
             violations.push(Violation {
-                rule_id: rule.id.clone(),
-                severity: rule.severity.clone(),
-                name: rule.name.clone(),
+                rule_id: cr.rule.id.clone(),
+                severity: cr.rule.severity.clone(),
+                name: cr.rule.name.clone(),
                 file: "(commit message)".into(),
                 line: 0,
                 code: message.trim().to_string(),
-                message: rule.message.clone(),
+                message: cr.rule.message.clone(),
             });
         }
     }
@@ -204,7 +252,7 @@ pub async fn validate_commit(
         }
 
         let lang = detect_language(file_path);
-        let rules = load_rules_for_language(lang);
+        let compiled_rules = get_compiled_rules(lang);
 
         // Count additions for file_stats rules
         let mut additions: u64 = 0;
@@ -218,22 +266,22 @@ pub async fn validate_commit(
             additions += 1;
             let clean_line = &line[1..]; // strip leading +
 
-            for rule in &rules {
-                if rule.applies_to.is_empty() || rule.applies_to == "line" {
-                    if matches_rule(rule, clean_line, file_path) {
-                        let key = (rule.id.clone(), file_path.to_string());
+            for cr in compiled_rules {
+                if cr.rule.applies_to.is_empty() || cr.rule.applies_to == "line" {
+                    if matches_compiled_rule(cr, clean_line, file_path) {
+                        let key = (cr.rule.id.clone(), file_path.to_string());
                         let count = rule_file_counts.entry(key.clone()).or_insert(0);
                         *count += 1;
 
                         if *count <= MAX_VIOLATIONS_PER_RULE_PER_FILE {
                             violations.push(Violation {
-                                rule_id: rule.id.clone(),
-                                severity: rule.severity.clone(),
-                                name: rule.name.clone(),
+                                rule_id: cr.rule.id.clone(),
+                                severity: cr.rule.severity.clone(),
+                                name: cr.rule.name.clone(),
                                 file: file_path.to_string(),
                                 line: i + 1,
                                 code: clean_line.chars().take(120).collect(),
-                                message: rule.message.clone(),
+                                message: cr.rule.message.clone(),
                             });
                         } else {
                             *suppressed.entry(key).or_insert(0) += 1;
@@ -243,7 +291,9 @@ pub async fn validate_commit(
             }
 
             // EOF check
-            if rule_applies_eof(&rules, line) {
+            if compiled_rules.iter().any(|cr| cr.rule.applies_to == "file_end")
+                && line.contains("No newline at end of file")
+            {
                 violations.push(Violation {
                     rule_id: "PHP012".into(),
                     severity: "info".into(),
@@ -257,16 +307,16 @@ pub async fn validate_commit(
         }
 
         // File stats rules (e.g., large file)
-        for rule in &rules {
-            if rule.applies_to == "file_stats" && rule.max_additions > 0 && additions > rule.max_additions {
+        for cr in compiled_rules {
+            if cr.rule.applies_to == "file_stats" && cr.rule.max_additions > 0 && additions > cr.rule.max_additions {
                 violations.push(Violation {
-                    rule_id: rule.id.clone(),
-                    severity: rule.severity.clone(),
-                    name: rule.name.clone(),
+                    rule_id: cr.rule.id.clone(),
+                    severity: cr.rule.severity.clone(),
+                    name: cr.rule.name.clone(),
                     file: file_path.to_string(),
                     line: 0,
                     code: format!("+{additions} lines"),
-                    message: rule.message.clone(),
+                    message: cr.rule.message.clone(),
                 });
             }
         }
@@ -338,11 +388,6 @@ pub async fn validate_commit(
     }
 
     Ok(lines.join("\n"))
-}
-
-fn rule_applies_eof(rules: &[Rule], line: &str) -> bool {
-    line.contains("No newline at end of file")
-        && rules.iter().any(|r| r.applies_to == "file_end")
 }
 
 /// Validate all commits in an MR.

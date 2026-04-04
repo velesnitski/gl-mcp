@@ -35,7 +35,8 @@ pub async fn list_projects(
         let id = p["id"].as_u64().unwrap_or(0);
         let desc = p["description"].as_str().unwrap_or("");
         let desc_short = if desc.len() > 80 {
-            format!("{}...", &desc[..80])
+            let truncated: String = desc.chars().take(80).collect();
+            format!("{truncated}...")
         } else {
             desc.to_string()
         };
