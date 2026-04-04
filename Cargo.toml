@@ -20,8 +20,9 @@ name = "gl-mcp"
 path = "src/main.rs"
 
 [dependencies]
-rmcp = { version = "0.11", features = ["transport-io"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "time", "sync"] }
+rmcp = { version = "0.11", features = ["transport-io", "transport-streamable-http-server"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "time", "sync", "net"] }
+axum = "0.8"
 futures = "0.3"
 reqwest = { version = "0.12", features = ["json"] }
 serde = { version = "1", features = ["derive"] }
