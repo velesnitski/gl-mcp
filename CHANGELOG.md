@@ -8,10 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- HTTP/SSE transport for n8n and web clients (`--transport http --port 8000`)
+- Docker support: Dockerfile with HTTP default, docker-compose.yml, .dockerignore
 - `delete_branch` – delete a branch after merge (write tool)
 - `get_mr_pipelines` – list all pipelines for a specific MR
 - `get_user` – user info lookup by username or ID
 - Group-scoped issue search via `group_id` parameter in `search_issues`
+- TTL-based response cache (60s) for user/project lookups
+- HTTP 429 rate limit retry with Retry-After header (up to 3 attempts)
+- Generic `get_all_pages()` pagination helper
+- 18 new unit tests (31 total)
 - Extracted `params.rs` from `server.rs` (1400 → 717 + 697 lines)
 
 ### Fixed
