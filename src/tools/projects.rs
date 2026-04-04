@@ -200,6 +200,64 @@ pub async fn list_branches(
     Ok(lines.join("\n"))
 }
 
+/// Delete a branch from a project.
+pub async fn delete_branch(
+    client: &GitLabClient,
+    project_id: &str,
+    branch: &str,
+) -> Result<String> {
+    let path = format!(
+        "/projects/{}/repository/branches/{}",
+        urlencoding::encode(project_id),
+        urlencoding::encode(branch)
+    );
+    client.delete(&path).await?;
+    Ok(format!("Branch `{branch}` deleted from **{project_id}**."))
+}
+
+/// Look up a GitLab user by username or numeric ID.
+pub async fn get_user(
+    client: &GitLabClient,
+    username: &str,
+    user_id: Option<u32>,
+) -> Result<String> {
+    let user: Value = if let Some(id) = user_id {
+        client.get(&format!("/users/{id}"), &[]).await?
+    } else {
+        let users: Vec<Value> = client
+            .get("/users", &[("username", username)])
+            .await?;
+        users.into_iter().next().ok_or_else(|| {
+            crate::error::Error::Other(format!("User not found: {username}"))
+        })?
+    };
+
+    let username = user["username"].as_str().unwrap_or("?");
+    let name = user["name"].as_str().unwrap_or("?");
+    let email = user["email"].as_str().or(user["public_email"].as_str()).unwrap_or("–");
+    let state = user["state"].as_str().unwrap_or("?");
+    let id = user["id"].as_u64().unwrap_or(0);
+    let created = user["created_at"].as_str().unwrap_or("?");
+    let last_sign_in = user["last_sign_in_at"].as_str().unwrap_or("–");
+    let is_admin = user["is_admin"].as_bool().unwrap_or(false);
+    let web_url = user["web_url"].as_str().unwrap_or("");
+
+    let admin_str = if is_admin { " (admin)" } else { "" };
+
+    let parts = vec![
+        format!("# @{username} — {name}{admin_str}"),
+        String::new(),
+        format!("**ID:** {id}"),
+        format!("**State:** {state}"),
+        format!("**Email:** {email}"),
+        format!("**Created:** {created}"),
+        format!("**Last sign-in:** {last_sign_in}"),
+        format!("**URL:** {web_url}"),
+    ];
+
+    Ok(parts.join("\n"))
+}
+
 /// Find stale branches: merged but not deleted, or inactive for N days.
 pub async fn get_stale_branches(
     client: &GitLabClient,
