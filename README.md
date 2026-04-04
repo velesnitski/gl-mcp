@@ -11,9 +11,13 @@ GitLab MCP server for Claude Code. Single Rust binary, ~5MB, 54 tools.
 ```bash
 # Build
 cargo build --release
+```
 
-# Configure Claude Code (.mcp.json in your project root)
-cat > .mcp.json << 'EOF'
+### Claude Code
+
+Add to `.mcp.json` in your project root:
+
+```json
 {
   "mcpServers": {
     "gitlab": {
@@ -25,10 +29,30 @@ cat > .mcp.json << 'EOF'
     }
   }
 }
-EOF
 ```
 
-Restart Claude Code. The `gitlab` MCP server will be available.
+### GitHub Copilot (VS Code)
+
+Add to `.vscode/mcp.json` in your project root:
+
+```json
+{
+  "servers": {
+    "gitlab": {
+      "type": "stdio",
+      "command": "/path/to/gl-mcp/target/release/gl-mcp",
+      "env": {
+        "GITLAB_URL": "https://gitlab.example.com",
+        "GITLAB_TOKEN": "glpat-your-token-here"
+      }
+    }
+  }
+}
+```
+
+### Cursor / Windsurf / Other MCP Clients
+
+gl-mcp uses stdio transport – it works with any MCP-compatible client. Point your client's MCP configuration to the binary and set the environment variables above.
 
 ## Tools (54)
 
