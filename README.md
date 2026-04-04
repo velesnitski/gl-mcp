@@ -4,14 +4,36 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.7.0-green.svg)](CHANGELOG.md)
 
-GitLab MCP server for Claude Code. Single Rust binary, ~5MB, 54 tools.
+GitLab MCP server for Claude Code, GitHub Copilot, Cursor, and other MCP clients. Single Rust binary, ~5MB, 54 tools.
 
-## Quick Start
+## Install
+
+### Pre-built binaries
+
+Download from [GitHub Releases](https://github.com/velesnitski/gl-mcp/releases/latest):
 
 ```bash
-# Build
-cargo build --release
+# macOS (Apple Silicon)
+curl -L https://github.com/velesnitski/gl-mcp/releases/latest/download/gl-mcp-aarch64-macos -o gl-mcp
+chmod +x gl-mcp
+
+# macOS (Intel)
+curl -L https://github.com/velesnitski/gl-mcp/releases/latest/download/gl-mcp-x86_64-macos -o gl-mcp
+chmod +x gl-mcp
+
+# Linux (x86_64)
+curl -L https://github.com/velesnitski/gl-mcp/releases/latest/download/gl-mcp-x86_64-linux -o gl-mcp
+chmod +x gl-mcp
 ```
+
+### Build from source
+
+```bash
+cargo build --release
+# Binary: target/release/gl-mcp
+```
+
+## Quick Start
 
 ### Claude Code
 
@@ -226,22 +248,6 @@ Mirrors [yt-mcp](https://github.com/velesnitski/yt-mcp) patterns:
 - [reqwest](https://crates.io/crates/reqwest) - HTTP client with connection pooling
 - [tokio](https://tokio.rs) - async runtime
 - [serde](https://serde.rs) / [schemars](https://crates.io/crates/schemars) - JSON + schema generation
-
-## Build
-
-```bash
-cargo build --release
-# Binary: target/release/gl-mcp (~4MB)
-```
-
-Cross-compile:
-```bash
-# Linux
-cargo build --release --target x86_64-unknown-linux-gnu
-
-# macOS Intel
-cargo build --release --target x86_64-apple-darwin
-```
 
 ## License
 

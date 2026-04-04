@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `summary_only` parameter for `list_merge_requests` and `list_commits` (~3-5x smaller responses)
 - Global response size warning (>15KB) in `tool_call!` macro — all 54 tools now auto-warn
 - GitHub Copilot, Cursor, and Windsurf setup instructions in README
+- GitHub Actions release workflow — pre-built binaries for macOS (ARM + Intel) and Linux on tag push
+- Pre-built binary install instructions in README
 
 ### Changed
 - `GitLabClient::new` returns `Result` instead of panicking on invalid tokens
