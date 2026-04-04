@@ -105,12 +105,35 @@ pub struct GetStaleBranchesParams {
     pub instance: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DeleteBranchParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Branch name to delete")]
+    pub branch: String,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetUserParams {
+    #[schemars(description = "GitLab username (e.g., 'john.doe')")]
+    pub username: Option<String>,
+    #[schemars(description = "GitLab user ID (numeric)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    pub user_id: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
 // ─── Issues ───
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchIssuesParams {
     #[schemars(description = "Project ID or path (empty = search all projects)")]
     pub project_id: Option<String>,
+    #[schemars(description = "Group ID or path to search issues within a group (e.g., 'my-org/backend')")]
+    pub group_id: Option<String>,
     #[schemars(description = "Search text in title/description")]
     pub search: Option<String>,
     #[schemars(description = "Filter by state: opened, closed, all (default: opened)")]
@@ -379,6 +402,16 @@ pub struct RetryPipelineParams {
     pub project_id: String,
     #[schemars(description = "Pipeline ID")]
     pub pipeline_id: u64,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetMrPipelinesParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Merge request IID (the ! number)")]
+    pub mr_iid: u64,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }
