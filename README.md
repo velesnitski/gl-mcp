@@ -74,19 +74,63 @@ Add to `.vscode/mcp.json` in your project root:
 
 ### Cursor / Windsurf / Other MCP Clients
 
-gl-mcp uses stdio transport – it works with any MCP-compatible client. Point your client's MCP configuration to the binary and set the environment variables above.
+gl-mcp supports stdio transport (default) – it works with any MCP-compatible client. Point your client's MCP configuration to the binary and set the environment variables above.
 
-## Tools (54)
+### Docker
+
+```bash
+docker compose up -d
+```
+
+Or build and run directly:
+
+```bash
+docker build -t gl-mcp .
+docker run -p 8000:8000 \
+  -e GITLAB_URL=https://gitlab.example.com \
+  -e GITLAB_TOKEN=glpat-your-token-here \
+  gl-mcp
+```
+
+The Docker image runs in HTTP mode by default on port 8000.
+
+### n8n Integration
+
+1. Start gl-mcp in HTTP mode:
+
+```bash
+# Via Docker
+docker compose up -d
+
+# Or directly
+gl-mcp --transport http --port 8000
+```
+
+2. In n8n, add an **MCP Client** node
+3. Set the MCP server URL to `http://localhost:8000/mcp`
+4. All 58 tools will be available as actions in your n8n workflows
+
+### Transport Options
+
+| Flag | Description |
+|------|-------------|
+| (default) | stdio transport for Claude Code, Copilot, Cursor |
+| `--transport http` | HTTP/SSE transport for n8n, web clients |
+| `--port 8000` | Port for HTTP transport (default: 8000) |
+
+## Tools (58)
 
 ### Projects & Branches
 | Tool | Description |
 |------|-------------|
 | `list_projects` | List accessible projects |
+| `get_user` | User info by username or ID |
 | `get_project` | Project details (stars, forks, topics) |
 | `list_members` | Project members with access levels |
 | `list_group_projects` | All projects in a group (with subgroups) |
 | `list_branches` | List branches, filtered by name |
 | `get_stale_branches` | Find merged-but-not-deleted and inactive branches |
+| `delete_branch` | Delete a branch (e.g., after merge) |
 
 ### Issues
 | Tool | Description |
@@ -119,6 +163,7 @@ gl-mcp uses stdio transport – it works with any MCP-compatible client. Point y
 | `get_job_log` | Job log output (tail N lines) |
 | `retry_pipeline` | Retry a failed pipeline |
 | `cancel_pipeline` | Cancel a running pipeline |
+| `get_mr_pipelines` | List all pipelines for a specific MR |
 
 ### Commits & Code Review
 | Tool | Description |
