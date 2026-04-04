@@ -199,6 +199,53 @@ pub async fn get_job_log(
     Ok(parts.join("\n"))
 }
 
+/// List pipelines for a merge request.
+pub async fn get_mr_pipelines(
+    client: &GitLabClient,
+    project_id: &str,
+    mr_iid: u64,
+) -> Result<String> {
+    let path = format!(
+        "/projects/{}/merge_requests/{}/pipelines",
+        urlencoding::encode(project_id),
+        mr_iid
+    );
+
+    let pipelines: Vec<Value> = client
+        .get(&path, &[])
+        .await?;
+
+    if pipelines.is_empty() {
+        return Ok(format!("No pipelines found for MR !{mr_iid}."));
+    }
+
+    let mut lines = vec![format!("**MR !{mr_iid} — {} pipelines**\n", pipelines.len())];
+
+    for p in &pipelines {
+        let id = p["id"].as_u64().unwrap_or(0);
+        let status = p["status"].as_str().unwrap_or("?");
+        let ref_name = p["ref"].as_str().unwrap_or("?");
+        let sha = p["sha"].as_str().unwrap_or("?");
+        let sha_short = if sha.len() > 8 { &sha[..8] } else { sha };
+        let created = p["created_at"].as_str().unwrap_or("?");
+
+        let status_icon = match status {
+            "success" => "✅",
+            "failed" => "❌",
+            "running" => "🔄",
+            "pending" => "⏳",
+            "canceled" => "⛔",
+            _ => "❓",
+        };
+
+        lines.push(format!(
+            "- {status_icon} **#{id}** [{status}] ref: {ref_name} sha: {sha_short} — {created}"
+        ));
+    }
+
+    Ok(lines.join("\n"))
+}
+
 /// Retry a pipeline.
 pub async fn retry_pipeline(
     client: &GitLabClient,

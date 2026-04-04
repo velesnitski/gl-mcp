@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `delete_branch` – delete a branch after merge (write tool)
+- `get_mr_pipelines` – list all pipelines for a specific MR
+- `get_user` – user info lookup by username or ID
+- Group-scoped issue search via `group_id` parameter in `search_issues`
+- Extracted `params.rs` from `server.rs` (1400 → 717 + 697 lines)
+
+### Fixed
+- Lint regex pre-compiled once via LazyLock (was recompiling per line per rule)
+- UTF-8 safe string truncation (was panicking on Cyrillic)
+- Mutex poison recovery instead of panicking
+- Concurrent HTTP for project name resolution and team activity
+- NaN-safe float sorting in MR turnaround stats
+- Token redacted from Debug output on GitLabInstance
+- Broader Sentry token scrubbing pattern
+
 ## [0.8.0] - 2026-04-04
 
 ### Added
