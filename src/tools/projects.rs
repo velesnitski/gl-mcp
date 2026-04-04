@@ -222,10 +222,12 @@ pub async fn get_user(
     user_id: Option<u32>,
 ) -> Result<String> {
     let user: Value = if let Some(id) = user_id {
-        client.get(&format!("/users/{id}"), &[]).await?
+        let cache_key = format!("user_id:{id}");
+        client.get_cached(&cache_key, &format!("/users/{id}"), &[], 60).await?
     } else {
+        let cache_key = format!("user:{username}");
         let users: Vec<Value> = client
-            .get("/users", &[("username", username)])
+            .get_cached(&cache_key, "/users", &[("username", username)], 60)
             .await?;
         users.into_iter().next().ok_or_else(|| {
             crate::error::Error::Other(format!("User not found: {username}"))
