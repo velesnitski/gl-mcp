@@ -1,0 +1,19 @@
+services:
+  gitlab-mcp:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - GITLAB_URL=https://gitlab.example.com
+      - GITLAB_TOKEN=glpat-your-token-here
+      # Optional:
+      # - GITLAB_INSTANCES=main,staging
+      # - GITLAB_MAIN_URL=https://gitlab.example.com
+      # - GITLAB_MAIN_TOKEN=glpat-xxx
+      # - GITLAB_STAGING_URL=https://staging.gitlab.example.com
+      # - GITLAB_STAGING_TOKEN=glpat-yyy
+      # - GITLAB_READ_ONLY=true
+      # - GITLAB_COMPACT=true
+      # - DISABLED_TOOLS=delete_branch,create_issue
+      # - SENTRY_DSN=https://xxx@sentry.io/yyy
+    restart: unless-stopped
