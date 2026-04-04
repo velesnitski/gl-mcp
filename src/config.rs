@@ -17,11 +17,21 @@ use crate::error::{Error, Result};
 use std::env;
 
 /// Single GitLab instance configuration (immutable after creation).
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct GitLabInstance {
     pub name: String,
     pub url: String,
     pub token: String,
+}
+
+impl std::fmt::Debug for GitLabInstance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GitLabInstance")
+            .field("name", &self.name)
+            .field("url", &self.url)
+            .field("token", &"[REDACTED]")
+            .finish()
+    }
 }
 
 /// Application-wide configuration.

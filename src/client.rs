@@ -12,7 +12,6 @@ use crate::error::{Error, Result};
 
 /// GitLab API client for a single instance.
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct GitLabClient {
     pub name: String,
     base_url: String,
@@ -87,7 +86,7 @@ impl GitLabClient {
                     .map(|m| m.to_string())
             })
             .unwrap_or_else(|| {
-                if body.len() > 200 { body[..200].to_string() } else { body }
+                if body.len() > 200 { body.chars().take(200).collect() } else { body }
             });
 
         error!(

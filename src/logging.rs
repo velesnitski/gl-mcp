@@ -111,8 +111,10 @@ pub fn setup_sentry() {
 /// Scrub GitLab tokens and other secrets from strings.
 fn scrub_tokens(s: &str) -> String {
     static RE: std::sync::LazyLock<regex::Regex> =
-        std::sync::LazyLock::new(|| regex::Regex::new(r"glpat-[A-Za-z0-9_\-\.]+").unwrap());
-    RE.replace_all(s, "glpat-[REDACTED]").to_string()
+        std::sync::LazyLock::new(|| {
+            regex::Regex::new(r"(?:glpat-[A-Za-z0-9_\-\.]+|(?i)(?:bearer|private-token)\s+[A-Za-z0-9_\-\.]{20,})").unwrap()
+        });
+    RE.replace_all(s, "[REDACTED]").to_string()
 }
 
 /// Add a Sentry breadcrumb for a tool call.
