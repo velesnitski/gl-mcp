@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-04-04
+
 ### Added
 - `create_merge_request` - smart MR creation with auto-title from branch name, auto-description from commits, duplicate detection, reviewer/assignee resolution
 - Sentry error tracking (optional, via `SENTRY_DSN` env var) with tool call breadcrumbs and PII scrubbing
