@@ -32,7 +32,7 @@ pub struct GlMcpServer {
 // ─── Helpers ───
 
 /// Parse human-readable period into hours.
-fn parse_period(period: &str) -> u32 {
+pub(crate) fn parse_period(period: &str) -> u32 {
     let p = period.trim().to_lowercase();
     match p.as_str() {
         "today" => {
@@ -72,7 +72,7 @@ fn resolve_client<'a>(resolver: &'a Resolver, instance: &Option<String>, id: &st
         .map_err(|e| McpError::internal_error(e.to_string(), None))
 }
 
-fn strip_markdown(text: &str) -> String {
+pub(crate) fn strip_markdown(text: &str) -> String {
     let mut out = text.replace("**", "").replace("__", "");
     out = out.lines().map(|line| {
         if line.starts_with("### ") { &line[4..] }
@@ -738,5 +738,42 @@ impl ServerHandler for GlMcpServer {
                 "GitLab MCP server — projects, issues, merge requests, CI/CD pipelines, commits, and code review.".to_string(),
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_period_hours() {
+        assert_eq!(parse_period("24"), 24);
+        assert_eq!(parse_period("48"), 48);
+    }
+
+    #[test]
+    fn test_parse_period_days() {
+        assert_eq!(parse_period("3d"), 72);
+        assert_eq!(parse_period("7d"), 168);
+    }
+
+    #[test]
+    fn test_parse_period_hour_suffix() {
+        assert_eq!(parse_period("12h"), 12);
+    }
+
+    #[test]
+    fn test_parse_period_defaults() {
+        assert_eq!(parse_period("invalid"), 24);
+        assert_eq!(parse_period(""), 24);
+    }
+
+    #[test]
+    fn test_strip_markdown() {
+        assert_eq!(strip_markdown("**bold**"), "bold");
+        assert_eq!(strip_markdown("### Header"), "Header");
+        assert_eq!(strip_markdown("## H2"), "H2");
+        assert_eq!(strip_markdown("# H1"), "H1");
+        assert_eq!(strip_markdown("plain text"), "plain text");
     }
 }

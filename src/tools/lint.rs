@@ -37,7 +37,7 @@ const SKIP_FILE_PATTERNS: &[&str] = &[
     "go.sum", "Cargo.lock",
 ];
 
-fn should_skip_lint_file(path: &str) -> bool {
+pub(crate) fn should_skip_lint_file(path: &str) -> bool {
     SKIP_FILE_EXTENSIONS.iter().any(|ext| path.ends_with(ext))
         || SKIP_FILE_PATTERNS.iter().any(|pat| path.contains(pat))
 }
@@ -498,4 +498,19 @@ pub fn list_rules(language: &str) -> String {
     }
 
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_should_skip_lint_file() {
+        assert!(should_skip_lint_file("package-lock.json"));
+        assert!(should_skip_lint_file("vendor/something.php"));
+        assert!(should_skip_lint_file("image.png"));
+        assert!(should_skip_lint_file("styles.min.css"));
+        assert!(!should_skip_lint_file("src/main.rs"));
+        assert!(!should_skip_lint_file("app/Controller.php"));
+    }
 }
