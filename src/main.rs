@@ -7,6 +7,7 @@ mod client;
 mod config;
 mod error;
 mod logging;
+mod params;
 mod resolver;
 mod server;
 mod teams;
