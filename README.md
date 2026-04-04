@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/velesnitski/gl-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/velesnitski/gl-mcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.8.0-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.0-green.svg)](CHANGELOG.md)
 
 GitLab MCP server for Claude Code, GitHub Copilot, Cursor, and other MCP clients. Single Rust binary, ~5MB, 58 tools.
 
