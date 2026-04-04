@@ -5,5 +5,6 @@ pub mod config;
 pub mod error;
 pub mod logging;
 pub mod resolver;
+pub mod server;
 pub mod teams;
 pub mod tools;
