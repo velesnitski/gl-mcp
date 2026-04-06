@@ -743,6 +743,14 @@ impl GlMcpServer {
         )
     }
 
+    #[tool(description = "Analyze a file's code quality: line count, function count, nesting depth, complexity score, imports, lint violations. Returns metrics with A-F grade.")]
+    async fn analyze_file(&self, Parameters(p): Parameters<AnalyzeFileParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "analyze_file",
+            tools::lint::analyze_file(client, &p.project_id, &p.file_path, p.ref_name.as_deref().unwrap_or("")).await
+        )
+    }
+
     #[tool(description = "List available coding rules, optionally filtered by language.")]
     async fn list_rules(&self, Parameters(p): Parameters<ListRulesParams>) -> Result<CallToolResult, McpError> {
         tool_call!(self, "list_rules",
