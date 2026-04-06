@@ -454,6 +454,170 @@ pub async fn validate_mr(
     Ok(all_output.join("\n"))
 }
 
+/// Validate MR using the unified changes diff (not individual commits).
+/// This catches issues in squashed MRs where commit diffs are minimal.
+pub async fn validate_mr_changes(
+    client: &GitLabClient,
+    project_id: &str,
+    mr_iid: u64,
+) -> Result<String> {
+    let encoded = urlencoding::encode(project_id);
+
+    // Fetch MR metadata
+    let mr: Value = client
+        .get(&format!("/projects/{encoded}/merge_requests/{mr_iid}"), &[])
+        .await?;
+    let title = mr["title"].as_str().unwrap_or("?");
+    let author = mr["author"]["username"].as_str().unwrap_or("?");
+
+    // Fetch unified changes (full diff, not per-commit)
+    let mr_detail: Value = client
+        .get(
+            &format!("/projects/{encoded}/merge_requests/{mr_iid}/changes"),
+            &[("access_raw_diffs", "true")],
+        )
+        .await?;
+
+    let changes = mr_detail["changes"].as_array();
+    let diffs = match changes {
+        Some(c) if !c.is_empty() => c,
+        _ => return Ok(format!(
+            "**{project_id} !{mr_iid}** by @{author} — **No changes found**"
+        )),
+    };
+
+    let mut violations: Vec<Violation> = Vec::new();
+    let mut rule_file_counts: BTreeMap<(String, String), usize> = BTreeMap::new();
+    let mut suppressed: BTreeMap<(String, String), usize> = BTreeMap::new();
+    let mut files_checked = 0usize;
+
+    for diff in diffs {
+        let file_path = diff["new_path"].as_str().unwrap_or("?");
+        let diff_text = diff["diff"].as_str().unwrap_or("");
+
+        if should_skip_lint_file(file_path) || diff_text.is_empty() {
+            continue;
+        }
+        files_checked += 1;
+
+        let lang = detect_language(file_path);
+        let compiled_rules = get_compiled_rules(lang);
+
+        let mut additions: u64 = 0;
+
+        for (i, line) in diff_text.lines().enumerate() {
+            if !line.starts_with('+') || line.starts_with("+++") {
+                if line.starts_with('+') { additions += 1; }
+                continue;
+            }
+            additions += 1;
+            let clean_line = &line[1..];
+
+            for cr in compiled_rules {
+                if cr.rule.applies_to.is_empty() || cr.rule.applies_to == "line" {
+                    if matches_compiled_rule(cr, clean_line, file_path) {
+                        let key = (cr.rule.id.clone(), file_path.to_string());
+                        let count = rule_file_counts.entry(key.clone()).or_insert(0);
+                        *count += 1;
+
+                        if *count <= MAX_VIOLATIONS_PER_RULE_PER_FILE {
+                            violations.push(Violation {
+                                rule_id: cr.rule.id.clone(),
+                                severity: cr.rule.severity.clone(),
+                                name: cr.rule.name.clone(),
+                                file: file_path.to_string(),
+                                line: i + 1,
+                                code: clean_line.chars().take(120).collect(),
+                                message: cr.rule.message.clone(),
+                            });
+                        } else {
+                            *suppressed.entry(key).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // File stats rules
+        for cr in compiled_rules {
+            if cr.rule.applies_to == "file_stats" && cr.rule.max_additions > 0 && additions > cr.rule.max_additions {
+                violations.push(Violation {
+                    rule_id: cr.rule.id.clone(),
+                    severity: cr.rule.severity.clone(),
+                    name: cr.rule.name.clone(),
+                    file: file_path.to_string(),
+                    line: 0,
+                    code: format!("+{additions} lines"),
+                    message: cr.rule.message.clone(),
+                });
+            }
+        }
+    }
+
+    if violations.is_empty() {
+        return Ok(format!(
+            "**{project_id} !{mr_iid}** \"{}\" by @{author} — **No violations** ({files_checked} files checked)",
+            title
+        ));
+    }
+
+    let mut by_severity: BTreeMap<String, Vec<&Violation>> = BTreeMap::new();
+    for v in &violations {
+        by_severity.entry(v.severity.clone()).or_default().push(v);
+    }
+
+    let total_suppressed: usize = suppressed.values().sum();
+    let total_shown = violations.len();
+
+    let severity_order = ["critical", "warning", "info"];
+    let mut lines = vec![
+        format!(
+            "**{project_id} !{mr_iid}** \"{}\" by @{author} — **{} violations** ({files_checked} files)",
+            title, total_shown + total_suppressed
+        ),
+        String::new(),
+    ];
+
+    for sev in &severity_order {
+        if let Some(sevs) = by_severity.get(*sev) {
+            let icon = match *sev {
+                "critical" => "🔴",
+                "warning" => "🟡",
+                "info" => "🔵",
+                _ => "⚪",
+            };
+            lines.push(format!("### {} {} ({})", icon, sev.to_uppercase(), sevs.len()));
+            for v in sevs {
+                let loc = if v.line > 0 {
+                    format!("{}:{}", v.file, v.line)
+                } else {
+                    v.file.clone()
+                };
+                let code_preview = if v.code.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n  `{}`", v.code)
+                };
+                lines.push(format!(
+                    "- **[{}]** {} — {}{}\n  {loc}",
+                    v.rule_id, v.name, v.message, code_preview
+                ));
+            }
+            lines.push(String::new());
+        }
+    }
+
+    if total_suppressed > 0 {
+        lines.push(format!("*{total_suppressed} more violations suppressed (max {MAX_VIOLATIONS_PER_RULE_PER_FILE} per rule per file):*"));
+        for ((rule_id, file), count) in &suppressed {
+            let short_file = file.rsplit('/').next().unwrap_or(file);
+            lines.push(format!("- [{rule_id}] {short_file}: +{count} more"));
+        }
+    }
+
+    Ok(lines.join("\n"))
+}
+
 /// List all available rules, optionally filtered by language.
 pub fn list_rules(language: &str) -> String {
     let rules = if language.is_empty() {

@@ -739,6 +739,16 @@ pub struct ValidateMrParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct ValidateMrChangesParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Merge request IID")]
+    pub mr_iid: u64,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListRulesParams {
     #[schemars(description = "Language filter: PHP, Kotlin, TypeScript, Ansible (empty = all)")]
     pub language: Option<String>,
