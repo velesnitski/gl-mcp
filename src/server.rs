@@ -602,6 +602,16 @@ impl GlMcpServer {
         )
     }
 
+    #[tool(description = "Compare developers side-by-side in a project: MRs opened/merged/reviewed, approvals, avg merge time, comments, commits.")]
+    async fn compare_developers(&self, Parameters(p): Parameters<CompareDevelopersParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        let raw_usernames: Vec<String> = p.usernames.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        let usernames: Vec<&str> = raw_usernames.iter().map(|s| s.as_str()).collect();
+        tool_call!(self, "compare_developers",
+            tools::commits::compare_developers(client, &p.project_id, &usernames, p.days.unwrap_or(14)).await
+        )
+    }
+
     // ─── Repository ───
 
     #[tool(description = "Search code in a project. Returns matching file paths, line numbers, and code snippets.")]

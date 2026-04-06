@@ -1026,3 +1026,202 @@ fn base64_decode(input: &str) -> std::result::Result<Vec<u8>, String> {
     }
     Ok(out)
 }
+
+/// Compare multiple developers' performance in a project over a given period.
+pub async fn compare_developers(
+    client: &GitLabClient,
+    project_id: &str,
+    usernames: &[&str],
+    days: u32,
+) -> Result<String> {
+    use futures::future::join_all;
+
+    let since = (chrono::Utc::now() - chrono::Duration::days(days as i64))
+        .format("%Y-%m-%dT00:00:00Z")
+        .to_string();
+
+    let encoded_project = urlencoding::encode(project_id);
+    let mr_path = format!("/projects/{encoded_project}/merge_requests");
+
+    struct DevStats {
+        username: String,
+        mrs_opened: u64,
+        mrs_merged: u64,
+        mrs_reviewed: u64,
+        approvals_given: u64,
+        avg_merge_hours: f64,
+        mr_comments: u64,
+        commits: u64,
+    }
+
+    let futures: Vec<_> = usernames.iter().map(|&username| {
+        let client = client.clone();
+        let since = since.clone();
+        let mr_path = mr_path.clone();
+        let encoded_project = encoded_project.clone();
+        async move {
+            // 1) Fetch opened MRs by this author
+            let opened_mrs: Vec<Value> = client.get(&mr_path, &[
+                ("author_username", username),
+                ("state", "opened"),
+                ("created_after", &since),
+                ("per_page", "100"),
+            ]).await.unwrap_or_default();
+
+            // 2) Fetch merged MRs by this author
+            let merged_mrs: Vec<Value> = client.get(&mr_path, &[
+                ("author_username", username),
+                ("state", "merged"),
+                ("created_after", &since),
+                ("per_page", "100"),
+            ]).await.unwrap_or_default();
+
+            // 3) Fetch MRs where this user is reviewer (merged)
+            let reviewed_mrs: Vec<Value> = client.get(&mr_path, &[
+                ("reviewer_username", username),
+                ("state", "merged"),
+                ("created_after", &since),
+                ("per_page", "100"),
+            ]).await.unwrap_or_default();
+
+            // 4) Calculate avg merge time from merged MRs
+            let mut merge_hours: Vec<f64> = Vec::new();
+            for mr in &merged_mrs {
+                let created = mr["created_at"].as_str().unwrap_or("");
+                let merged = mr["merged_at"].as_str().unwrap_or("");
+                let created_dt = chrono::DateTime::parse_from_rfc3339(created).ok();
+                let merged_dt = chrono::DateTime::parse_from_rfc3339(merged).ok();
+                if let (Some(c), Some(m)) = (created_dt, merged_dt) {
+                    merge_hours.push((m - c).num_minutes() as f64 / 60.0);
+                }
+            }
+            let avg_merge = if merge_hours.is_empty() {
+                0.0
+            } else {
+                merge_hours.iter().sum::<f64>() / merge_hours.len() as f64
+            };
+
+            // 5) Count approvals given by this user via events API
+            let cache_key = format!("user:{username}");
+            let users: Vec<Value> = client
+                .get_cached(&cache_key, "/users", &[("username", username)], 60)
+                .await
+                .unwrap_or_default();
+
+            let user_id = users.first().and_then(|u| u["id"].as_u64()).unwrap_or(0);
+
+            let since_ts = (chrono::Utc::now() - chrono::Duration::days(days as i64)).timestamp();
+            let events = if user_id > 0 {
+                fetch_user_events(&client, user_id, since_ts).await.unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+
+            // Filter events to this project
+            // First resolve project numeric ID
+            let project_info: Option<Value> = client
+                .get_cached(
+                    &format!("project_info:{encoded_project}"),
+                    &format!("/projects/{encoded_project}"),
+                    &[("simple", "true")],
+                    60,
+                )
+                .await
+                .ok();
+            let project_numeric_id = project_info.as_ref().and_then(|p| p["id"].as_u64());
+
+            let mut approvals = 0u64;
+            let mut comments = 0u64;
+            let mut commits = 0u64;
+
+            for event in &events {
+                let event_pid = event["project_id"].as_u64();
+                if project_numeric_id.is_some() && event_pid != project_numeric_id {
+                    continue;
+                }
+
+                let action = event["action_name"].as_str().unwrap_or("");
+                let target_type = event["target_type"].as_str().unwrap_or("");
+
+                match (action, target_type) {
+                    ("approved", "MergeRequest") => approvals += 1,
+                    ("commented on", "MergeRequest") => comments += 1,
+                    ("pushed to", _) | ("pushed new", _) => {
+                        let raw = event["push_data"]["commit_count"].as_u64().unwrap_or(1);
+                        let count = if raw > 20 { 1 } else { raw };
+                        commits += count;
+                    }
+                    _ => {}
+                }
+            }
+
+            DevStats {
+                username: username.to_string(),
+                mrs_opened: opened_mrs.len() as u64,
+                mrs_merged: merged_mrs.len() as u64,
+                mrs_reviewed: reviewed_mrs.len() as u64,
+                approvals_given: approvals,
+                avg_merge_hours: avg_merge,
+                mr_comments: comments,
+                commits,
+            }
+        }
+    }).collect();
+
+    let results = join_all(futures).await;
+
+    // Resolve project display name
+    let project_name = client
+        .get_cached::<Value>(
+            &format!("project_info:{encoded_project}"),
+            &format!("/projects/{encoded_project}"),
+            &[("simple", "true")],
+            60,
+        )
+        .await
+        .ok()
+        .and_then(|p| p["path_with_namespace"].as_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| project_id.to_string());
+
+    // Build markdown table
+    let mut header = "| Metric".to_string();
+    for stats in &results {
+        header.push_str(&format!(" | @{}", stats.username));
+    }
+    header.push_str(" |");
+
+    let mut separator = "|--------".to_string();
+    for _ in &results {
+        separator.push_str("|-------");
+    }
+    separator.push_str("|");
+
+    let metrics: Vec<(&str, Box<dyn Fn(&DevStats) -> String>)> = vec![
+        ("MRs opened", Box::new(|s: &DevStats| s.mrs_opened.to_string())),
+        ("MRs merged", Box::new(|s: &DevStats| s.mrs_merged.to_string())),
+        ("MRs reviewed", Box::new(|s: &DevStats| s.mrs_reviewed.to_string())),
+        ("Approvals given", Box::new(|s: &DevStats| s.approvals_given.to_string())),
+        ("Avg merge time", Box::new(|s: &DevStats| {
+            if s.mrs_merged == 0 { "–".to_string() } else { format!("{:.1}h", s.avg_merge_hours) }
+        })),
+        ("Comments on MRs", Box::new(|s: &DevStats| s.mr_comments.to_string())),
+        ("Commits (pushes)", Box::new(|s: &DevStats| s.commits.to_string())),
+    ];
+
+    let mut lines = vec![
+        format!("## Developer Comparison: {} (last {} days)\n", project_name, days),
+        header,
+        separator,
+    ];
+
+    for (metric_name, formatter) in &metrics {
+        let mut row = format!("| {metric_name}");
+        for stats in &results {
+            row.push_str(&format!(" | {}", formatter(stats)));
+        }
+        row.push_str(" |");
+        lines.push(row);
+    }
+
+    Ok(lines.join("\n"))
+}
