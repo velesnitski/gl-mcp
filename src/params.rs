@@ -764,6 +764,18 @@ pub struct ValidateMrChangesParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct AnalyzeFileParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "File path in the repository (e.g., 'app/Services/UserService.php')")]
+    pub file_path: String,
+    #[schemars(description = "Branch, tag, or SHA (default: HEAD)")]
+    pub ref_name: Option<String>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListRulesParams {
     #[schemars(description = "Language filter: PHP, Kotlin, TypeScript, Ansible (empty = all)")]
     pub language: Option<String>,

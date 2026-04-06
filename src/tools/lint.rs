@@ -664,6 +664,260 @@ pub fn list_rules(language: &str) -> String {
     lines.join("\n")
 }
 
+/// Analyze a file's code quality metrics: length, functions, nesting depth, complexity indicators.
+/// Fetches the full file content (not diff) for structural analysis.
+pub async fn analyze_file(
+    client: &GitLabClient,
+    project_id: &str,
+    file_path: &str,
+    ref_name: &str,
+) -> Result<String> {
+    let encoded = urlencoding::encode(project_id);
+    let encoded_path = urlencoding::encode(file_path);
+    let ref_param = if ref_name.is_empty() { "HEAD" } else { ref_name };
+
+    let file_info: Value = client
+        .get(
+            &format!("/projects/{encoded}/repository/files/{encoded_path}"),
+            &[("ref", ref_param)],
+        )
+        .await?;
+
+    let content_b64 = file_info["content"].as_str().unwrap_or("");
+    let content = base64_decode(content_b64);
+
+    let lang = detect_language(file_path);
+    let lines: Vec<&str> = content.lines().collect();
+    let total_lines = lines.len();
+
+    if total_lines == 0 {
+        return Ok(format!("**{file_path}** — empty file"));
+    }
+
+    // ─── Metrics ───
+    let blank_lines = lines.iter().filter(|l| l.trim().is_empty()).count();
+    let comment_lines = lines.iter().filter(|l| {
+        let t = l.trim();
+        t.starts_with("//") || t.starts_with('#') || t.starts_with("/*") || t.starts_with('*')
+    }).count();
+    let code_lines = total_lines - blank_lines - comment_lines;
+
+    // Function detection
+    let func_pattern = match lang {
+        "Swift" => r"(?:func|init)\s+",
+        "PHP" => r"function\s+\w+",
+        "Go" => r"func\s+",
+        "Kotlin" | "Java" => r"fun\s+",
+        "TypeScript" | "JavaScript" => r"(?:function\s+|(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?(?:\([^)]*\)|[a-zA-Z_]\w*)\s*=>)",
+        "Rust" => r"fn\s+",
+        "Python" => r"def\s+",
+        _ => r"function\s+|func\s+|fn\s+|def\s+",
+    };
+    let func_re = regex::Regex::new(func_pattern).ok();
+    let mut functions: Vec<(usize, String)> = Vec::new();
+    if let Some(re) = &func_re {
+        for (i, line) in lines.iter().enumerate() {
+            if re.is_match(line) {
+                let name = line.trim().chars().take(80).collect::<String>();
+                functions.push((i + 1, name));
+            }
+        }
+    }
+
+    // Nesting depth analysis
+    let mut max_nesting: usize = 0;
+    let mut max_nesting_line: usize = 0;
+    let mut deep_lines: usize = 0; // lines with 4+ nesting levels
+    let indent_size: usize = match lang {
+        "Python" => 4,
+        "Go" | "Rust" => 4, // tabs count as 4
+        _ => 4,
+    };
+    for (i, line) in lines.iter().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let leading = line.len() - line.trim_start().len();
+        // Convert tabs to spaces for counting
+        let tab_adjusted = line.chars().take_while(|c| c.is_whitespace())
+            .map(|c| if c == '\t' { indent_size } else { 1 })
+            .sum::<usize>();
+        let nesting = tab_adjusted / indent_size;
+        if nesting >= 4 {
+            deep_lines += 1;
+        }
+        if nesting > max_nesting {
+            max_nesting = nesting;
+            max_nesting_line = i + 1;
+        }
+    }
+
+    // Long functions (estimate: count lines between function declarations)
+    let mut long_functions: Vec<(String, usize)> = Vec::new();
+    for i in 0..functions.len() {
+        let start = functions[i].0;
+        let end = if i + 1 < functions.len() {
+            functions[i + 1].0
+        } else {
+            total_lines
+        };
+        let length = end - start;
+        if length > 50 {
+            long_functions.push((functions[i].1.clone(), length));
+        }
+    }
+
+    // Import count
+    let import_pattern = match lang {
+        "Swift" => "import ",
+        "PHP" => "use ",
+        "Go" => "import",
+        "TypeScript" | "JavaScript" => "import ",
+        "Rust" => "use ",
+        "Python" => "import ",
+        "Kotlin" | "Java" => "import ",
+        _ => "import ",
+    };
+    let imports = lines.iter().filter(|l| l.trim().starts_with(import_pattern)).count();
+
+    // Lint violations on full file
+    let compiled_rules = get_compiled_rules(lang);
+    let mut violations: Vec<(String, String, usize)> = Vec::new(); // (rule_id, message, line)
+    for (i, line) in lines.iter().enumerate() {
+        for cr in compiled_rules {
+            if (cr.rule.applies_to.is_empty() || cr.rule.applies_to == "line")
+                && matches_compiled_rule(cr, line, file_path)
+            {
+                violations.push((cr.rule.id.clone(), cr.rule.name.clone(), i + 1));
+            }
+        }
+    }
+
+    // ─── Output ───
+    let mut out = vec![
+        format!("## {file_path}\n"),
+        format!("**Language:** {} | **Branch:** {}\n", lang, ref_param),
+        "### Metrics\n".to_string(),
+        "| Metric | Value | Assessment |".to_string(),
+        "|--------|-------|------------|".to_string(),
+    ];
+
+    // Total lines
+    let lines_assessment = if total_lines > 500 { "Too long" } else if total_lines > 300 { "Consider splitting" } else { "OK" };
+    out.push(format!("| Total lines | {} | {} |", total_lines, lines_assessment));
+    out.push(format!("| Code lines | {} | |", code_lines));
+    out.push(format!("| Comments | {} ({:.0}%) | {} |", comment_lines, comment_lines as f64 / total_lines as f64 * 100.0,
+        if comment_lines == 0 { "No comments" } else { "OK" }));
+    out.push(format!("| Blank lines | {} | |", blank_lines));
+
+    // Functions
+    let func_assessment = if functions.len() > 20 { "Too many — god class?" } else { "OK" };
+    out.push(format!("| Functions | {} | {} |", functions.len(), func_assessment));
+
+    // Imports
+    let import_assessment = if imports > 15 { "Many imports — high coupling" } else if imports > 10 { "Moderate" } else { "OK" };
+    out.push(format!("| Imports | {} | {} |", imports, import_assessment));
+
+    // Nesting
+    let nesting_assessment = if max_nesting >= 6 { "Deeply nested — refactor" } else if max_nesting >= 4 { "Consider flattening" } else { "OK" };
+    out.push(format!("| Max nesting depth | {} (line {}) | {} |", max_nesting, max_nesting_line, nesting_assessment));
+    if deep_lines > 0 {
+        out.push(format!("| Lines at 4+ depth | {} | Complexity indicator |", deep_lines));
+    }
+
+    // Long functions
+    if !long_functions.is_empty() {
+        out.push(String::new());
+        out.push("### Long Functions (>50 lines)\n".to_string());
+        for (name, length) in &long_functions {
+            let short = name.chars().take(60).collect::<String>();
+            out.push(format!("- `{short}` — ~{length} lines"));
+        }
+    }
+
+    // Violations
+    if !violations.is_empty() {
+        out.push(String::new());
+        let unique: std::collections::BTreeMap<String, usize> = violations.iter()
+            .fold(std::collections::BTreeMap::new(), |mut acc, (id, _, _)| {
+                *acc.entry(id.clone()).or_insert(0) += 1;
+                acc
+            });
+        out.push(format!("### Lint Violations ({})\n", violations.len()));
+        for (id, count) in &unique {
+            let name = violations.iter().find(|(rid, _, _)| rid == id).map(|(_, n, _)| n.as_str()).unwrap_or("?");
+            out.push(format!("- **[{id}]** {name}: {count} occurrences"));
+        }
+    } else {
+        out.push(String::new());
+        out.push("### Lint: No violations".to_string());
+    }
+
+    // Summary score
+    let mut score = 100i32;
+    if total_lines > 500 { score -= 20; }
+    if total_lines > 300 { score -= 10; }
+    if functions.len() > 20 { score -= 15; }
+    if max_nesting >= 6 { score -= 20; }
+    else if max_nesting >= 4 { score -= 10; }
+    if imports > 15 { score -= 10; }
+    if comment_lines == 0 && code_lines > 50 { score -= 5; }
+    score -= (long_functions.len() as i32) * 5;
+    score -= (violations.len() as i32).min(20);
+    score = score.max(0);
+
+    let grade = match score {
+        90..=100 => "A",
+        75..=89 => "B",
+        60..=74 => "C",
+        40..=59 => "D",
+        _ => "F",
+    };
+
+    out.push(String::new());
+    out.push(format!("### Quality Score: {score}/100 (Grade {grade})"));
+
+    Ok(out.join("\n"))
+}
+
+fn base64_decode(input: &str) -> String {
+    // GitLab returns base64-encoded file content
+    let cleaned: String = input.chars().filter(|c| !c.is_whitespace()).collect();
+    let bytes = base64_decode_bytes(&cleaned);
+    String::from_utf8_lossy(&bytes).to_string()
+}
+
+fn base64_decode_bytes(input: &str) -> Vec<u8> {
+    const TABLE: [u8; 256] = {
+        let mut t = [255u8; 256];
+        let mut i = 0u8;
+        while i < 26 { t[(b'A' + i) as usize] = i; i += 1; }
+        let mut i = 0u8;
+        while i < 26 { t[(b'a' + i) as usize] = 26 + i; i += 1; }
+        let mut i = 0u8;
+        while i < 10 { t[(b'0' + i) as usize] = 52 + i; i += 1; }
+        t[b'+' as usize] = 62;
+        t[b'/' as usize] = 63;
+        t
+    };
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
+    let mut i = 0;
+    while i + 3 < bytes.len() {
+        let a = TABLE[bytes[i] as usize] as u32;
+        let b = TABLE[bytes[i+1] as usize] as u32;
+        let c = TABLE[bytes[i+2] as usize] as u32;
+        let d = TABLE[bytes[i+3] as usize] as u32;
+        if a == 255 || b == 255 { break; }
+        let triple = (a << 18) | (b << 12) | (c << 6) | d;
+        out.push((triple >> 16) as u8);
+        if bytes[i+2] != b'=' { out.push((triple >> 8) as u8); }
+        if bytes[i+3] != b'=' { out.push(triple as u8); }
+        i += 4;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

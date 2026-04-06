@@ -36,3 +36,41 @@ severity = "warning"
 name = "Debug output left in code"
 pattern = '(?i)\b(console\.log|var_dump|print_r|dd\(|puts |p\b |binding\.pry|debugger|System\.out\.print)'
 message = "Debug output left in code"
+
+[[rule]]
+id = "G006"
+severity = "warning"
+name = "Deep nesting"
+pattern = '^\s{16,}\S'
+negative_pattern = '^\s*(//|/?\*|\*)'
+message = "Deep nesting (4+ levels) — extract method or use early return"
+
+[[rule]]
+id = "G007"
+severity = "info"
+name = "Magic number"
+pattern = '(?<![.\w])(?!0\b|1\b|-1\b)\d{3,}(?!\s*[*+/]?\s*[*+/]|[.]\d|\w)'
+negative_pattern = '(const|CONST|static|final|let.*=|HTTP_|STATUS_|0x[0-9a-fA-F]|#[0-9a-fA-F]|port|timeout|size|width|height|count|max|min|limit|offset|page|version|index\.crates)'
+message = "Magic number — extract to named constant"
+
+[[rule]]
+id = "G008"
+severity = "warning"
+name = "Long line"
+pattern = '^.{200,}'
+negative_pattern = '(import|use |require|include|http://|https://|url|path|"[^"]{150,}")'
+message = "Line exceeds 200 characters — break into multiple lines"
+
+[[rule]]
+id = "G009"
+severity = "info"
+name = "Multiple return statements"
+pattern = '\breturn\b.*\breturn\b'
+message = "Multiple returns on one line — simplify logic"
+
+[[rule]]
+id = "G010"
+severity = "warning"
+name = "Empty catch block"
+pattern = 'catch\s*(\([^)]*\))?\s*\{\s*\}'
+message = "Empty catch block — log error or rethrow"
