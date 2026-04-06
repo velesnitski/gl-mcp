@@ -701,6 +701,21 @@ pub struct GetDeployFrequencyParams {
     pub instance: Option<String>,
 }
 
+// ─── Developer Comparison ───
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CompareDevelopersParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Comma-separated GitLab usernames to compare")]
+    pub usernames: String,
+    #[schemars(description = "Number of days to analyze (default: 14)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    pub days: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
 // ─── Lint ───
 
 #[derive(Debug, Deserialize, JsonSchema)]
