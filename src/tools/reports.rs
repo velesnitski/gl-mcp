@@ -358,6 +358,513 @@ td{{padding:6px 10px;border-bottom:1px solid #151520}}
     Ok(html)
 }
 
+/// Generate a complete HTML team performance report for a project.
+pub async fn generate_team_report(
+    client: &GitLabClient,
+    project_id: &str,
+    usernames: &[&str],
+    days: u32,
+) -> Result<String> {
+    use futures::future::join_all;
+
+    let since = (chrono::Utc::now() - chrono::Duration::days(days as i64))
+        .format("%Y-%m-%dT00:00:00Z")
+        .to_string();
+
+    let encoded_project = urlencoding::encode(project_id);
+    let mr_path = format!("/projects/{encoded_project}/merge_requests");
+
+    // ── Per-developer stats (same structure as compare_developers) ──
+
+    struct DevStats {
+        username: String,
+        mrs_merged: u64,
+        mrs_reviewed: u64,
+        reviewed_authors: BTreeMap<String, u64>,
+        approvals_given: u64,
+        avg_merge_hours: f64,
+        mr_comments: u64,
+        commits: u64,
+        additions: u64,
+        deletions: u64,
+        files_changed: u64,
+        mr_sizes: (u64, u64, u64),
+    }
+
+    let dev_futures: Vec<_> = usernames.iter().map(|&username| {
+        let client = client.clone();
+        let since = since.clone();
+        let mr_path = mr_path.clone();
+        let encoded_project = encoded_project.clone();
+        async move {
+            // Merged MRs by this author
+            let merged_mrs: Vec<Value> = client.get(&mr_path, &[
+                ("author_username", username),
+                ("state", "merged"),
+                ("created_after", &since),
+                ("per_page", "100"),
+            ]).await.unwrap_or_default();
+
+            // MRs where this user is reviewer (merged)
+            let reviewed_mrs: Vec<Value> = client.get(&mr_path, &[
+                ("reviewer_username", username),
+                ("state", "merged"),
+                ("created_after", &since),
+                ("per_page", "100"),
+            ]).await.unwrap_or_default();
+
+            // Calc merge time + LOC/files from merged MRs
+            let mut merge_hours: Vec<f64> = Vec::new();
+            let mut total_additions: u64 = 0;
+            let mut total_deletions: u64 = 0;
+            let mut total_files: u64 = 0;
+            let mut mr_small: u64 = 0;
+            let mut mr_medium: u64 = 0;
+            let mut mr_large: u64 = 0;
+
+            for mr in &merged_mrs {
+                let created = mr["created_at"].as_str().unwrap_or("");
+                let merged = mr["merged_at"].as_str().unwrap_or("");
+                let created_dt = chrono::DateTime::parse_from_rfc3339(created).ok();
+                let merged_dt = chrono::DateTime::parse_from_rfc3339(merged).ok();
+                if let (Some(c), Some(m)) = (created_dt, merged_dt) {
+                    merge_hours.push((m - c).num_minutes() as f64 / 60.0);
+                }
+
+                let mr_iid = mr["iid"].as_u64().unwrap_or(0);
+                if mr_iid > 0 {
+                    let changes: std::result::Result<Value, _> = client
+                        .get(
+                            &format!("/projects/{encoded_project}/merge_requests/{mr_iid}/changes"),
+                            &[("access_raw_diffs", "true")],
+                        )
+                        .await;
+                    if let Ok(detail) = changes {
+                        if let Some(files) = detail["changes"].as_array() {
+                            let file_count = files.len() as u64;
+                            total_files += file_count;
+                            match file_count {
+                                0..=9 => mr_small += 1,
+                                10..=50 => mr_medium += 1,
+                                _ => mr_large += 1,
+                            }
+                            for f in files {
+                                let diff = f["diff"].as_str().unwrap_or("");
+                                for line in diff.lines() {
+                                    if line.starts_with('+') && !line.starts_with("+++") {
+                                        total_additions += 1;
+                                    } else if line.starts_with('-') && !line.starts_with("---") {
+                                        total_deletions += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            let avg_merge = if merge_hours.is_empty() {
+                0.0
+            } else {
+                merge_hours.iter().sum::<f64>() / merge_hours.len() as f64
+            };
+
+            // Review matrix: who did this user review
+            let mut reviewed_authors: BTreeMap<String, u64> = BTreeMap::new();
+            for mr in &reviewed_mrs {
+                let author = mr["author"]["username"].as_str().unwrap_or("?").to_string();
+                *reviewed_authors.entry(author).or_insert(0) += 1;
+            }
+
+            // Events for approvals, comments, commits
+            let cache_key = format!("user:{username}");
+            let users: Vec<Value> = client
+                .get_cached(&cache_key, "/users", &[("username", username)], 60)
+                .await
+                .unwrap_or_default();
+
+            let user_id = users.first().and_then(|u| u["id"].as_u64()).unwrap_or(0);
+            let since_ts = (chrono::Utc::now() - chrono::Duration::days(days as i64)).timestamp();
+            let events = if user_id > 0 {
+                commits::fetch_user_events(&client, user_id, since_ts).await.unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+
+            let project_info: Option<Value> = client
+                .get_cached(
+                    &format!("project_info:{encoded_project}"),
+                    &format!("/projects/{encoded_project}"),
+                    &[("simple", "true")],
+                    60,
+                )
+                .await
+                .ok();
+            let project_numeric_id = project_info.as_ref().and_then(|p| p["id"].as_u64());
+
+            let mut approvals = 0u64;
+            let mut comments = 0u64;
+            let mut dev_commits = 0u64;
+
+            for event in &events {
+                let event_pid = event["project_id"].as_u64();
+                if project_numeric_id.is_some() && event_pid != project_numeric_id {
+                    continue;
+                }
+                let action = event["action_name"].as_str().unwrap_or("");
+                let target_type = event["target_type"].as_str().unwrap_or("");
+                match (action, target_type) {
+                    ("approved", "MergeRequest") => approvals += 1,
+                    ("commented on", "MergeRequest") => comments += 1,
+                    ("pushed to", _) | ("pushed new", _) => {
+                        let raw = event["push_data"]["commit_count"].as_u64().unwrap_or(1);
+                        dev_commits += if raw > 20 { 1 } else { raw };
+                    }
+                    _ => {}
+                }
+            }
+
+            DevStats {
+                username: username.to_string(),
+                mrs_merged: merged_mrs.len() as u64,
+                mrs_reviewed: reviewed_mrs.len() as u64,
+                reviewed_authors,
+                approvals_given: approvals,
+                avg_merge_hours: avg_merge,
+                mr_comments: comments,
+                commits: dev_commits,
+                additions: total_additions,
+                deletions: total_deletions,
+                files_changed: total_files,
+                mr_sizes: (mr_small, mr_medium, mr_large),
+            }
+        }
+    }).collect();
+
+    let dev_results = join_all(dev_futures).await;
+
+    // ── MR turnaround data ──
+
+    let turnaround_mrs: Vec<Value> = client.get(&mr_path, &[
+        ("state", "merged"),
+        ("created_after", &since),
+        ("per_page", "50"),
+        ("order_by", "updated_at"),
+        ("sort", "desc"),
+    ]).await.unwrap_or_default();
+
+    struct TurnaroundMr {
+        iid: u64,
+        title: String,
+        author: String,
+        hours: f64,
+    }
+    let mut turnaround_stats: Vec<TurnaroundMr> = Vec::new();
+    for mr in &turnaround_mrs {
+        let created = mr["created_at"].as_str().unwrap_or("");
+        let merged = mr["merged_at"].as_str().unwrap_or("");
+        if let (Some(c), Some(m)) = (
+            chrono::DateTime::parse_from_rfc3339(created).ok(),
+            chrono::DateTime::parse_from_rfc3339(merged).ok(),
+        ) {
+            turnaround_stats.push(TurnaroundMr {
+                iid: mr["iid"].as_u64().unwrap_or(0),
+                title: mr["title"].as_str().unwrap_or("?").to_string(),
+                author: mr["author"]["username"].as_str().unwrap_or("?").to_string(),
+                hours: (m - c).num_minutes() as f64 / 60.0,
+            });
+        }
+    }
+
+    // ── Resolve project display name ──
+
+    let project_name = client
+        .get_cached::<Value>(
+            &format!("project_info:{encoded_project}"),
+            &format!("/projects/{encoded_project}"),
+            &[("simple", "true")],
+            60,
+        )
+        .await
+        .ok()
+        .and_then(|p| p["path_with_namespace"].as_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| project_id.to_string());
+
+    // ── Compute summary metrics ──
+
+    let total_mrs_merged: u64 = dev_results.iter().map(|d| d.mrs_merged).sum();
+    let total_loc: u64 = dev_results.iter().map(|d| d.additions + d.deletions).sum();
+    let reviewers_active = dev_results.iter().filter(|d| d.mrs_reviewed > 0).count();
+    let inactive_count = dev_results.iter().filter(|d| d.commits == 0 && d.mrs_merged == 0 && d.mrs_reviewed == 0).count();
+    let date_str = chrono::Utc::now().format("%A, %d %B %Y").to_string();
+
+    // Review bus factor
+    let bus_factor = if reviewers_active == 0 { 0 } else { reviewers_active };
+
+    // ── Build HTML ──
+
+    let mut html = format!(r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Team Report — {project_name} — {date_str}</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0d1117;color:#c9d1d9;padding:32px;line-height:1.6}}
+h1{{color:#58a6ff;margin-bottom:8px;font-size:24px}}
+h2{{color:#58a6ff;margin:36px 0 16px;font-size:18px;border-bottom:1px solid #21262d;padding-bottom:8px}}
+.sub{{color:#8b949e;margin-bottom:24px;font-size:14px}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:16px 0}}
+.card{{background:#161b22;border:1px solid #21262d;border-radius:8px;padding:18px}}
+.card-t{{color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}}
+.card-v{{font-size:28px;font-weight:700}}
+.card-s{{color:#8b949e;font-size:12px;margin-top:4px}}
+.g{{color:#3fb950}}.r{{color:#f85149}}.y{{color:#d29922}}.b{{color:#58a6ff}}
+table{{width:100%;border-collapse:collapse;margin:12px 0}}
+th{{background:#161b22;color:#8b949e;text-align:left;padding:10px 14px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid #21262d}}
+td{{padding:10px 14px;border-bottom:1px solid #21262d;font-size:14px}}
+.issue{{background:#161b22;border:1px solid #21262d;border-radius:6px;padding:14px 18px;margin:8px 0}}
+.issue b{{font-weight:600}}.issue .m{{color:#8b949e;font-size:13px;margin-top:4px}}
+.risk{{border-left:3px solid #f85149}}.warn{{border-left:3px solid #d29922}}
+footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484f58;font-size:12px}}
+</style>
+</head>
+<body>
+
+<h1>Team Performance Report</h1>
+<div class="sub">{project_name} &middot; Last {days} days &middot; {date_str}</div>
+
+<!-- Summary Cards -->
+<div class="grid">
+  <div class="card"><div class="card-t">Developers Active</div><div class="card-v b">{}</div><div class="card-s">{} total, {} inactive</div></div>
+  <div class="card"><div class="card-t">MRs Merged</div><div class="card-v g">{total_mrs_merged}</div></div>
+  <div class="card"><div class="card-t">Total LOC</div><div class="card-v">{total_loc}</div><div class="card-s">additions + deletions</div></div>
+  <div class="card"><div class="card-t">Review Bus Factor</div><div class="card-v{}">{bus_factor}</div><div class="card-s">devs with reviews &gt; 0</div></div>
+</div>
+"#,
+        dev_results.len() - inactive_count,
+        dev_results.len(),
+        inactive_count,
+        if bus_factor <= 1 { " r" } else { "" },
+    );
+
+    // ── Developer Comparison Table ──
+
+    html.push_str("<h2>Developer Comparison</h2>\n<table>\n<tr><th>Developer</th><th>Commits</th><th>LOC +</th><th>LOC &minus;</th><th>Files</th><th>MRs Merged</th><th>Reviews</th><th>Approvals</th><th>Avg Merge</th><th>Comments</th></tr>\n");
+
+    for d in &dev_results {
+        let merge_time = if d.mrs_merged == 0 {
+            "&ndash;".to_string()
+        } else {
+            format!("{:.1}h", d.avg_merge_hours)
+        };
+        html.push_str(&format!(
+            "<tr><td><b>@{}</b></td><td>{}</td><td class=\"g\">+{}</td><td class=\"r\">-{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+            htmlescape(&d.username),
+            d.commits,
+            d.additions,
+            d.deletions,
+            d.files_changed,
+            d.mrs_merged,
+            d.mrs_reviewed,
+            d.approvals_given,
+            merge_time,
+            d.mr_comments,
+        ));
+    }
+    html.push_str("</table>\n");
+
+    // ── Review Matrix ──
+
+    let has_reviews = dev_results.iter().any(|d| !d.reviewed_authors.is_empty());
+    if has_reviews {
+        html.push_str("<h2>Review Matrix</h2>\n<p class=\"sub\">Who reviewed whose MRs (count)</p>\n<table>\n<tr><th>Reviewer \\ Author</th>");
+        for d in &dev_results {
+            html.push_str(&format!("<th>@{}</th>", htmlescape(&d.username)));
+        }
+        html.push_str("</tr>\n");
+
+        for reviewer in &dev_results {
+            html.push_str(&format!("<tr><td><b>@{}</b></td>", htmlescape(&reviewer.username)));
+            for author in &dev_results {
+                let count = reviewer.reviewed_authors.get(&author.username).unwrap_or(&0);
+                let cell = if *count == 0 { "&ndash;".to_string() } else { format!("<b>{count}</b>") };
+                html.push_str(&format!("<td>{cell}</td>"));
+            }
+            html.push_str("</tr>\n");
+        }
+        html.push_str("</table>\n");
+    }
+
+    // ── MR Size Distribution ──
+
+    let total_small: u64 = dev_results.iter().map(|d| d.mr_sizes.0).sum();
+    let total_medium: u64 = dev_results.iter().map(|d| d.mr_sizes.1).sum();
+    let total_large: u64 = dev_results.iter().map(|d| d.mr_sizes.2).sum();
+    let total_sized = total_small + total_medium + total_large;
+
+    html.push_str("<h2>MR Size Distribution</h2>\n");
+    if total_sized > 0 {
+        html.push_str("<div class=\"grid\">\n");
+        html.push_str(&format!(
+            "  <div class=\"card\"><div class=\"card-t\">Small (&lt;10 files)</div><div class=\"card-v g\">{total_small}</div><div class=\"card-s\">{:.0}%</div></div>\n",
+            total_small as f64 / total_sized as f64 * 100.0
+        ));
+        html.push_str(&format!(
+            "  <div class=\"card\"><div class=\"card-t\">Medium (10–50 files)</div><div class=\"card-v y\">{total_medium}</div><div class=\"card-s\">{:.0}%</div></div>\n",
+            total_medium as f64 / total_sized as f64 * 100.0
+        ));
+        html.push_str(&format!(
+            "  <div class=\"card\"><div class=\"card-t\">Large (&gt;50 files)</div><div class=\"card-v r\">{total_large}</div><div class=\"card-s\">{:.0}%</div></div>\n",
+            total_large as f64 / total_sized as f64 * 100.0
+        ));
+        html.push_str("</div>\n");
+
+        // Per-developer breakdown
+        html.push_str("<table>\n<tr><th>Developer</th><th>Small</th><th>Medium</th><th>Large</th></tr>\n");
+        for d in &dev_results {
+            html.push_str(&format!(
+                "<tr><td>@{}</td><td class=\"g\">{}</td><td class=\"y\">{}</td><td class=\"r\">{}</td></tr>\n",
+                htmlescape(&d.username), d.mr_sizes.0, d.mr_sizes.1, d.mr_sizes.2,
+            ));
+        }
+        html.push_str("</table>\n");
+    } else {
+        html.push_str("<p class=\"sub\">No merged MRs with size data in this period.</p>\n");
+    }
+
+    // ── MR Turnaround ──
+
+    html.push_str("<h2>MR Turnaround</h2>\n");
+    if !turnaround_stats.is_empty() {
+        let total_hours: f64 = turnaround_stats.iter().map(|t| t.hours).sum();
+        let avg_hours = total_hours / turnaround_stats.len() as f64;
+        let median_hours = {
+            let mut sorted: Vec<f64> = turnaround_stats.iter().map(|t| t.hours).collect();
+            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            sorted[sorted.len() / 2]
+        };
+
+        html.push_str("<div class=\"grid\">\n");
+        html.push_str(&format!(
+            "  <div class=\"card\"><div class=\"card-t\">Average</div><div class=\"card-v\">{:.1}h</div></div>\n",
+            avg_hours
+        ));
+        html.push_str(&format!(
+            "  <div class=\"card\"><div class=\"card-t\">Median</div><div class=\"card-v\">{:.1}h</div></div>\n",
+            median_hours
+        ));
+        html.push_str(&format!(
+            "  <div class=\"card\"><div class=\"card-t\">MRs Analyzed</div><div class=\"card-v\">{}</div></div>\n",
+            turnaround_stats.len()
+        ));
+        html.push_str("</div>\n");
+
+        // Slowest MRs
+        let mut sorted_ta = turnaround_stats;
+        sorted_ta.sort_by(|a, b| b.hours.partial_cmp(&a.hours).unwrap_or(std::cmp::Ordering::Equal));
+        html.push_str("<h2>Slowest MRs</h2>\n<table>\n<tr><th>MR</th><th>Title</th><th>Author</th><th>Time to Merge</th></tr>\n");
+        for t in sorted_ta.iter().take(5) {
+            let duration = if t.hours > 24.0 {
+                format!("{:.1}d", t.hours / 24.0)
+            } else {
+                format!("{:.1}h", t.hours)
+            };
+            html.push_str(&format!(
+                "<tr><td>!{}</td><td>{}</td><td>@{}</td><td class=\"{}\">{}</td></tr>\n",
+                t.iid,
+                htmlescape(&t.title),
+                htmlescape(&t.author),
+                if t.hours > 48.0 { "r" } else if t.hours > 24.0 { "y" } else { "" },
+                duration,
+            ));
+        }
+        html.push_str("</table>\n");
+    } else {
+        html.push_str("<p class=\"sub\">No merged MRs with turnaround data in this period.</p>\n");
+    }
+
+    // ── Code Quality Placeholder ──
+
+    html.push_str("<h2>Code Quality</h2>\n");
+    html.push_str("<div class=\"issue warn\"><b>Not yet analyzed.</b><div class=\"m\">Use <code>validate_mr_changes</code> on individual MRs to check for code quality issues (large files, missing tests, debug statements).</div></div>\n");
+
+    // ── Process Issues (auto-detected) ──
+
+    html.push_str("<h2>Process Issues</h2>\n");
+
+    let mut issues_found = 0;
+
+    // Bus factor = 1
+    if bus_factor <= 1 {
+        html.push_str("<div class=\"issue risk\"><b>Review bus factor = 1</b><div class=\"m\">Only 1 (or 0) developer is actively reviewing MRs. Knowledge is concentrated in a single person.</div></div>\n");
+        issues_found += 1;
+    }
+
+    // Zero review participation
+    for d in &dev_results {
+        if d.mrs_reviewed == 0 && d.commits > 10 {
+            html.push_str(&format!(
+                "<div class=\"issue risk\"><b>@{} — no review participation</b><div class=\"m\">{} commits but 0 reviews given. Consider requiring cross-reviews.</div></div>\n",
+                htmlescape(&d.username), d.commits,
+            ));
+            issues_found += 1;
+        }
+    }
+
+    // Large MRs
+    for d in &dev_results {
+        if d.mrs_merged > 0 {
+            let avg_files_per_mr = d.files_changed as f64 / d.mrs_merged as f64;
+            if avg_files_per_mr > 50.0 {
+                html.push_str(&format!(
+                    "<div class=\"issue warn\"><b>@{} — MRs too large</b><div class=\"m\">Average {:.0} files/MR. Break down into smaller, reviewable chunks.</div></div>\n",
+                    htmlescape(&d.username), avg_files_per_mr,
+                ));
+                issues_found += 1;
+            }
+        }
+    }
+
+    // Zero MR comments across all
+    let total_comments: u64 = dev_results.iter().map(|d| d.mr_comments).sum();
+    if total_comments == 0 && total_mrs_merged > 0 {
+        html.push_str("<div class=\"issue warn\"><b>Zero MR comments</b><div class=\"m\">No one left comments on merge requests in this period. Reviews may be rubber-stamped.</div></div>\n");
+        issues_found += 1;
+    }
+
+    // Inactive members
+    if inactive_count > 0 {
+        let inactive_names: Vec<&str> = dev_results.iter()
+            .filter(|d| d.commits == 0 && d.mrs_merged == 0 && d.mrs_reviewed == 0)
+            .map(|d| d.username.as_str())
+            .collect();
+        html.push_str(&format!(
+            "<div class=\"issue warn\"><b>{} inactive member(s)</b><div class=\"m\">No commits, MRs, or reviews: {}. May be on leave or assigned to other projects.</div></div>\n",
+            inactive_count,
+            inactive_names.iter().map(|n| format!("@{n}")).collect::<Vec<_>>().join(", "),
+        ));
+        issues_found += 1;
+    }
+
+    if issues_found == 0 {
+        html.push_str("<div class=\"issue\" style=\"border-left:3px solid #3fb950\"><b>No issues detected</b><div class=\"m\">Team processes look healthy for this period.</div></div>\n");
+    }
+
+    // ── Footer ──
+
+    html.push_str(&format!(
+        r#"
+<footer>made with &lt;3 by Alex Velesnitski &middot; gl-mcp + Claude &middot; {date_str}</footer>
+
+</body>
+</html>"#
+    ));
+
+    Ok(html)
+}
+
 fn htmlescape(s: &str) -> String {
     s.replace('&', "&amp;")
      .replace('<', "&lt;")

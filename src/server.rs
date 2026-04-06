@@ -602,6 +602,16 @@ impl GlMcpServer {
         )
     }
 
+    #[tool(description = "Generate a complete HTML team performance report with developer comparison, review matrix, MR sizes, turnaround stats, and auto-detected process issues. Save to file and open in browser.")]
+    async fn generate_team_report(&self, Parameters(p): Parameters<GenerateTeamReportParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        let raw_usernames: Vec<String> = p.usernames.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        let usernames: Vec<&str> = raw_usernames.iter().map(|s| s.as_str()).collect();
+        tool_call!(self, "generate_team_report",
+            tools::reports::generate_team_report(client, &p.project_id, &usernames, p.days.unwrap_or(14)).await
+        )
+    }
+
     #[tool(description = "Compare developers side-by-side in a project: MRs opened/merged/reviewed, approvals, avg merge time, comments, commits.")]
     async fn compare_developers(&self, Parameters(p): Parameters<CompareDevelopersParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
