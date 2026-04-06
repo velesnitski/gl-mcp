@@ -95,3 +95,49 @@ severity = "info"
 name = "Commented-out code"
 pattern = '^\s*//\s*(let|var|func|if|guard|return|class|import|override|case)\b'
 message = "Commented-out code — remove or use version control"
+
+[[rule]]
+id = "SW014"
+severity = "warning"
+name = "Massive function"
+pattern = '^\s*(func|override\s+func)\s+\w+\s*\('
+applies_to = "line"
+message = "Check function length — functions >50 lines should be split"
+
+[[rule]]
+id = "SW015"
+severity = "warning"
+name = "Implicit self"
+pattern = '\bself\.\w+\s*='
+negative_pattern = '(init\(|guard|if let|weak self|unowned self)'
+message = "Consider if self. is needed — Swift infers self in most contexts"
+
+[[rule]]
+id = "SW016"
+severity = "info"
+name = "Too many parameters"
+pattern = 'func\s+\w+\s*\([^)]*,\s*[^)]*,\s*[^)]*,\s*[^)]*,\s*[^)]*,'
+message = "Function has 5+ parameters — consider using a struct or config object"
+
+[[rule]]
+id = "SW017"
+severity = "warning"
+name = "String interpolation in log"
+pattern = '(Logger|os_log|print)\s*\(".*\\('
+negative_pattern = 'privacy:'
+message = "String interpolation in logging — use structured logging with privacy levels"
+
+[[rule]]
+id = "SW018"
+severity = "info"
+name = "Massive enum"
+pattern = '^\s*case\s+\w+.*case\s+\w+.*case\s+\w+.*case\s+\w+.*case\s+\w+'
+message = "Enum with many cases on one line — consider splitting or using protocol"
+
+[[rule]]
+id = "SW019"
+severity = "warning"
+name = "Global variable"
+pattern = '^(var|let)\s+\w+\s*[:=]'
+negative_pattern = '(private|fileprivate|internal|static|class|struct|enum|protocol|import|extension|func|override|@)'
+message = "Top-level variable — consider encapsulating in struct or enum namespace"
