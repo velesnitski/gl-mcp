@@ -1048,10 +1048,15 @@ pub async fn compare_developers(
         mrs_opened: u64,
         mrs_merged: u64,
         mrs_reviewed: u64,
+        reviewed_authors: BTreeMap<String, u64>, // who they reviewed: author -> count
         approvals_given: u64,
         avg_merge_hours: f64,
         mr_comments: u64,
         commits: u64,
+        additions: u64,
+        deletions: u64,
+        files_changed: u64,
+        mr_sizes: (u64, u64, u64), // (small <10 files, medium 10-50, large >50)
     }
 
     let futures: Vec<_> = usernames.iter().map(|&username| {
@@ -1084,8 +1089,15 @@ pub async fn compare_developers(
                 ("per_page", "100"),
             ]).await.unwrap_or_default();
 
-            // 4) Calculate avg merge time from merged MRs
+            // 4) Calculate avg merge time + LOC/files from merged MRs
             let mut merge_hours: Vec<f64> = Vec::new();
+            let mut total_additions: u64 = 0;
+            let mut total_deletions: u64 = 0;
+            let mut total_files: u64 = 0;
+            let mut mr_small: u64 = 0;
+            let mut mr_medium: u64 = 0;
+            let mut mr_large: u64 = 0;
+
             for mr in &merged_mrs {
                 let created = mr["created_at"].as_str().unwrap_or("");
                 let merged = mr["merged_at"].as_str().unwrap_or("");
@@ -1094,14 +1106,54 @@ pub async fn compare_developers(
                 if let (Some(c), Some(m)) = (created_dt, merged_dt) {
                     merge_hours.push((m - c).num_minutes() as f64 / 60.0);
                 }
+
+                // Fetch MR changes for LOC stats
+                let mr_iid = mr["iid"].as_u64().unwrap_or(0);
+                if mr_iid > 0 {
+                    let changes: std::result::Result<Value, _> = client
+                        .get(
+                            &format!("/projects/{encoded_project}/merge_requests/{mr_iid}/changes"),
+                            &[("access_raw_diffs", "true")],
+                        )
+                        .await;
+                    if let Ok(detail) = changes {
+                        if let Some(files) = detail["changes"].as_array() {
+                            let file_count = files.len() as u64;
+                            total_files += file_count;
+                            match file_count {
+                                0..=9 => mr_small += 1,
+                                10..=50 => mr_medium += 1,
+                                _ => mr_large += 1,
+                            }
+                            for f in files {
+                                let diff = f["diff"].as_str().unwrap_or("");
+                                for line in diff.lines() {
+                                    if line.starts_with('+') && !line.starts_with("+++") {
+                                        total_additions += 1;
+                                    } else if line.starts_with('-') && !line.starts_with("---") {
+                                        total_deletions += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
+
             let avg_merge = if merge_hours.is_empty() {
                 0.0
             } else {
                 merge_hours.iter().sum::<f64>() / merge_hours.len() as f64
             };
 
-            // 5) Count approvals given by this user via events API
+            // 5) Build review matrix: who did this user review
+            let mut reviewed_authors: BTreeMap<String, u64> = BTreeMap::new();
+            for mr in &reviewed_mrs {
+                let author = mr["author"]["username"].as_str().unwrap_or("?").to_string();
+                *reviewed_authors.entry(author).or_insert(0) += 1;
+            }
+
+            // 6) Count approvals given by this user via events API
             let cache_key = format!("user:{username}");
             let users: Vec<Value> = client
                 .get_cached(&cache_key, "/users", &[("username", username)], 60)
@@ -1160,10 +1212,15 @@ pub async fn compare_developers(
                 mrs_opened: opened_mrs.len() as u64,
                 mrs_merged: merged_mrs.len() as u64,
                 mrs_reviewed: reviewed_mrs.len() as u64,
+                reviewed_authors,
                 approvals_given: approvals,
                 avg_merge_hours: avg_merge,
                 mr_comments: comments,
                 commits,
+                additions: total_additions,
+                deletions: total_deletions,
+                files_changed: total_files,
+                mr_sizes: (mr_small, mr_medium, mr_large),
             }
         }
     }).collect();
@@ -1197,15 +1254,19 @@ pub async fn compare_developers(
     separator.push_str("|");
 
     let metrics: Vec<(&str, Box<dyn Fn(&DevStats) -> String>)> = vec![
+        ("Commits", Box::new(|s: &DevStats| s.commits.to_string())),
+        ("Lines added", Box::new(|s: &DevStats| format!("+{}", s.additions))),
+        ("Lines deleted", Box::new(|s: &DevStats| format!("-{}", s.deletions))),
+        ("Files changed", Box::new(|s: &DevStats| s.files_changed.to_string())),
         ("MRs opened", Box::new(|s: &DevStats| s.mrs_opened.to_string())),
         ("MRs merged", Box::new(|s: &DevStats| s.mrs_merged.to_string())),
+        ("MR sizes (S/M/L)", Box::new(|s: &DevStats| format!("{}/{}/{}", s.mr_sizes.0, s.mr_sizes.1, s.mr_sizes.2))),
         ("MRs reviewed", Box::new(|s: &DevStats| s.mrs_reviewed.to_string())),
         ("Approvals given", Box::new(|s: &DevStats| s.approvals_given.to_string())),
         ("Avg merge time", Box::new(|s: &DevStats| {
             if s.mrs_merged == 0 { "–".to_string() } else { format!("{:.1}h", s.avg_merge_hours) }
         })),
         ("Comments on MRs", Box::new(|s: &DevStats| s.mr_comments.to_string())),
-        ("Commits (pushes)", Box::new(|s: &DevStats| s.commits.to_string())),
     ];
 
     let mut lines = vec![
@@ -1221,6 +1282,38 @@ pub async fn compare_developers(
         }
         row.push_str(" |");
         lines.push(row);
+    }
+
+    // Review matrix
+    let all_usernames: Vec<&str> = results.iter().map(|s| s.username.as_str()).collect();
+    let has_reviews = results.iter().any(|s| !s.reviewed_authors.is_empty());
+    if has_reviews {
+        lines.push(String::new());
+        lines.push("### Review Matrix (who reviewed whom)\n".to_string());
+        let mut matrix_header = "| Reviewer \\ Author".to_string();
+        for u in &all_usernames {
+            matrix_header.push_str(&format!(" | @{u}"));
+        }
+        matrix_header.push_str(" |");
+        lines.push(matrix_header);
+
+        let mut matrix_sep = "|---".to_string();
+        for _ in &all_usernames {
+            matrix_sep.push_str("|---");
+        }
+        matrix_sep.push_str("|");
+        lines.push(matrix_sep);
+
+        for reviewer in &results {
+            let mut row = format!("| @{}", reviewer.username);
+            for author_name in &all_usernames {
+                let count = reviewer.reviewed_authors.get(*author_name).unwrap_or(&0);
+                let cell = if *count == 0 { "–".to_string() } else { count.to_string() };
+                row.push_str(&format!(" | {cell}"));
+            }
+            row.push_str(" |");
+            lines.push(row);
+        }
     }
 
     Ok(lines.join("\n"))
