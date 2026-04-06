@@ -725,6 +725,14 @@ impl GlMcpServer {
         )
     }
 
+    #[tool(description = "Validate MR using the full unified diff (not individual commits). Catches issues in squashed MRs where commit diffs are minimal. Checks all added lines against Swift, PHP, Kotlin, Go, TypeScript, and global rules.")]
+    async fn validate_mr_changes(&self, Parameters(p): Parameters<ValidateMrChangesParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "validate_mr_changes",
+            tools::lint::validate_mr_changes(client, &p.project_id, p.mr_iid).await
+        )
+    }
+
     #[tool(description = "List available coding rules, optionally filtered by language.")]
     async fn list_rules(&self, Parameters(p): Parameters<ListRulesParams>) -> Result<CallToolResult, McpError> {
         tool_call!(self, "list_rules",
