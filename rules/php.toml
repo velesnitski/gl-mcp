@@ -100,3 +100,49 @@ severity = "info"
 name = "TODO without ticket"
 pattern = '//\s*TODO(?!.*\b[A-Z]+-\d+)'
 message = "TODO without issue reference — add ticket ID"
+
+[[rule]]
+id = "PHP015"
+severity = "warning"
+name = "Too many parameters"
+pattern = 'function\s+\w+\s*\([^)]*,\s*[^)]*,\s*[^)]*,\s*[^)]*,\s*[^)]*,'
+message = "Function has 5+ parameters — use a DTO or config object"
+
+[[rule]]
+id = "PHP016"
+severity = "warning"
+name = "God class indicator"
+pattern = '^\s*(use\s+[A-Z])'
+applies_to = "line"
+message = "Check import count — many imports may indicate a god class"
+
+[[rule]]
+id = "PHP017"
+severity = "warning"
+name = "Nested ternary"
+pattern = '\?[^:]+\?[^:]+:'
+message = "Nested ternary — use if/else or match expression for clarity"
+
+[[rule]]
+id = "PHP018"
+severity = "warning"
+name = "Array push in loop"
+pattern = '\$\w+\[\]\s*=.*;\s*$'
+negative_pattern = '(array_map|array_filter|collect|->map)'
+message = "Consider array_map/array_filter or collection methods instead of manual loop"
+
+[[rule]]
+id = "PHP019"
+severity = "warning"
+name = "Empty string comparison"
+pattern = "(?:===?|!==?)\\s*['\"]['\"]|['\"]['\"]\\s*(?:===?|!==?)"
+negative_pattern = 'empty\('
+message = "Use empty() instead of comparing to empty string"
+
+[[rule]]
+id = "PHP020"
+severity = "info"
+name = "Long method"
+applies_to = "file_stats"
+max_additions = 200
+message = "Large change — check that individual methods stay under 30 lines"
