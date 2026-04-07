@@ -776,6 +776,40 @@ pub struct AnalyzeFileParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct AnalyzeProjectParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Branch or tag (default: HEAD)")]
+    pub ref_name: Option<String>,
+    #[schemars(description = "Max files to analyze (default: 50)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_usize")]
+    pub max_files: Option<usize>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetProjectStatsParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ValidateProjectCommitsParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Number of days to look back (default: 14)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    pub days: Option<u32>,
+    #[schemars(description = "Branch name (default: default branch)")]
+    pub branch: Option<String>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListRulesParams {
     #[schemars(description = "Language filter: PHP, Kotlin, TypeScript, Ansible (empty = all)")]
     pub language: Option<String>,

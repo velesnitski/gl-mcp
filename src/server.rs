@@ -757,6 +757,30 @@ impl GlMcpServer {
             Ok::<String, crate::error::Error>(tools::lint::list_rules(p.language.as_deref().unwrap_or("")))
         )
     }
+
+    #[tool(description = "Analyze code quality of all source files in a project. Returns per-file scores (A-F), aggregate summary, top issues, and recommendations. Fetches files concurrently.")]
+    async fn analyze_project(&self, Parameters(p): Parameters<AnalyzeProjectParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "analyze_project",
+            tools::lint::analyze_project(client, &p.project_id, p.ref_name.as_deref().unwrap_or(""), p.max_files.unwrap_or(50)).await
+        )
+    }
+
+    #[tool(description = "Get project statistics: repo size, file counts by type, language breakdown, binary files list.")]
+    async fn get_project_stats(&self, Parameters(p): Parameters<GetProjectStatsParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "get_project_stats",
+            tools::repository::get_project_stats(client, &p.project_id).await
+        )
+    }
+
+    #[tool(description = "Validate recent commits against message conventions (conventional commits, ticket refs, length) and code rules. Skips merge commits.")]
+    async fn validate_project_commits(&self, Parameters(p): Parameters<ValidateProjectCommitsParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "validate_project_commits",
+            tools::lint::validate_project_commits(client, &p.project_id, p.days.unwrap_or(14), p.branch.as_deref().unwrap_or("")).await
+        )
+    }
 }
 
 // ─── ServerHandler ───
