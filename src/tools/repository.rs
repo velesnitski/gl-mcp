@@ -1,9 +1,10 @@
-//! GitLab repository tools: search code, tree, languages, compare, tags.
+//! GitLab repository tools: search code, tree, languages, compare, tags, stats.
 
 use crate::client::GitLabClient;
 use crate::error::{Error, Result};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use crate::tools::commits::detect_language;
 
 /// Search code across a project (GitLab blobs search).
 pub async fn search_code(
@@ -547,6 +548,178 @@ pub async fn get_approval_rules(
     }
 
     Ok(lines.join("\n"))
+}
+
+/// Get project statistics: file counts by type, languages, binary files, repo size.
+pub async fn get_project_stats(
+    client: &GitLabClient,
+    project_id: &str,
+) -> Result<String> {
+    let encoded = urlencoding::encode(project_id);
+
+    // Fetch project metadata with statistics
+    let project: Value = client
+        .get(
+            &format!("/projects/{encoded}"),
+            &[("statistics", "true")],
+        )
+        .await?;
+
+    let project_name = project["name"].as_str().unwrap_or(project_id);
+    let repo_size = project["statistics"]["repository_size"].as_u64().unwrap_or(0);
+    let storage_size = project["statistics"]["storage_size"].as_u64().unwrap_or(0);
+
+    // Fetch tree recursively
+    let entries: Vec<Value> = client
+        .get_all_pages(
+            &format!("/projects/{encoded}/repository/tree"),
+            &[("recursive", "true")],
+            10,
+        )
+        .await?;
+
+    let total_files = entries.iter().filter(|e| e["type"].as_str() == Some("blob")).count();
+
+    // Categorize files
+    let source_extensions: &[&str] = &[
+        ".swift", ".kt", ".kts", ".java", ".go", ".rs", ".py", ".rb",
+        ".php", ".ts", ".tsx", ".js", ".jsx", ".vue", ".c", ".cpp", ".h",
+        ".m", ".mm", ".cs", ".sql", ".sh", ".bash", ".r", ".scala",
+    ];
+    let config_extensions: &[&str] = &[
+        ".json", ".yaml", ".yml", ".toml", ".xml", ".plist", ".properties",
+        ".env", ".ini", ".cfg", ".conf", ".gradle", ".tf", ".tfvars", ".hcl",
+    ];
+    let doc_extensions: &[&str] = &[
+        ".md", ".txt", ".rst", ".adoc", ".html", ".css", ".scss", ".less",
+    ];
+    let binary_extensions: &[&str] = &[
+        ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".bmp", ".tiff",
+        ".woff", ".woff2", ".ttf", ".eot", ".otf",
+        ".zip", ".tar", ".gz", ".rar", ".7z",
+        ".pdf", ".doc", ".docx", ".xls", ".xlsx",
+        ".mp3", ".mp4", ".wav", ".avi", ".mov",
+        ".o", ".obj", ".exe", ".dll", ".class", ".jar",
+        ".a", ".dylib", ".so", ".framework",
+        ".dat", ".bin", ".db", ".sqlite",
+    ];
+    let binary_dirs: &[&str] = &[
+        ".xcframework/", ".framework/",
+    ];
+
+    let mut source_count = 0usize;
+    let mut config_count = 0usize;
+    let mut doc_count = 0usize;
+    let mut binary_count = 0usize;
+    let mut other_count = 0usize;
+    let mut binary_files: Vec<String> = Vec::new();
+
+    // Language distribution from source files
+    let mut lang_counts: BTreeMap<String, usize> = BTreeMap::new();
+
+    for entry in &entries {
+        if entry["type"].as_str() != Some("blob") {
+            continue;
+        }
+        let path = entry["path"].as_str().unwrap_or("?");
+
+        let is_binary_dir = binary_dirs.iter().any(|d| path.contains(d));
+        let is_binary_ext = binary_extensions.iter().any(|ext| path.ends_with(ext));
+
+        if is_binary_dir || is_binary_ext {
+            binary_count += 1;
+            binary_files.push(path.to_string());
+        } else if source_extensions.iter().any(|ext| path.ends_with(ext)) {
+            source_count += 1;
+            let lang = detect_language(path);
+            *lang_counts.entry(lang.to_string()).or_insert(0) += 1;
+        } else if config_extensions.iter().any(|ext| path.ends_with(ext)) {
+            config_count += 1;
+        } else if doc_extensions.iter().any(|ext| path.ends_with(ext)) {
+            doc_count += 1;
+        } else {
+            other_count += 1;
+        }
+    }
+
+    // Fetch language breakdown from GitLab API
+    let langs: Value = client
+        .get(&format!("/projects/{encoded}/languages"), &[])
+        .await
+        .unwrap_or(Value::Object(serde_json::Map::new()));
+
+    // Format sizes
+    fn format_size(bytes: u64) -> String {
+        if bytes >= 1_073_741_824 {
+            format!("{:.1} GB", bytes as f64 / 1_073_741_824.0)
+        } else if bytes >= 1_048_576 {
+            format!("{:.1} MB", bytes as f64 / 1_048_576.0)
+        } else if bytes >= 1024 {
+            format!("{:.1} KB", bytes as f64 / 1024.0)
+        } else {
+            format!("{} B", bytes)
+        }
+    }
+
+    let mut out = vec![
+        format!("## Project Stats: {project_name}\n"),
+        "| Metric | Value |".to_string(),
+        "|--------|-------|".to_string(),
+        format!("| Repository size | {} |", format_size(repo_size)),
+        format!("| Storage size | {} |", format_size(storage_size)),
+        format!("| Total files | {} |", total_files),
+        format!("| Source files | {} |", source_count),
+        format!("| Config files | {} |", config_count),
+        format!("| Documentation | {} |", doc_count),
+        format!("| Binary files | {} |", binary_count),
+        format!("| Other | {} |", other_count),
+    ];
+
+    // Languages from GitLab API
+    if let Some(obj) = langs.as_object() {
+        if !obj.is_empty() {
+            let mut lang_entries: Vec<(&String, f64)> = obj
+                .iter()
+                .filter_map(|(k, v)| v.as_f64().map(|pct| (k, pct)))
+                .collect();
+            lang_entries.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+            let lang_str: String = lang_entries
+                .iter()
+                .map(|(lang, pct)| format!("{} {:.1}%", lang, pct))
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            out.push(format!("\n### Languages\n{}", lang_str));
+        }
+    }
+
+    // Source files by language (from tree analysis)
+    if !lang_counts.is_empty() {
+        let mut sorted_langs: Vec<_> = lang_counts.iter().collect();
+        sorted_langs.sort_by(|a, b| b.1.cmp(a.1));
+
+        out.push("\n### Source Files by Language".to_string());
+        for (lang, count) in sorted_langs {
+            out.push(format!("- **{lang}**: {count} files"));
+        }
+    }
+
+    // Binary files
+    if !binary_files.is_empty() {
+        out.push(format!(
+            "\n### Binary Files ({} — consider LFS or CI builds)",
+            binary_files.len()
+        ));
+        for f in binary_files.iter().take(30) {
+            out.push(format!("- {f}"));
+        }
+        if binary_files.len() > 30 {
+            out.push(format!("  ...and {} more", binary_files.len() - 30));
+        }
+    }
+
+    Ok(out.join("\n"))
 }
 
 /// Get deployment frequency for a project (DORA metric).
