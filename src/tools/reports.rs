@@ -6,6 +6,36 @@ use crate::tools::commits;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+/// Shared print CSS + export button for all HTML reports.
+const PRINT_CSS: &str = r#"
+@media print {
+  body { background: #fff !important; color: #000 !important; padding: 16px !important; }
+  h1, h2 { color: #000 !important; border-color: #ccc !important; }
+  .card { border-color: #ddd !important; background: #f8f8f8 !important; }
+  .card-t { color: #666 !important; }
+  .card-v, .card-s { color: #000 !important; }
+  .g, .b { color: #1a7f37 !important; }
+  .r { color: #cf222e !important; }
+  .y { color: #9a6700 !important; }
+  .sub, .m, .issue .m { color: #666 !important; }
+  th { background: #f0f0f0 !important; color: #333 !important; border-color: #ccc !important; }
+  td { border-color: #ddd !important; color: #000 !important; }
+  .issue { background: #f8f8f8 !important; border-color: #ddd !important; }
+  .risk { border-left-color: #cf222e !important; }
+  .warn { border-left-color: #9a6700 !important; }
+  .ok { border-left-color: #1a7f37 !important; }
+  .bar { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  footer { color: #999 !important; border-color: #ddd !important; }
+  footer a { color: #666 !important; }
+  .no-print { display: none !important; }
+  @page { margin: 1cm; }
+}
+"#;
+
+const EXPORT_BUTTON: &str = r#"<div class="no-print" style="position:fixed;top:16px;right:16px;z-index:100">
+<button onclick="window.print()" style="background:#238636;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">Export PDF</button>
+</div>"#;
+
 /// Generate a full HTML daily report for a developer.
 pub async fn generate_dev_report(
     client: &GitLabClient,
@@ -250,9 +280,11 @@ td{{padding:6px 10px;border-bottom:1px solid #151520}}
 .foot{{text-align:center;padding:24px;color:#3a3a4a;font-size:10px}}
 .foot a{{color:#4a4a6a;text-decoration:none}}
 .grp-title{{font-size:11px;color:#5a6a7a;text-transform:uppercase;letter-spacing:.5px;padding:8px 0 4px}}
+{PRINT_CSS}
 </style>
 </head>
 <body>
+{EXPORT_BUTTON}
 <div class="c">
 
 <div class="hdr">
@@ -628,9 +660,11 @@ td{{padding:10px 14px;border-bottom:1px solid #21262d;font-size:14px}}
 .issue b{{font-weight:600}}.issue .m{{color:#8b949e;font-size:13px;margin-top:4px}}
 .risk{{border-left:3px solid #f85149}}.warn{{border-left:3px solid #d29922}}
 footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484f58;font-size:12px}}
+{PRINT_CSS}
 </style>
 </head>
 <body>
+{EXPORT_BUTTON}
 
 <h1>Team Performance Report</h1>
 <div class="sub">{project_name} &middot; Last {days} days &middot; {date_str}</div>
@@ -1181,9 +1215,11 @@ td{{padding:10px 14px;border-bottom:1px solid #21262d;font-size:14px}}
 .issue b{{font-weight:600}}.issue .m{{color:#8b949e;font-size:13px;margin-top:4px}}
 .risk{{border-left:3px solid #f85149}}.warn{{border-left:3px solid #d29922}}.ok{{border-left:3px solid #3fb950}}
 footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484f58;font-size:12px}}
+{PRINT_CSS}
 </style>
 </head>
 <body>
+{EXPORT_BUTTON}
 
 <h1>{project_name}</h1>
 <div class="sub">{} &middot; Branch: {ref_param} &middot; {date_str}</div>
