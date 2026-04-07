@@ -814,3 +814,18 @@ pub struct ListRulesParams {
     #[schemars(description = "Language filter: PHP, Kotlin, TypeScript, Ansible (empty = all)")]
     pub language: Option<String>,
 }
+
+// ─── Project Report ───
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GenerateProjectReportParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Branch or tag (default: default branch)")]
+    pub ref_name: Option<String>,
+    #[schemars(description = "Max files to analyze (default: 50)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_usize")]
+    pub max_files: Option<usize>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}

@@ -865,6 +865,592 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
     Ok(html)
 }
 
+/// Generate a complete HTML project quality report.
+pub async fn generate_project_report(
+    client: &GitLabClient,
+    project_id: &str,
+    ref_name: &str,
+    max_files: usize,
+) -> Result<String> {
+    use crate::tools::commits::detect_language;
+    use crate::tools::lint::{base64_decode_pub, compute_file_metrics, FileMetricsPub};
+
+    let encoded = urlencoding::encode(project_id);
+
+    // 1. Fetch project info
+    let project: Value = client
+        .get(&format!("/projects/{encoded}"), &[("statistics", "true")])
+        .await?;
+
+    let project_name = project["name"].as_str().unwrap_or(project_id);
+    let project_desc = project["description"].as_str().unwrap_or("");
+    let default_branch = project["default_branch"].as_str().unwrap_or("main");
+    let ref_param = if ref_name.is_empty() { default_branch } else { ref_name };
+    let repo_size = project["statistics"]["repository_size"].as_u64().unwrap_or(0);
+
+    // 2. Fetch languages
+    let langs: Value = client
+        .get(&format!("/projects/{encoded}/languages"), &[])
+        .await
+        .unwrap_or(Value::Object(serde_json::Map::new()));
+
+    // 3. Fetch recursive tree
+    let entries: Vec<Value> = client
+        .get_all_pages(
+            &format!("/projects/{encoded}/repository/tree"),
+            &[("recursive", "true"), ("ref", ref_param)],
+            10,
+        )
+        .await?;
+
+    // Categorize files
+    let source_extensions: &[&str] = &[
+        ".swift", ".kt", ".kts", ".java", ".go", ".rs", ".py", ".rb",
+        ".php", ".ts", ".tsx", ".js", ".jsx", ".vue", ".c", ".cpp", ".h",
+        ".m", ".mm", ".cs", ".sql", ".sh", ".bash", ".r", ".scala",
+    ];
+    let config_extensions: &[&str] = &[
+        ".json", ".yaml", ".yml", ".toml", ".xml", ".plist", ".properties",
+        ".env", ".ini", ".cfg", ".conf", ".gradle", ".tf", ".tfvars", ".hcl",
+    ];
+    let doc_extensions: &[&str] = &[
+        ".md", ".txt", ".rst", ".adoc", ".html", ".css", ".scss", ".less",
+    ];
+    let binary_extensions: &[&str] = &[
+        ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".bmp", ".tiff",
+        ".woff", ".woff2", ".ttf", ".eot", ".otf",
+        ".zip", ".tar", ".gz", ".rar", ".7z",
+        ".pdf", ".doc", ".docx", ".xls", ".xlsx",
+        ".mp3", ".mp4", ".wav", ".avi", ".mov",
+        ".o", ".obj", ".exe", ".dll", ".class", ".jar",
+        ".a", ".dylib", ".so", ".framework",
+        ".dat", ".bin", ".db", ".sqlite",
+    ];
+    let binary_dirs: &[&str] = &[".xcframework/", ".framework/"];
+
+    let mut source_files: Vec<String> = Vec::new();
+    let mut _config_count = 0usize;
+    let mut _doc_count = 0usize;
+    let mut binary_files: Vec<String> = Vec::new();
+    let mut _other_count = 0usize;
+
+    for entry in &entries {
+        if entry["type"].as_str() != Some("blob") {
+            continue;
+        }
+        let path = entry["path"].as_str().unwrap_or("?");
+        let is_binary_dir = binary_dirs.iter().any(|d| path.contains(d));
+        let is_binary_ext = binary_extensions.iter().any(|ext| path.ends_with(ext));
+
+        if is_binary_dir || is_binary_ext {
+            binary_files.push(path.to_string());
+        } else if source_extensions.iter().any(|ext| path.ends_with(ext)) {
+            source_files.push(path.to_string());
+        } else if config_extensions.iter().any(|ext| path.ends_with(ext)) {
+            _config_count += 1;
+        } else if doc_extensions.iter().any(|ext| path.ends_with(ext)) {
+            _doc_count += 1;
+        } else {
+            _other_count += 1;
+        }
+    }
+
+    let total_files = entries.iter().filter(|e| e["type"].as_str() == Some("blob")).count();
+
+    // 4. Fetch contributors
+    let contributors: Vec<Value> = client
+        .get(
+            &format!("/projects/{encoded}/repository/contributors"),
+            &[("order_by", "commits"), ("sort", "desc")],
+        )
+        .await
+        .unwrap_or_default();
+
+    // 5. Fetch recent commits (last 14 days)
+    let since_14d = (chrono::Utc::now() - chrono::Duration::days(14))
+        .format("%Y-%m-%dT00:00:00Z")
+        .to_string();
+    let recent_commits: Vec<Value> = client
+        .get_all_pages(
+            &format!("/projects/{encoded}/repository/commits"),
+            &[("since", since_14d.as_str()), ("ref_name", ref_param)],
+            3,
+        )
+        .await
+        .unwrap_or_default();
+
+    // 5b. Validate commit messages (inline logic from validate_project_commits)
+    let non_merge: Vec<&Value> = recent_commits
+        .iter()
+        .filter(|c| {
+            let msg = c["message"].as_str().unwrap_or("");
+            !msg.starts_with("Merge branch") && !msg.starts_with("Merge remote") && !msg.starts_with("Merge ")
+        })
+        .collect();
+
+    let conventional_prefixes = [
+        "feat:", "fix:", "docs:", "build:", "chore:", "refactor:",
+        "test:", "ci:", "perf:", "style:", "revert:",
+        "feat(", "fix(", "docs(", "build(", "chore(", "refactor(",
+        "test(", "ci(", "perf(", "style(", "revert(",
+    ];
+    let ticket_re = regex::Regex::new(r"[A-Z]{2,10}-\d+").ok();
+
+    let mut conventional_pass = 0u32;
+    let mut ticket_pass = 0u32;
+    let mut length_pass = 0u32;
+    let mut failing_messages: Vec<(String, String, Vec<String>)> = Vec::new();
+
+    for commit in &non_merge {
+        let msg = commit["message"].as_str().unwrap_or("");
+        let subject = msg.lines().next().unwrap_or("").trim();
+        let short_sha = commit["short_id"].as_str().unwrap_or("???????");
+
+        let mut issues: Vec<String> = Vec::new();
+
+        let is_conventional = conventional_prefixes
+            .iter()
+            .any(|p| subject.to_lowercase().starts_with(&p.to_lowercase()));
+        if is_conventional {
+            conventional_pass += 1;
+        } else {
+            issues.push("no conventional prefix".to_string());
+        }
+
+        let has_ticket = ticket_re
+            .as_ref()
+            .map(|re| re.is_match(msg))
+            .unwrap_or(false);
+        if has_ticket {
+            ticket_pass += 1;
+        } else {
+            issues.push("no ticket reference".to_string());
+        }
+
+        if subject.len() <= 72 {
+            length_pass += 1;
+        } else {
+            issues.push("subject >72 chars".to_string());
+        }
+
+        if !issues.is_empty() {
+            failing_messages.push((short_sha.to_string(), subject.to_string(), issues));
+        }
+    }
+
+    let commit_total = non_merge.len() as u32;
+
+    // 6. Analyze source files (up to max_files)
+    let skip_extensions: &[&str] = &[
+        ".lock", ".sum", ".map", ".min.js", ".min.css", ".pb.go",
+    ];
+    let skip_dirs: &[&str] = &[
+        "vendor/", "node_modules/", "dist/", "build/",
+        ".xcframework/", ".framework/",
+        "__generated__", "Pods/",
+    ];
+
+    let analyzable: Vec<&str> = source_files
+        .iter()
+        .filter(|p| {
+            !skip_extensions.iter().any(|ext| p.ends_with(ext))
+                && !skip_dirs.iter().any(|dir| p.contains(dir))
+        })
+        .map(|s| s.as_str())
+        .take(max_files)
+        .collect();
+
+    let total_source = source_files.len();
+    let mut all_metrics: Vec<FileMetricsPub> = Vec::new();
+
+    for chunk in analyzable.chunks(10) {
+        let futs: Vec<_> = chunk
+            .iter()
+            .map(|&path| {
+                let client = client.clone();
+                let encoded = urlencoding::encode(project_id).to_string();
+                let encoded_path = urlencoding::encode(path).to_string();
+                let ref_p = ref_param.to_string();
+                let file_path = path.to_string();
+                async move {
+                    let result: std::result::Result<Value, _> = client
+                        .get(
+                            &format!("/projects/{encoded}/repository/files/{encoded_path}"),
+                            &[("ref", ref_p.as_str())],
+                        )
+                        .await;
+                    (file_path, result)
+                }
+            })
+            .collect();
+
+        let results = futures::future::join_all(futs).await;
+
+        for (file_path, result) in results {
+            let file_info = match result {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let content_b64 = file_info["content"].as_str().unwrap_or("");
+            let content = base64_decode_pub(content_b64);
+            let lang = detect_language(&file_path);
+            let metrics = compute_file_metrics(&file_path, &content, lang);
+            all_metrics.push(metrics);
+        }
+    }
+
+    // Sort worst first
+    all_metrics.sort_by(|a, b| a.score.cmp(&b.score));
+
+    // Grade counts
+    let mut grade_a = 0usize;
+    let mut grade_b = 0usize;
+    let mut grade_c = 0usize;
+    let mut grade_d = 0usize;
+    let mut grade_f = 0usize;
+    for m in &all_metrics {
+        match m.grade {
+            "A" => grade_a += 1,
+            "B" => grade_b += 1,
+            "C" => grade_c += 1,
+            "D" => grade_d += 1,
+            _ => grade_f += 1,
+        }
+    }
+
+    let total_analyzed = all_metrics.len();
+    let avg_score: f64 = if total_analyzed > 0 {
+        all_metrics.iter().map(|m| m.score as f64).sum::<f64>() / total_analyzed as f64
+    } else {
+        0.0
+    };
+
+    // Aggregate violations
+    let mut issue_counts: std::collections::BTreeMap<(String, String), usize> = std::collections::BTreeMap::new();
+    for m in &all_metrics {
+        for (rule_id, name) in &m.violation_details {
+            *issue_counts.entry((rule_id.clone(), name.clone())).or_insert(0) += 1;
+        }
+    }
+    let mut sorted_issues: Vec<_> = issue_counts.iter().collect();
+    sorted_issues.sort_by(|a, b| b.1.cmp(a.1));
+
+    // Format sizes helper
+    fn format_size(bytes: u64) -> String {
+        if bytes >= 1_073_741_824 {
+            format!("{:.1} GB", bytes as f64 / 1_073_741_824.0)
+        } else if bytes >= 1_048_576 {
+            format!("{:.1} MB", bytes as f64 / 1_048_576.0)
+        } else if bytes >= 1024 {
+            format!("{:.1} KB", bytes as f64 / 1024.0)
+        } else {
+            format!("{} B", bytes)
+        }
+    }
+
+    let date_str = chrono::Utc::now().format("%A, %d %B %Y").to_string();
+    let conv_pct = if commit_total > 0 { conventional_pass as f64 / commit_total as f64 * 100.0 } else { 0.0 };
+    let ticket_pct = if commit_total > 0 { ticket_pass as f64 / commit_total as f64 * 100.0 } else { 0.0 };
+    let length_pct = if commit_total > 0 { length_pass as f64 / commit_total as f64 * 100.0 } else { 0.0 };
+
+    // ── Build HTML ──
+
+    let mut html = format!(r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project Report — {project_name} — {date_str}</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0d1117;color:#c9d1d9;padding:32px;line-height:1.6}}
+h1{{color:#58a6ff;margin-bottom:8px;font-size:24px}}
+h2{{color:#58a6ff;margin:36px 0 16px;font-size:18px;border-bottom:1px solid #21262d;padding-bottom:8px}}
+.sub{{color:#8b949e;margin-bottom:24px;font-size:14px}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:16px 0}}
+.card{{background:#161b22;border:1px solid #21262d;border-radius:8px;padding:18px}}
+.card-t{{color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}}
+.card-v{{font-size:28px;font-weight:700}}
+.card-s{{color:#8b949e;font-size:12px;margin-top:4px}}
+.g{{color:#3fb950}}.r{{color:#f85149}}.y{{color:#d29922}}.b{{color:#58a6ff}}
+table{{width:100%;border-collapse:collapse;margin:12px 0}}
+th{{background:#161b22;color:#8b949e;text-align:left;padding:10px 14px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid #21262d}}
+td{{padding:10px 14px;border-bottom:1px solid #21262d;font-size:14px}}
+.bar{{height:8px;border-radius:4px;display:inline-block;vertical-align:middle;min-width:4px}}
+.issue{{background:#161b22;border:1px solid #21262d;border-radius:6px;padding:14px 18px;margin:8px 0}}
+.issue b{{font-weight:600}}.issue .m{{color:#8b949e;font-size:13px;margin-top:4px}}
+.risk{{border-left:3px solid #f85149}}.warn{{border-left:3px solid #d29922}}.ok{{border-left:3px solid #3fb950}}
+footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484f58;font-size:12px}}
+</style>
+</head>
+<body>
+
+<h1>{project_name}</h1>
+<div class="sub">{} &middot; Branch: {ref_param} &middot; {date_str}</div>
+"#,
+        htmlescape(project_desc),
+    );
+
+    // ── Summary Cards ──
+    html.push_str("<div class=\"grid\">\n");
+    html.push_str(&format!(
+        "  <div class=\"card\"><div class=\"card-t\">Avg Quality</div><div class=\"card-v{}\">{:.0}/100</div></div>\n",
+        if avg_score >= 75.0 { " g" } else if avg_score >= 60.0 { " y" } else { " r" },
+        avg_score,
+    ));
+    html.push_str(&format!(
+        "  <div class=\"card\"><div class=\"card-t\">Total Files</div><div class=\"card-v\">{total_files}</div><div class=\"card-s\">{total_source} source</div></div>\n",
+    ));
+    html.push_str(&format!(
+        "  <div class=\"card\"><div class=\"card-t\">Repo Size</div><div class=\"card-v\">{}</div></div>\n",
+        format_size(repo_size),
+    ));
+    html.push_str(&format!(
+        "  <div class=\"card\"><div class=\"card-t\">Contributors</div><div class=\"card-v\">{}</div></div>\n",
+        contributors.len(),
+    ));
+    html.push_str(&format!(
+        "  <div class=\"card\"><div class=\"card-t\">Commits (14d)</div><div class=\"card-v\">{}</div></div>\n",
+        recent_commits.len(),
+    ));
+    html.push_str("</div>\n");
+
+    // ── Grade Distribution ──
+    if total_analyzed > 0 {
+        html.push_str("<h2>Grade Distribution</h2>\n");
+        let max_grade = *[grade_a, grade_b, grade_c, grade_d, grade_f].iter().max().unwrap_or(&1);
+        let bar_max = 300; // max bar width in px
+
+        for (label, count, color) in [
+            ("A", grade_a, "#3fb950"),
+            ("B", grade_b, "#58a6ff"),
+            ("C", grade_c, "#d29922"),
+            ("D", grade_d, "#f85149"),
+            ("F", grade_f, "#f85149"),
+        ] {
+            let width = if max_grade > 0 { count * bar_max / max_grade } else { 0 };
+            let pct = count as f64 / total_analyzed as f64 * 100.0;
+            html.push_str(&format!(
+                "<div style=\"margin:6px 0;display:flex;align-items:center;gap:10px\"><span style=\"width:24px;font-weight:700;color:{color}\">{label}</span><span class=\"bar\" style=\"width:{width}px;background:{color}\"></span><span style=\"color:#8b949e;font-size:13px\">{count} ({pct:.0}%)</span></div>\n"
+            ));
+        }
+    }
+
+    // ── Language Breakdown ──
+    if let Some(obj) = langs.as_object() {
+        if !obj.is_empty() {
+            html.push_str("<h2>Language Breakdown</h2>\n");
+            let mut lang_entries: Vec<(&String, f64)> = obj
+                .iter()
+                .filter_map(|(k, v)| v.as_f64().map(|pct| (k, pct)))
+                .collect();
+            lang_entries.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+            let lang_colors = ["#58a6ff", "#3fb950", "#d29922", "#f85149", "#bc8cff", "#f78166", "#7ee787", "#79c0ff"];
+            for (i, (lang, pct)) in lang_entries.iter().enumerate() {
+                let color = lang_colors.get(i).unwrap_or(&"#8b949e");
+                let width = (*pct * 3.0) as u32; // 100% = 300px
+                html.push_str(&format!(
+                    "<div style=\"margin:6px 0;display:flex;align-items:center;gap:10px\"><span style=\"width:100px;text-align:right;font-size:13px\">{lang}</span><span class=\"bar\" style=\"width:{width}px;background:{color}\"></span><span style=\"color:#8b949e;font-size:13px\">{pct:.1}%</span></div>\n"
+                ));
+            }
+        }
+    }
+
+    // ── File Quality Table ──
+    if !all_metrics.is_empty() {
+        html.push_str("<h2>File Quality</h2>\n");
+        html.push_str(&format!("<div class=\"sub\">{total_analyzed} of {total_source} source files analyzed</div>\n"));
+        html.push_str("<table>\n<tr><th>File</th><th>Lines</th><th>Functions</th><th>Max Nesting</th><th>Violations</th><th>Score</th><th>Grade</th></tr>\n");
+
+        for m in &all_metrics {
+            let short_path = if m.path.len() > 60 {
+                format!("...{}", &m.path[m.path.len() - 57..])
+            } else {
+                m.path.clone()
+            };
+            let grade_style = match m.grade {
+                "A" => "color:#3fb950;font-weight:700",
+                "B" => "color:#58a6ff;font-weight:700",
+                "C" => "color:#d29922;font-weight:700",
+                _ => "color:#f85149;font-weight:700",
+            };
+            html.push_str(&format!(
+                "<tr><td title=\"{}\">{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td style=\"{}\">{}</td></tr>\n",
+                htmlescape(&m.path),
+                htmlescape(&short_path),
+                m.total_lines,
+                m.functions,
+                m.max_nesting,
+                m.violations,
+                m.score,
+                grade_style,
+                m.grade,
+            ));
+        }
+        html.push_str("</table>\n");
+    }
+
+    // ── Top Issues ──
+    if !sorted_issues.is_empty() {
+        html.push_str("<h2>Top Issues</h2>\n");
+        for ((rule_id, name), count) in sorted_issues.iter().take(15) {
+            let border_class = if **count > 10 { "risk" } else if **count > 3 { "warn" } else { "ok" };
+            html.push_str(&format!(
+                "<div class=\"issue {border_class}\"><b>[{rule_id}] {}</b><div class=\"m\">{count} occurrences across analyzed files</div></div>\n",
+                htmlescape(name),
+            ));
+        }
+    }
+
+    // ── Binary Files ──
+    if !binary_files.is_empty() {
+        html.push_str(&format!("<h2>Binary Files ({})</h2>\n", binary_files.len()));
+        html.push_str("<div class=\"issue warn\"><b>Binary files detected in repository</b><div class=\"m\">Consider using Git LFS for binary assets to keep repository size small.</div></div>\n");
+        html.push_str("<table>\n<tr><th>File Path</th></tr>\n");
+        for f in binary_files.iter().take(30) {
+            html.push_str(&format!("<tr><td>{}</td></tr>\n", htmlescape(f)));
+        }
+        if binary_files.len() > 30 {
+            html.push_str(&format!("<tr><td>...and {} more</td></tr>\n", binary_files.len() - 30));
+        }
+        html.push_str("</table>\n");
+    }
+
+    // ── Commit Quality ──
+    html.push_str("<h2>Commit Quality</h2>\n");
+    if commit_total > 0 {
+        html.push_str(&format!("<div class=\"sub\">{commit_total} non-merge commits in the last 14 days</div>\n"));
+        html.push_str("<table>\n<tr><th>Check</th><th>Pass</th><th>Fail</th><th>%</th></tr>\n");
+        html.push_str(&format!(
+            "<tr><td>Conventional format</td><td class=\"g\">{conventional_pass}</td><td class=\"r\">{}</td><td{}>{conv_pct:.0}%</td></tr>\n",
+            commit_total - conventional_pass,
+            if conv_pct >= 80.0 { "" } else { " class=\"r\"" },
+        ));
+        html.push_str(&format!(
+            "<tr><td>Ticket reference</td><td class=\"g\">{ticket_pass}</td><td class=\"r\">{}</td><td{}>{ticket_pct:.0}%</td></tr>\n",
+            commit_total - ticket_pass,
+            if ticket_pct >= 80.0 { "" } else { " class=\"r\"" },
+        ));
+        html.push_str(&format!(
+            "<tr><td>Subject length &lt;72</td><td class=\"g\">{length_pass}</td><td class=\"r\">{}</td><td{}>{length_pct:.0}%</td></tr>\n",
+            commit_total - length_pass,
+            if length_pct >= 80.0 { "" } else { " class=\"r\"" },
+        ));
+        html.push_str("</table>\n");
+
+        if !failing_messages.is_empty() {
+            html.push_str(&format!("<h2>Failing Commit Messages ({})</h2>\n", failing_messages.len()));
+            html.push_str("<table>\n<tr><th>SHA</th><th>Subject</th><th>Issues</th></tr>\n");
+            for (sha, subject, issues) in failing_messages.iter().take(20) {
+                let short_subject: String = subject.chars().take(50).collect();
+                html.push_str(&format!(
+                    "<tr><td><code>{sha}</code></td><td>{}</td><td class=\"r\">{}</td></tr>\n",
+                    htmlescape(&short_subject),
+                    issues.join(", "),
+                ));
+            }
+            if failing_messages.len() > 20 {
+                html.push_str(&format!("<tr><td colspan=\"3\">...and {} more</td></tr>\n", failing_messages.len() - 20));
+            }
+            html.push_str("</table>\n");
+        }
+    } else {
+        html.push_str("<div class=\"sub\">No non-merge commits in the last 14 days.</div>\n");
+    }
+
+    // ── Contributors ──
+    if !contributors.is_empty() {
+        html.push_str("<h2>Contributors</h2>\n");
+        html.push_str("<table>\n<tr><th>Name</th><th>Commits</th><th>Additions</th><th>Deletions</th></tr>\n");
+        for c in contributors.iter().take(20) {
+            let name = c["name"].as_str().unwrap_or("?");
+            let commits_count = c["commits"].as_u64().unwrap_or(0);
+            let additions = c["additions"].as_u64().unwrap_or(0);
+            let deletions = c["deletions"].as_u64().unwrap_or(0);
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{commits_count}</td><td class=\"g\">+{additions}</td><td class=\"r\">-{deletions}</td></tr>\n",
+                htmlescape(name),
+            ));
+        }
+        if contributors.len() > 20 {
+            html.push_str(&format!("<tr><td colspan=\"4\">...and {} more</td></tr>\n", contributors.len() - 20));
+        }
+        html.push_str("</table>\n");
+    }
+
+    // ── Recommendations ──
+    html.push_str("<h2>Recommendations</h2>\n");
+    let mut rec_count = 0;
+
+    let bad_files: Vec<_> = all_metrics.iter().filter(|m| m.score < 60).collect();
+    if !bad_files.is_empty() {
+        for m in bad_files.iter().take(10) {
+            let short = m.path.rsplit('/').next().unwrap_or(&m.path);
+            let reason = if m.total_lines > 300 {
+                format!("Grade {}, {} lines &mdash; needs splitting", m.grade, m.total_lines)
+            } else {
+                format!("Grade {}, {} violations &mdash; needs cleanup", m.grade, m.violations)
+            };
+            html.push_str(&format!(
+                "<div class=\"issue risk\"><b>{}</b><div class=\"m\">{reason}</div></div>\n",
+                htmlescape(short),
+            ));
+            rec_count += 1;
+        }
+    }
+
+    if !binary_files.is_empty() {
+        html.push_str(&format!(
+            "<div class=\"issue warn\"><b>{} binary files in repository</b><div class=\"m\">Move to Git LFS or generate via CI to reduce repo size.</div></div>\n",
+            binary_files.len(),
+        ));
+        rec_count += 1;
+    }
+
+    if commit_total > 0 && ticket_pct < 50.0 {
+        html.push_str(&format!(
+            "<div class=\"issue warn\"><b>Low ticket reference rate ({ticket_pct:.0}%)</b><div class=\"m\">Only {ticket_pass}/{commit_total} commits reference a ticket. Enforce ticket IDs in commit messages.</div></div>\n"
+        ));
+        rec_count += 1;
+    }
+
+    if commit_total > 0 && conv_pct < 50.0 {
+        html.push_str(&format!(
+            "<div class=\"issue warn\"><b>Low conventional commit rate ({conv_pct:.0}%)</b><div class=\"m\">Only {conventional_pass}/{commit_total} commits use conventional format. Consider adopting commitlint.</div></div>\n"
+        ));
+        rec_count += 1;
+    }
+
+    // Check for force unwraps in issues
+    let force_unwrap_count: usize = sorted_issues
+        .iter()
+        .filter(|((_, name), _)| name.to_lowercase().contains("force unwrap") || name.to_lowercase().contains("force cast"))
+        .map(|(_, c)| **c)
+        .sum();
+    if force_unwrap_count > 0 {
+        html.push_str(&format!(
+            "<div class=\"issue risk\"><b>{force_unwrap_count} force unwraps/casts detected</b><div class=\"m\">Replace with safe alternatives (guard let, if let, as?) to prevent runtime crashes.</div></div>\n"
+        ));
+        rec_count += 1;
+    }
+
+    if rec_count == 0 {
+        html.push_str("<div class=\"issue ok\"><b>No critical issues detected</b><div class=\"m\">Project quality looks healthy.</div></div>\n");
+    }
+
+    // ── Footer ──
+    html.push_str(&format!(
+        r#"
+<footer>made with &lt;3 by Alex Velesnitski &middot; gl-mcp + Claude &middot; {date_str}</footer>
+
+</body>
+</html>"#
+    ));
+
+    Ok(html)
+}
+
 fn htmlescape(s: &str) -> String {
     s.replace('&', "&amp;")
      .replace('<', "&lt;")
