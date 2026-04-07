@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-04-07
+
+### Added
+- `compare_developers` — side-by-side dev comparison with LOC, files, MR sizes, review matrix
+- `generate_team_report` — full HTML team performance report with auto-detected process issues
+- `generate_project_report` — full HTML project quality report with grade distribution, commit quality, binary detection
+- `analyze_project` — batch file quality analysis with aggregate A–F scores
+- `analyze_file` — single file quality metrics: line count, functions, nesting, complexity grade
+- `get_project_stats` — repo size, file counts by type, binary file detection
+- `validate_project_commits` — bulk commit message validation (conventional commits, ticket refs)
+- `validate_mr_changes` — lint full MR unified diff (catches issues in squashed MRs)
+- `delete_branch` — delete branch after merge (write tool)
+- `get_mr_pipelines` — list all pipelines for a specific MR
+- `get_user` — user info lookup by username or ID
+- Group-scoped issue search via `group_id` parameter in `search_issues`
+- 11 new lint rules: deep nesting, magic numbers, long lines, empty catch, too many params, nested ternary
+- Print CSS + "Export PDF" button on all HTML reports
+- TTL-based response cache (60s) for user/project lookups
+- HTTP 429 rate limit retry with Retry-After header (up to 3 attempts)
+- Generic `get_all_pages()` pagination helper
+- HTTP/SSE transport for n8n and web clients (`--transport http --port 8000`)
+- Docker support: Dockerfile with HTTP default, docker-compose.yml, .dockerignore
+- 18 new unit tests (31 total)
+- Extracted `params.rs` from `server.rs` for maintainability
+
+### Fixed
+- Lint regex pre-compiled once via LazyLock (was recompiling per line per rule)
+- UTF-8 safe string truncation (was panicking on Cyrillic)
+- Mutex poison recovery instead of panicking
+- Concurrent HTTP for project name resolution and team activity
+- NaN-safe float sorting in MR turnaround stats
+- Token redacted from Debug output on GitLabInstance
+- Broader Sentry token scrubbing pattern
+
 ## [0.9.0] - 2026-04-04
 
 ### Added
