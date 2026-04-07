@@ -1434,6 +1434,163 @@ pub async fn validate_project_commits(
     Ok(out.join("\n"))
 }
 
+/// Public file metrics struct for cross-module use.
+pub struct FileMetricsPub {
+    pub path: String,
+    pub total_lines: usize,
+    pub functions: usize,
+    pub max_nesting: usize,
+    pub violations: usize,
+    pub score: i32,
+    pub grade: &'static str,
+    pub violation_details: Vec<(String, String)>,
+}
+
+/// Public base64 decode for cross-module use.
+pub fn base64_decode_pub(input: &str) -> String {
+    base64_decode(input)
+}
+
+/// Compute quality metrics for a file given its content and detected language.
+/// Reuses the same scoring logic as analyze_project.
+pub fn compute_file_metrics(file_path: &str, content: &str, lang: &str) -> FileMetricsPub {
+    let lines: Vec<&str> = content.lines().collect();
+    let total_lines = lines.len();
+
+    if total_lines == 0 {
+        return FileMetricsPub {
+            path: file_path.to_string(),
+            total_lines: 0,
+            functions: 0,
+            max_nesting: 0,
+            violations: 0,
+            score: 100,
+            grade: "A",
+            violation_details: Vec::new(),
+        };
+    }
+
+    // Function detection
+    let func_pattern = match lang {
+        "Swift" => r"(?:func|init)\s+",
+        "PHP" => r"function\s+\w+",
+        "Go" => r"func\s+",
+        "Kotlin" | "Java" => r"fun\s+",
+        "TypeScript" | "JavaScript" => r"(?:function\s+|(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?(?:\([^)]*\)|[a-zA-Z_]\w*)\s*=>)",
+        "Rust" => r"fn\s+",
+        "Python" => r"def\s+",
+        _ => r"function\s+|func\s+|fn\s+|def\s+",
+    };
+    let func_re = regex::Regex::new(func_pattern).ok();
+    let mut func_count = 0usize;
+    let mut func_starts: Vec<usize> = Vec::new();
+    if let Some(re) = &func_re {
+        for (i, line) in lines.iter().enumerate() {
+            if re.is_match(line) {
+                func_count += 1;
+                func_starts.push(i);
+            }
+        }
+    }
+
+    // Nesting depth
+    let mut max_nesting: usize = 0;
+    let indent_size: usize = 4;
+    for line in &lines {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let tab_adjusted: usize = line
+            .chars()
+            .take_while(|c| c.is_whitespace())
+            .map(|c| if c == '\t' { indent_size } else { 1 })
+            .sum();
+        let nesting = tab_adjusted / indent_size;
+        if nesting > max_nesting {
+            max_nesting = nesting;
+        }
+    }
+
+    // Long functions
+    let mut long_func_count = 0usize;
+    for i in 0..func_starts.len() {
+        let start = func_starts[i];
+        let end = if i + 1 < func_starts.len() {
+            func_starts[i + 1]
+        } else {
+            total_lines
+        };
+        if end - start > 50 {
+            long_func_count += 1;
+        }
+    }
+
+    // Lint violations
+    let compiled_rules = get_compiled_rules(lang);
+    let mut violation_details: Vec<(String, String)> = Vec::new();
+    let mut violation_count = 0usize;
+    for line in &lines {
+        for cr in compiled_rules {
+            if (cr.rule.applies_to.is_empty() || cr.rule.applies_to == "line")
+                && matches_compiled_rule(cr, line, file_path)
+            {
+                violation_count += 1;
+                violation_details.push((cr.rule.id.clone(), cr.rule.name.clone()));
+            }
+        }
+    }
+
+    // Imports
+    let import_pattern = match lang {
+        "Swift" => "import ",
+        "PHP" => "use ",
+        "Go" => "import",
+        "TypeScript" | "JavaScript" => "import ",
+        "Rust" => "use ",
+        "Python" => "import ",
+        "Kotlin" | "Java" => "import ",
+        _ => "import ",
+    };
+    let imports = lines.iter().filter(|l| l.trim().starts_with(import_pattern)).count();
+    let comment_lines = lines.iter().filter(|l| {
+        let t = l.trim();
+        t.starts_with("//") || t.starts_with('#') || t.starts_with("/*") || t.starts_with('*')
+    }).count();
+    let code_lines = total_lines - lines.iter().filter(|l| l.trim().is_empty()).count() - comment_lines;
+
+    // Score
+    let mut score = 100i32;
+    if total_lines > 500 { score -= 20; }
+    else if total_lines > 300 { score -= 10; }
+    if func_count > 20 { score -= 15; }
+    if max_nesting >= 6 { score -= 20; }
+    else if max_nesting >= 4 { score -= 10; }
+    if imports > 15 { score -= 10; }
+    if comment_lines == 0 && code_lines > 50 { score -= 5; }
+    score -= (long_func_count as i32) * 5;
+    score -= (violation_count as i32).min(20);
+    score = score.max(0);
+
+    let grade = match score {
+        90..=100 => "A",
+        75..=89 => "B",
+        60..=74 => "C",
+        40..=59 => "D",
+        _ => "F",
+    };
+
+    FileMetricsPub {
+        path: file_path.to_string(),
+        total_lines,
+        functions: func_count,
+        max_nesting,
+        violations: violation_count,
+        score,
+        grade,
+        violation_details,
+    }
+}
+
 fn base64_decode(input: &str) -> String {
     // GitLab returns base64-encoded file content
     let cleaned: String = input.chars().filter(|c| !c.is_whitespace()).collect();

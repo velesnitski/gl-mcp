@@ -612,6 +612,14 @@ impl GlMcpServer {
         )
     }
 
+    #[tool(description = "Generate a complete HTML project quality report with file scores, grade distribution, language breakdown, commit quality, binary detection, and recommendations. Save to file and open in browser.")]
+    async fn generate_project_report(&self, Parameters(p): Parameters<GenerateProjectReportParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "generate_project_report",
+            tools::reports::generate_project_report(client, &p.project_id, p.ref_name.as_deref().unwrap_or(""), p.max_files.unwrap_or(50)).await
+        )
+    }
+
     #[tool(description = "Compare developers side-by-side in a project: MRs opened/merged/reviewed, approvals, avg merge time, comments, commits.")]
     async fn compare_developers(&self, Parameters(p): Parameters<CompareDevelopersParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
