@@ -887,6 +887,7 @@ pub async fn analyze_project(
     project_id: &str,
     ref_name: &str,
     max_files: usize,
+    summary_only: bool,
 ) -> Result<String> {
     let encoded = urlencoding::encode(project_id);
     let ref_param = if ref_name.is_empty() { "HEAD" } else { ref_name };
@@ -1158,6 +1159,33 @@ pub async fn analyze_project(
         40..=59 => "D",
         _ => "F",
     };
+
+    if summary_only {
+        let grade_a = grade_counts.get("A").copied().unwrap_or(0);
+        let grade_b = grade_counts.get("B").copied().unwrap_or(0);
+        let grade_c = grade_counts.get("C").copied().unwrap_or(0);
+        let grade_d = grade_counts.get("D").copied().unwrap_or(0);
+        let grade_f = grade_counts.get("F").copied().unwrap_or(0);
+
+        // Collect top issues
+        let mut issue_counts: BTreeMap<(String, String), usize> = BTreeMap::new();
+        for m in &all_metrics {
+            for (rule_id, name) in &m.violation_details {
+                *issue_counts.entry((rule_id.clone(), name.clone())).or_insert(0) += 1;
+            }
+        }
+        let mut sorted_issues: Vec<_> = issue_counts.into_iter().collect();
+        sorted_issues.sort_by(|a, b| b.1.cmp(&a.1));
+        let top_issues: Vec<String> = sorted_issues.iter().take(3)
+            .map(|((_, name), count)| format!("{name} ({count})"))
+            .collect();
+        let issues_str = if top_issues.is_empty() { "none".to_string() } else { top_issues.join(", ") };
+
+        return Ok(format!(
+            "{project_id}: {total_analyzed} files, avg {:.0}/100 ({avg_grade}). A:{grade_a} B:{grade_b} C:{grade_c} D:{grade_d} F:{grade_f}. Top issues: {issues_str}",
+            avg_score
+        ));
+    }
 
     let mut out = vec![
         format!("## Project Quality: {project_id}\n"),
