@@ -1033,6 +1033,7 @@ pub async fn compare_developers(
     project_id: &str,
     usernames: &[&str],
     days: u32,
+    summary_only: bool,
 ) -> Result<String> {
     use futures::future::join_all;
 
@@ -1226,6 +1227,19 @@ pub async fn compare_developers(
     }).collect();
 
     let results = join_all(futures).await;
+
+    if summary_only {
+        let mut lines: Vec<String> = Vec::new();
+        for s in &results {
+            let merge_str = if s.mrs_merged == 0 { "–".to_string() } else { format!("{:.1}h avg merge", s.avg_merge_hours) };
+            lines.push(format!(
+                "@{}: {} commits, +{}/-{} LOC, {} MRs merged, {} reviewed, {}",
+                s.username, s.commits, s.additions, s.deletions,
+                s.mrs_merged, s.mrs_reviewed, merge_str
+            ));
+        }
+        return Ok(lines.join("\n"));
+    }
 
     // Resolve project display name
     let project_name = client
