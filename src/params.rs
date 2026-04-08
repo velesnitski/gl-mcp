@@ -295,6 +295,8 @@ pub struct GetMrTurnaroundParams {
 pub struct GetMrDashboardParams {
     #[schemars(description = "Group path (e.g., 'my-org/backend')")]
     pub group_id: String,
+    #[schemars(description = "Return compact one-line summary (~5x smaller). Use first to scan.")]
+    pub summary_only: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }
@@ -308,6 +310,8 @@ pub struct GetMrReviewDepthParams {
     #[schemars(description = "Number of days to analyze (default: 7)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub days: Option<u32>,
+    #[schemars(description = "Return compact one-line summary (~5x smaller). Use first to scan.")]
+    pub summary_only: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }
@@ -344,6 +348,8 @@ pub struct GetMrTimelineParams {
     #[schemars(description = "Number of days to analyze (default: 7)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub days: Option<u32>,
+    #[schemars(description = "Return compact one-line summary (~5x smaller). Use first to scan.")]
+    pub summary_only: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }
@@ -712,6 +718,8 @@ pub struct CompareDevelopersParams {
     #[schemars(description = "Number of days to analyze (default: 14)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub days: Option<u32>,
+    #[schemars(description = "Return compact one-line-per-developer summary (~5x smaller). Use first to scan.")]
+    pub summary_only: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }
@@ -784,6 +792,8 @@ pub struct AnalyzeProjectParams {
     #[schemars(description = "Max files to analyze (default: 50)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_usize")]
     pub max_files: Option<usize>,
+    #[schemars(description = "Return compact one-line summary (~5x smaller). Use first to scan.")]
+    pub summary_only: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }

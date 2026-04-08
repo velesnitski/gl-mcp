@@ -280,7 +280,7 @@ impl GlMcpServer {
     async fn get_mr_dashboard(&self, Parameters(p): Parameters<GetMrDashboardParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         tool_call!(self, "get_mr_dashboard",
-            tools::merge_requests::get_mr_dashboard(client, &p.group_id).await
+            tools::merge_requests::get_mr_dashboard(client, &p.group_id, p.summary_only.unwrap_or(false)).await
         )
     }
 
@@ -288,7 +288,7 @@ impl GlMcpServer {
     async fn get_mr_review_depth(&self, Parameters(p): Parameters<GetMrReviewDepthParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         tool_call!(self, "get_mr_review_depth",
-            tools::merge_requests::get_mr_review_depth(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.days.unwrap_or(7)).await
+            tools::merge_requests::get_mr_review_depth(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.days.unwrap_or(7), p.summary_only.unwrap_or(false)).await
         )
     }
 
@@ -314,7 +314,7 @@ impl GlMcpServer {
     async fn get_mr_timeline(&self, Parameters(p): Parameters<GetMrTimelineParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         tool_call!(self, "get_mr_timeline",
-            tools::merge_requests::get_mr_timeline(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.days.unwrap_or(7)).await
+            tools::merge_requests::get_mr_timeline(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.days.unwrap_or(7), p.summary_only.unwrap_or(false)).await
         )
     }
 
@@ -626,7 +626,7 @@ impl GlMcpServer {
         let raw_usernames: Vec<String> = p.usernames.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
         let usernames: Vec<&str> = raw_usernames.iter().map(|s| s.as_str()).collect();
         tool_call!(self, "compare_developers",
-            tools::commits::compare_developers(client, &p.project_id, &usernames, p.days.unwrap_or(14)).await
+            tools::commits::compare_developers(client, &p.project_id, &usernames, p.days.unwrap_or(14), p.summary_only.unwrap_or(false)).await
         )
     }
 
@@ -770,7 +770,7 @@ impl GlMcpServer {
     async fn analyze_project(&self, Parameters(p): Parameters<AnalyzeProjectParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
         tool_call!(self, "analyze_project",
-            tools::lint::analyze_project(client, &p.project_id, p.ref_name.as_deref().unwrap_or(""), p.max_files.unwrap_or(50)).await
+            tools::lint::analyze_project(client, &p.project_id, p.ref_name.as_deref().unwrap_or(""), p.max_files.unwrap_or(50), p.summary_only.unwrap_or(false)).await
         )
     }
 
