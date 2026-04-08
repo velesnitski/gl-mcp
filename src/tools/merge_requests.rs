@@ -583,6 +583,7 @@ pub async fn get_mr_turnaround(
 pub async fn get_mr_dashboard(
     client: &GitLabClient,
     group_id: &str,
+    summary_only: bool,
 ) -> Result<String> {
     let path = format!("/groups/{}/merge_requests", urlencoding::encode(group_id));
 
@@ -653,6 +654,17 @@ pub async fn get_mr_dashboard(
     let stale_count = infos.iter().filter(|m| m.age_hours > 168.0).count();
     let no_reviewer = infos.iter().filter(|m| m.reviewers.is_empty()).count();
 
+    if summary_only {
+        let top_reviewer = reviewer_counts.iter()
+            .max_by_key(|(_, c)| *c)
+            .map(|(name, count)| format!("top reviewer: @{name} ({count})"))
+            .unwrap_or_else(|| "no reviewers".to_string());
+        return Ok(format!(
+            "{group_id}: {total} open MRs, avg age {:.1}d, {stale_count} stale (>7d), {top_reviewer}",
+            avg_age / 24.0
+        ));
+    }
+
     let mut lines = vec![
         format!("**MR Dashboard: {group_id}** ({total} open)\n"),
         format!("| Metric | Value |"),
@@ -701,6 +713,7 @@ pub async fn get_mr_review_depth(
     project_id: &str,
     group_id: &str,
     days: u32,
+    summary_only: bool,
 ) -> Result<String> {
     let since = (chrono::Utc::now() - chrono::Duration::days(days as i64))
         .format("%Y-%m-%dT00:00:00Z")
@@ -767,6 +780,15 @@ pub async fn get_mr_review_depth(
     let avg_notes = total_notes as f64 / infos.len() as f64;
     let avg_disc = total_discussions as f64 / infos.len() as f64;
     let zero_review = infos.iter().filter(|i| i.user_notes == 0).count();
+
+    if summary_only {
+        let scope = if !group_id.is_empty() { group_id } else { project_id };
+        let zero_pct = zero_review as f64 / infos.len() as f64 * 100.0;
+        return Ok(format!(
+            "{scope}: {} MRs, avg {:.1} comments/MR, {zero_review} zero-comment ({zero_pct:.0}%)",
+            infos.len(), avg_notes
+        ));
+    }
 
     let scope = if !group_id.is_empty() { group_id } else { project_id };
     let mut lines = vec![
@@ -896,6 +918,7 @@ pub async fn get_mr_timeline(
     project_id: &str,
     group_id: &str,
     days: u32,
+    summary_only: bool,
 ) -> Result<String> {
     let since = (chrono::Utc::now() - chrono::Duration::days(days as i64))
         .format("%Y-%m-%dT00:00:00Z")
@@ -986,6 +1009,15 @@ pub async fn get_mr_timeline(
     let avg_queue = timelines.iter().map(|t| t.queue_hours).sum::<f64>() / count as f64;
     let avg_review = timelines.iter().filter(|t| t.had_review).map(|t| t.review_hours).sum::<f64>() / timelines.iter().filter(|t| t.had_review).count().max(1) as f64;
     let no_review_count = timelines.iter().filter(|t| !t.had_review).count();
+
+    if summary_only {
+        let scope = if !group_id.is_empty() { group_id } else { project_id };
+        let no_review_pct = no_review_count as f64 / count as f64 * 100.0;
+        return Ok(format!(
+            "{scope}: avg total {:.1}h (queue {:.1}h, review {:.1}h), {no_review_count} no-review ({no_review_pct:.0}%)",
+            avg_total, avg_queue, avg_review
+        ));
+    }
 
     let scope = if !group_id.is_empty() { group_id } else { project_id };
     let mut lines = vec![
