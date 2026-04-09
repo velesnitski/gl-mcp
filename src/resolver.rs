@@ -74,4 +74,13 @@ impl Resolver {
             .ok_or_else(|| Error::Config("No default instance configured".into()))
     }
 
+    /// Return all configured clients (for cross-instance queries).
+    pub fn all_clients(&self) -> Vec<(&str, &GitLabClient)> {
+        self.clients.iter().map(|(k, v)| (k.as_str(), v)).collect()
+    }
+
+    /// Number of configured instances.
+    pub fn instance_count(&self) -> usize {
+        self.clients.len()
+    }
 }
