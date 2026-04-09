@@ -484,13 +484,39 @@ impl GlMcpServer {
         )
     }
 
-    #[tool(description = "Get developer daily activity across all projects: commits, MRs, grouped by day and project. Use period='today', 'yesterday', 'week', '3d', or hours.")]
+    #[tool(description = "Get developer daily activity across all projects: commits, MRs, grouped by day and project. Use period='today', 'yesterday', 'week', '3d', or hours. Queries all configured instances when no instance specified.")]
     async fn get_user_activity(&self, Parameters(p): Parameters<GetUserActivityParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
         let hours = parse_period(p.period.as_deref().unwrap_or("24"));
-        tool_call!(self, "get_user_activity",
-            tools::commits::get_user_activity(client, &p.username, hours).await
-        )
+
+        // If instance specified or only 1 configured, use single client
+        if p.instance.is_some() || self.resolver.instance_count() <= 1 {
+            let client = resolve_client(&self.resolver, &p.instance, "")?;
+            return tool_call!(self, "get_user_activity",
+                tools::commits::get_user_activity(client, &p.username, hours).await
+            );
+        }
+
+        // Multi-instance: query all and merge results
+        let timer = crate::logging::ToolTimer::start("get_user_activity", None);
+        let mut all_outputs: Vec<String> = Vec::new();
+        for (name, client) in self.resolver.all_clients() {
+            match tools::commits::get_user_activity(client, &p.username, hours).await {
+                Ok(text) => {
+                    if !text.contains("No activity.") {
+                        all_outputs.push(format!("### Instance: {name}\n\n{text}"));
+                    }
+                }
+                Err(_) => {} // user not found on this instance — skip silently
+            }
+        }
+        let result = if all_outputs.is_empty() {
+            format!("@{} — no activity across {} instances.", p.username, self.resolver.instance_count())
+        } else {
+            all_outputs.join("\n\n---\n\n")
+        };
+        timer.finish("ok", result.len(), None);
+        let output = if self.config.compact { strip_markdown(&result) } else { result };
+        Ok(CallToolResult::success(vec![Content::text(output)]))
     }
 
     #[tool(description = "Get team activity. Pass team key from teams.json (e.g., 'devops') or comma-separated usernames.")]
