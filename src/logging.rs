@@ -26,7 +26,10 @@ fn data_dir() -> PathBuf {
 }
 
 fn dirs_next() -> Option<PathBuf> {
-    std::env::var("HOME").ok().map(PathBuf::from)
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok()
+        .map(PathBuf::from)
 }
 
 /// Get or create persistent instance ID.
