@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-04-10
+
+### Added
+- Auto-observations in dev reports: self-merging, branch typos, test coverage %, weekend/off-hours work, ticket reference rate, no-reviewer flag
+- `compare_developers` cross-project support (comma-separated project_ids)
+- `generate_dev_report` multi-instance auto-discovery
+- `summary_only` for compare_developers, get_mr_dashboard, get_mr_review_depth, get_mr_timeline, analyze_project
+- `get_user_activity` auto-discovers all configured instances
+
+### Fixed
+- `generate_dev_report` pagination: fetches all commits via get_all_pages (was first 20 only)
+
 ## [0.10.0] - 2026-04-07
 
 ### Added
