@@ -144,12 +144,13 @@ pub async fn generate_dev_report(
             continue;
         }
 
-        // Fetch commits
+        // Fetch commits (paginated to get all commits in the period)
         let encoded = urlencoding::encode(&proj_path);
         let commits_data: Vec<Value> = client
-            .get(
+            .get_all_pages(
                 &format!("/projects/{encoded}/repository/commits"),
-                &[("since", since_str.as_str()), ("per_page", "20")],
+                &[("since", since_str.as_str())],
+                20,
             )
             .await
             .unwrap_or_default();
@@ -277,6 +278,10 @@ table{{width:100%;border-collapse:collapse;font-size:12px}}
 th{{text-align:left;padding:6px 10px;color:#5a6a7a;font-size:10px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid #1e2030}}
 td{{padding:6px 10px;border-bottom:1px solid #151520}}
 .alert{{background:#1a0a0a;border:1px solid #3a1a1a;border-radius:8px;padding:12px 16px;margin-top:12px;font-size:12px;color:#ef9a9a}}.alert b{{color:#ef5350}}
+.obs{{border-radius:8px;padding:10px 16px;margin-bottom:8px;font-size:12px;border-left:4px solid}}
+.obs-green{{background:#0a1a0a;border-left-color:#4caf50;color:#a5d6a7}}
+.obs-yellow{{background:#1a1a0a;border-left-color:#ff9800;color:#ffe0b2}}
+.obs-red{{background:#1a0a0a;border-left-color:#ef5350;color:#ef9a9a}}
 .foot{{text-align:center;padding:24px;color:#3a3a4a;font-size:10px}}
 .foot a{{color:#4a4a6a;text-decoration:none}}
 .grp-title{{font-size:11px;color:#5a6a7a;text-transform:uppercase;letter-spacing:.5px;padding:8px 0 4px}}
@@ -376,6 +381,141 @@ td{{padding:6px 10px;border-bottom:1px solid #151520}}
         }
 
         html.push_str("</div>\n");
+    }
+
+    // ── Observations card ──
+    {
+        let mut observations: Vec<(&str, String)> = Vec::new(); // (css_class, message)
+
+        // 1. Self-merging detection
+        let self_merged: Vec<&Value> = mrs.iter().filter(|mr| {
+            let author = mr["author"]["username"].as_str().unwrap_or("");
+            let merger = mr["merged_by"]["username"].as_str()
+                .or_else(|| mr["merge_user"]["username"].as_str())
+                .unwrap_or("");
+            !merger.is_empty() && author == merger
+        }).collect();
+        if !self_merged.is_empty() {
+            observations.push(("obs-yellow", format!(
+                "&#9888; <b>Self-merging:</b> {} MR(s) merged by their own author. Consider requiring external review.",
+                self_merged.len()
+            )));
+        }
+
+        // 2. Branch naming issues
+        let branch_typos: &[(&str, &str)] = &[
+            ("hitfix", "hotfix"), ("hotifx", "hotfix"), ("hofix", "hotfix"),
+            ("relaese", "release"), ("relase", "release"), ("rlease", "release"),
+            ("feaure", "feature"), ("featrue", "feature"), ("faeture", "feature"),
+            ("bugifx", "bugfix"), ("bufgix", "bugfix"),
+        ];
+        let mut found_typos: Vec<(String, String)> = Vec::new();
+        for (_, c) in &all_commits {
+            for (typo, correct) in branch_typos {
+                if c.title.to_lowercase().contains(typo) {
+                    found_typos.push((typo.to_string(), correct.to_string()));
+                }
+            }
+        }
+        if !found_typos.is_empty() {
+            found_typos.dedup();
+            let details: Vec<String> = found_typos.iter().map(|(t, c)| format!("\"{}\" &rarr; \"{}\"", t, c)).collect();
+            observations.push(("obs-red", format!(
+                "&#10060; <b>Branch naming typos:</b> {}",
+                details.join(", ")
+            )));
+        }
+
+        // 3. Test coverage indicator
+        let commits_with_tests = all_commits.iter().filter(|(_, c)| {
+            c.files.iter().any(|f| f.path.contains("tests/") || f.path.contains("test/") || f.path.contains("_test.") || f.path.ends_with("_test.go") || f.path.ends_with("Test.php") || f.path.ends_with("Test.java"))
+        }).count();
+        let total_commit_count = all_commits.len();
+        if total_commit_count > 0 {
+            let pct = (commits_with_tests as f64 / total_commit_count as f64 * 100.0) as u32;
+            let (css, icon) = if pct >= 30 { ("obs-green", "&#9989;") } else if pct >= 10 { ("obs-yellow", "&#9888;") } else { ("obs-red", "&#10060;") };
+            observations.push((css, format!(
+                "{} <b>Test coverage:</b> {} of {} commits include test files ({}%)",
+                icon, commits_with_tests, total_commit_count, pct
+            )));
+        }
+
+        // 4. Weekend/off-hours work (using events which have full timestamps)
+        let mut weekend_count = 0u32;
+        let mut offhours_count = 0u32;
+        for event in &events {
+            if let Some(ts_str) = event["created_at"].as_str() {
+                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts_str) {
+                    use chrono::Datelike;
+                    use chrono::Timelike;
+                    let wd = dt.weekday();
+                    if wd == chrono::Weekday::Sat || wd == chrono::Weekday::Sun {
+                        weekend_count += 1;
+                    }
+                    let hour = dt.hour();
+                    if hour < 7 || hour >= 22 {
+                        offhours_count += 1;
+                    }
+                }
+            }
+        }
+        if weekend_count > 0 {
+            observations.push(("obs-yellow", format!(
+                "&#9888; <b>Weekend work:</b> {} event(s) on Saturday/Sunday",
+                weekend_count
+            )));
+        }
+        if offhours_count > 0 {
+            observations.push(("obs-yellow", format!(
+                "&#9888; <b>Off-hours work:</b> {} event(s) before 7am or after 10pm",
+                offhours_count
+            )));
+        }
+
+        // 5. Ticket reference rate
+        let ticket_re = regex::Regex::new(r"[A-Z]+-\d+").unwrap();
+        let commits_with_tickets = all_commits.iter().filter(|(_, c)| {
+            ticket_re.is_match(&c.title)
+        }).count();
+        if total_commit_count > 0 {
+            let pct = (commits_with_tickets as f64 / total_commit_count as f64 * 100.0) as u32;
+            let (css, icon) = if pct >= 70 { ("obs-green", "&#9989;") } else if pct >= 40 { ("obs-yellow", "&#9888;") } else { ("obs-red", "&#10060;") };
+            observations.push((css, format!(
+                "{} <b>Ticket references:</b> {} of {} commits reference tickets ({}%)",
+                icon, commits_with_tickets, total_commit_count, pct
+            )));
+        }
+
+        // 6. High output flag
+        if total_commit_count > 50 {
+            observations.push(("obs-green", format!(
+                "&#128293; <b>High output:</b> {} commits in the period",
+                total_commit_count
+            )));
+        }
+
+        // 7. No review flag — MRs with 0 external reviews
+        let no_review_mrs: Vec<&Value> = mrs.iter().filter(|mr| {
+            let reviewers = mr["reviewers"].as_array().map(|a| a.len()).unwrap_or(0);
+            reviewers == 0
+        }).collect();
+        if !no_review_mrs.is_empty() && mrs.len() > 0 {
+            let pct = (no_review_mrs.len() as f64 / mrs.len() as f64 * 100.0) as u32;
+            if pct > 30 {
+                observations.push(("obs-red", format!(
+                    "&#10060; <b>No reviewers assigned:</b> {} of {} open MRs have no reviewers ({}%)",
+                    no_review_mrs.len(), mrs.len(), pct
+                )));
+            }
+        }
+
+        if !observations.is_empty() {
+            html.push_str("<div class=\"card\">\n  <h2>Observations</h2>\n");
+            for (css, msg) in &observations {
+                html.push_str(&format!("  <div class=\"obs {}\">{}</div>\n", css, msg));
+            }
+            html.push_str("</div>\n");
+        }
     }
 
     // Footer

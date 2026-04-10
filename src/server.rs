@@ -619,13 +619,55 @@ impl GlMcpServer {
         )]))
     }
 
-    #[tool(description = "Generate a complete HTML daily report for a developer. Returns full HTML with dark theme, commits, diffs, open MRs, and quality notes. Save to file and open in browser.")]
+    #[tool(description = "Generate a complete HTML daily report for a developer. Returns full HTML with dark theme, commits, diffs, open MRs, and quality notes. Save to file and open in browser. Queries all configured instances when no instance specified.")]
     async fn generate_dev_report(&self, Parameters(p): Parameters<GenerateDevReportParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
         let hours = parse_period(p.period.as_deref().unwrap_or("today"));
-        tool_call!(self, "generate_dev_report",
-            tools::reports::generate_dev_report(client, &p.username, hours, p.project.as_deref().unwrap_or("")).await
-        )
+
+        // If instance specified or only 1 configured, use single client
+        if p.instance.is_some() || self.resolver.instance_count() <= 1 {
+            let client = resolve_client(&self.resolver, &p.instance, "")?;
+            return tool_call!(self, "generate_dev_report",
+                tools::reports::generate_dev_report(client, &p.username, hours, p.project.as_deref().unwrap_or("")).await
+            );
+        }
+
+        // Multi-instance: try each instance, return first with activity
+        let timer = crate::logging::ToolTimer::start("generate_dev_report", None);
+        let mut best_report: Option<String> = None;
+        let mut last_error: Option<String> = None;
+
+        for (_name, client) in self.resolver.all_clients() {
+            match tools::reports::generate_dev_report(client, &p.username, hours, p.project.as_deref().unwrap_or("")).await {
+                Ok(html) => {
+                    // Check if this report has actual commits (non-empty)
+                    let has_commits = html.contains("class=\"commit\"");
+                    if has_commits {
+                        // Found a report with activity — use it
+                        timer.finish("ok", html.len(), None);
+                        let output = if self.config.compact { strip_markdown(&html) } else { html };
+                        return Ok(CallToolResult::success(vec![Content::text(output)]));
+                    }
+                    // No commits but valid report — keep as fallback
+                    if best_report.is_none() {
+                        best_report = Some(html);
+                    }
+                }
+                Err(e) => {
+                    last_error = Some(e.short_message());
+                }
+            }
+        }
+
+        // Return best fallback report or error
+        if let Some(html) = best_report {
+            timer.finish("ok", html.len(), None);
+            let output = if self.config.compact { strip_markdown(&html) } else { html };
+            Ok(CallToolResult::success(vec![Content::text(output)]))
+        } else {
+            let msg = last_error.unwrap_or_else(|| format!("No data for @{} across {} instances", p.username, self.resolver.instance_count()));
+            timer.finish("error", 0, Some(msg.clone()));
+            Ok(CallToolResult::error(vec![Content::text(msg)]))
+        }
     }
 
     #[tool(description = "Generate a complete HTML team performance report with developer comparison, review matrix, MR sizes, turnaround stats, and auto-detected process issues. Save to file and open in browser.")]
