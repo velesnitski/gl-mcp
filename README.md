@@ -24,6 +24,9 @@ chmod +x gl-mcp
 # Linux (x86_64)
 curl -L https://github.com/velesnitski/gl-mcp/releases/latest/download/gl-mcp-x86_64-linux -o gl-mcp
 chmod +x gl-mcp
+
+# Windows (x86_64)
+curl -L https://github.com/velesnitski/gl-mcp/releases/latest/download/gl-mcp-x86_64-windows.exe -o gl-mcp.exe
 ```
 
 ### Build from source
