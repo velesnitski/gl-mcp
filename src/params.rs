@@ -711,7 +711,7 @@ pub struct GetDeployFrequencyParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CompareDevelopersParams {
-    #[schemars(description = "Project ID or path")]
+    #[schemars(description = "Comma-separated project IDs or paths for cross-project comparison (e.g. 'group/project1,group/project2')")]
     pub project_id: String,
     #[schemars(description = "Comma-separated GitLab usernames to compare")]
     pub usernames: String,
