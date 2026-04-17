@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-04-17
+
+### Added
+- `search_users` — find users by name, username, or email
+- `get_group_members` — all group members including inherited
+- `merge_mr` — merge MR with squash/remove_branch options (write)
+- `rebase_mr` — trigger MR rebase (write)
+- `close_mr` — close a merge request (write)
+- `get_mr_discussions` — threaded MR discussions with resolved status
+- `get_project_events` — project activity feed with action filter
+- `list_labels` — project labels with colors and issue counts
+- `create_label` — create label with color/description (write)
+- `get_milestones` — project milestones with state filter
+- `get_ci_variables` — CI/CD variable keys and metadata (never values)
+- `get_code_hotspots` — most frequently changed files across recent commits
+- Windows binary in release workflow
+- Redesigned README with badges, collapsible setup, highlights
+
+### Fixed
+- `data_dir()` falls back to USERPROFILE on Windows
+
 ## [0.11.0] - 2026-04-10
 
 ### Added
