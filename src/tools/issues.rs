@@ -300,3 +300,140 @@ pub async fn add_note(
         "Comment added to **{symbol}{iid}** (note id: {note_id})"
     ))
 }
+
+/// List project labels.
+pub async fn list_labels(
+    client: &GitLabClient,
+    project_id: &str,
+) -> Result<String> {
+    let path = format!(
+        "/projects/{}/labels",
+        urlencoding::encode(project_id)
+    );
+
+    let labels: Vec<Value> = client
+        .get(&path, &[("per_page", "100")])
+        .await?;
+
+    if labels.is_empty() {
+        return Ok("No labels found.".to_string());
+    }
+
+    let mut lines = vec![format!("**Labels: {}**\n", labels.len())];
+    for l in &labels {
+        let name = l["name"].as_str().unwrap_or("?");
+        let color = l["color"].as_str().unwrap_or("?");
+        let desc = l["description"].as_str().unwrap_or("");
+        let open_issues = l["open_issues_count"].as_u64().unwrap_or(0);
+
+        let desc_part = if desc.is_empty() {
+            String::new()
+        } else {
+            format!(" — {desc}")
+        };
+
+        lines.push(format!(
+            "- **{name}** ({color}) issues: {open_issues}{desc_part}"
+        ));
+    }
+
+    Ok(lines.join("\n"))
+}
+
+/// Create a project label.
+pub async fn create_label(
+    client: &GitLabClient,
+    project_id: &str,
+    name: &str,
+    color: &str,
+    description: &str,
+) -> Result<String> {
+    let path = format!(
+        "/projects/{}/labels",
+        urlencoding::encode(project_id)
+    );
+
+    let mut body = serde_json::json!({
+        "name": name,
+        "color": color,
+    });
+    if !description.is_empty() {
+        body["description"] = Value::String(description.to_string());
+    }
+
+    let label: Value = client.post(&path, &body).await?;
+
+    let created_name = label["name"].as_str().unwrap_or("?");
+    let created_color = label["color"].as_str().unwrap_or("?");
+
+    Ok(format!(
+        "Created label: **{created_name}** ({created_color})"
+    ))
+}
+
+/// Get project milestones.
+pub async fn get_milestones(
+    client: &GitLabClient,
+    project_id: &str,
+    state: &str,
+    per_page: u32,
+) -> Result<String> {
+    let per_page_str = per_page.to_string();
+    let path = format!(
+        "/projects/{}/milestones",
+        urlencoding::encode(project_id)
+    );
+
+    let mut params: Vec<(&str, &str)> = vec![
+        ("per_page", &per_page_str),
+    ];
+    if !state.is_empty() && state != "all" {
+        params.push(("state", state));
+    }
+
+    let milestones: Vec<Value> = client
+        .get(&path, &params)
+        .await?;
+
+    if milestones.is_empty() {
+        return Ok("No milestones found.".to_string());
+    }
+
+    let mut lines = vec![format!("**Milestones: {}**\n", milestones.len())];
+    for m in &milestones {
+        let title = m["title"].as_str().unwrap_or("?");
+        let state = m["state"].as_str().unwrap_or("?");
+        let due_date = m["due_date"].as_str().unwrap_or("–");
+
+        let mut extra = Vec::new();
+        if due_date != "–" {
+            extra.push(format!("due: {due_date}"));
+        }
+
+        let desc = m["description"].as_str().unwrap_or("");
+        let desc_short = if desc.len() > 80 {
+            let truncated: String = desc.chars().take(80).collect();
+            format!("{truncated}...")
+        } else {
+            desc.to_string()
+        };
+
+        let desc_part = if desc_short.is_empty() {
+            String::new()
+        } else {
+            format!(" — {desc_short}")
+        };
+
+        let extra_str = if extra.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", extra.join(", "))
+        };
+
+        lines.push(format!(
+            "- **{title}** [{state}]{extra_str}{desc_part}"
+        ));
+    }
+
+    Ok(lines.join("\n"))
+}

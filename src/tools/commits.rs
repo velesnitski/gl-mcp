@@ -1356,3 +1356,96 @@ pub async fn compare_developers(
 
     Ok(lines.join("\n"))
 }
+
+/// Identify code hotspots: files that change most frequently in recent history.
+pub async fn get_code_hotspots(
+    client: &GitLabClient,
+    project_id: &str,
+    days: u32,
+    branch: &str,
+) -> Result<String> {
+    let encoded = urlencoding::encode(project_id);
+    let since = (chrono::Utc::now() - chrono::Duration::days(days as i64))
+        .format("%Y-%m-%dT00:00:00Z")
+        .to_string();
+
+    let mut params: Vec<(&str, &str)> = vec![("since", &since)];
+    if !branch.is_empty() {
+        params.push(("ref_name", branch));
+    }
+
+    // Fetch recent commits
+    let commits: Vec<Value> = client
+        .get_all_pages(
+            &format!("/projects/{encoded}/repository/commits"),
+            &params,
+            5, // max 5 pages = 500 commits
+        )
+        .await?;
+
+    if commits.is_empty() {
+        return Ok(format!("No commits found in the last {days} days."));
+    }
+
+    // For each commit, get the diff stats and count file changes
+    let mut file_changes: BTreeMap<String, (u32, String)> = BTreeMap::new(); // path -> (count, last_author)
+
+    for commit in &commits {
+        let sha = match commit["id"].as_str() {
+            Some(s) => s,
+            None => continue,
+        };
+        let author = commit["author_name"].as_str().unwrap_or("?");
+
+        let diff_path = format!("/projects/{encoded}/repository/commits/{sha}/diff");
+        let diffs: std::result::Result<Vec<Value>, _> = client
+            .get(&diff_path, &[("per_page", "100")])
+            .await;
+
+        if let Ok(diffs) = diffs {
+            for d in &diffs {
+                let file_path = d["new_path"]
+                    .as_str()
+                    .or(d["old_path"].as_str())
+                    .unwrap_or("?");
+
+                // Skip generated/lock files
+                if should_skip_file(file_path) {
+                    continue;
+                }
+
+                let entry = file_changes
+                    .entry(file_path.to_string())
+                    .or_insert((0, String::new()));
+                entry.0 += 1;
+                entry.1 = author.to_string(); // last modifier
+            }
+        }
+    }
+
+    if file_changes.is_empty() {
+        return Ok(format!("No file changes found in {days} days ({} commits scanned).", commits.len()));
+    }
+
+    // Sort by change count descending
+    let mut sorted: Vec<(String, u32, String)> = file_changes
+        .into_iter()
+        .map(|(path, (count, author))| (path, count, author))
+        .collect();
+    sorted.sort_by(|a, b| b.1.cmp(&a.1));
+
+    // Take top 20
+    let top = sorted.into_iter().take(20).collect::<Vec<_>>();
+
+    let mut lines = vec![
+        format!("**Code Hotspots** — {project_id} (last {days} days, {} commits)\n", commits.len()),
+        "| # | File | Changes | Last Modified By |".to_string(),
+        "|---|------|---------|------------------|".to_string(),
+    ];
+
+    for (i, (path, count, author)) in top.iter().enumerate() {
+        lines.push(format!("| {} | `{path}` | {count} | @{author} |", i + 1));
+    }
+
+    Ok(lines.join("\n"))
+}

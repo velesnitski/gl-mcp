@@ -286,3 +286,37 @@ pub async fn cancel_pipeline(
     let status = p["status"].as_str().unwrap_or("?");
     Ok(format!("Pipeline #{pipeline_id} canceled. **Status:** {status}"))
 }
+
+/// Get CI/CD variables for a project (keys and metadata only, never values).
+pub async fn get_ci_variables(
+    client: &GitLabClient,
+    project_id: &str,
+) -> Result<String> {
+    let path = format!(
+        "/projects/{}/variables",
+        urlencoding::encode(project_id)
+    );
+
+    let variables: Vec<Value> = client
+        .get(&path, &[("per_page", "100")])
+        .await?;
+
+    if variables.is_empty() {
+        return Ok("No CI/CD variables found.".to_string());
+    }
+
+    let mut lines = vec![format!("**CI/CD Variables: {}**\n", variables.len())];
+    lines.push("| Key | Masked | Protected | Environment |".to_string());
+    lines.push("|-----|--------|-----------|-------------|".to_string());
+
+    for v in &variables {
+        let key = v["key"].as_str().unwrap_or("?");
+        let masked = if v["masked"].as_bool().unwrap_or(false) { "yes" } else { "no" };
+        let protected = if v["protected"].as_bool().unwrap_or(false) { "yes" } else { "no" };
+        let env_scope = v["environment_scope"].as_str().unwrap_or("*");
+
+        lines.push(format!("| {key} | {masked} | {protected} | {env_scope} |"));
+    }
+
+    Ok(lines.join("\n"))
+}
