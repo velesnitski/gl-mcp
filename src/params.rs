@@ -825,6 +825,165 @@ pub struct ListRulesParams {
     pub language: Option<String>,
 }
 
+// ─── Search Users ───
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SearchUsersParams {
+    #[schemars(description = "Search query (name, username, or email)")]
+    pub query: String,
+    #[schemars(description = "Max results (default: 20)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    pub per_page: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+// ─── Group Members ───
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetGroupMembersParams {
+    #[schemars(description = "Group ID or path (e.g., 'my-org/backend')")]
+    pub group_id: String,
+    #[schemars(description = "Max results (default: 100)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    pub per_page: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+// ─── Merge MR ───
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MergeMrParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Merge request IID (the ! number)")]
+    pub mr_iid: u64,
+    #[schemars(description = "Squash commits on merge (optional)")]
+    pub squash: Option<bool>,
+    #[schemars(description = "Delete source branch after merge (optional)")]
+    pub should_remove_source_branch: Option<bool>,
+    #[schemars(description = "Custom merge commit message (optional)")]
+    pub merge_commit_message: Option<String>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+// ─── Rebase MR ───
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RebaseMrParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Merge request IID (the ! number)")]
+    pub mr_iid: u64,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+// ─── Close MR ───
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CloseMrParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Merge request IID (the ! number)")]
+    pub mr_iid: u64,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+// ─── MR Discussions ───
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetMrDiscussionsParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Merge request IID (the ! number)")]
+    pub mr_iid: u64,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+// ─── Project Events ───
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetProjectEventsParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Filter by action: pushed, merged, commented, joined, left, etc. (optional)")]
+    pub action: Option<String>,
+    #[schemars(description = "Max results (default: 20)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    pub per_page: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+// ─── Labels ───
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListLabelsParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateLabelParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Label name")]
+    pub name: String,
+    #[schemars(description = "Label color in hex format (e.g., '#FF0000')")]
+    pub color: String,
+    #[schemars(description = "Label description (optional)")]
+    pub description: Option<String>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+// ─── Milestones ───
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetMilestonesParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Filter by state: active, closed, all (default: all)")]
+    pub state: Option<String>,
+    #[schemars(description = "Max results (default: 20)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    pub per_page: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+// ─── CI Variables ───
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetCiVariablesParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+// ─── Code Hotspots ───
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetCodeHotspotsParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Number of days to analyze (default: 30)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    pub days: Option<u32>,
+    #[schemars(description = "Branch name (default: default branch)")]
+    pub branch: Option<String>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
 // ─── Project Report ───
 
 #[derive(Debug, Deserialize, JsonSchema)]
