@@ -1142,3 +1142,182 @@ pub async fn get_org_mr_dashboard(
 
     Ok(lines.join("\n"))
 }
+
+/// Merge a merge request.
+pub async fn merge_mr(
+    client: &GitLabClient,
+    project_id: &str,
+    mr_iid: u64,
+    squash: Option<bool>,
+    should_remove_source_branch: Option<bool>,
+    merge_commit_message: Option<&str>,
+) -> Result<String> {
+    let path = format!(
+        "/projects/{}/merge_requests/{}/merge",
+        urlencoding::encode(project_id),
+        mr_iid
+    );
+
+    let mut body = serde_json::json!({});
+    if let Some(s) = squash {
+        body["squash"] = serde_json::Value::Bool(s);
+    }
+    if let Some(r) = should_remove_source_branch {
+        body["should_remove_source_branch"] = serde_json::Value::Bool(r);
+    }
+    if let Some(msg) = merge_commit_message {
+        if !msg.is_empty() {
+            body["merge_commit_message"] = serde_json::Value::String(msg.to_string());
+        }
+    }
+
+    let mr: Value = client.put(&path, &body).await?;
+
+    let title = mr["title"].as_str().unwrap_or("?");
+    let state = mr["state"].as_str().unwrap_or("?");
+    let merge_sha = mr["merge_commit_sha"].as_str().unwrap_or("–");
+
+    Ok(format!(
+        "Merged: **!{mr_iid}** — {title}\n**State:** {state}\n**Merge commit:** {merge_sha}"
+    ))
+}
+
+/// Rebase a merge request.
+pub async fn rebase_mr(
+    client: &GitLabClient,
+    project_id: &str,
+    mr_iid: u64,
+) -> Result<String> {
+    let path = format!(
+        "/projects/{}/merge_requests/{}/rebase",
+        urlencoding::encode(project_id),
+        mr_iid
+    );
+
+    let mr: Value = client.put(&path, &serde_json::json!({})).await?;
+
+    let rebase_in_progress = mr["rebase_in_progress"].as_bool().unwrap_or(false);
+    let status = if rebase_in_progress {
+        "Rebase in progress"
+    } else {
+        "Rebase initiated"
+    };
+
+    // Try to get the MR title for a better message
+    let detail_path = format!(
+        "/projects/{}/merge_requests/{}",
+        urlencoding::encode(project_id),
+        mr_iid
+    );
+    let title = if let Ok(detail) = client.get::<Value>(&detail_path, &[]).await {
+        detail["title"].as_str().unwrap_or("?").to_string()
+    } else {
+        format!("!{mr_iid}")
+    };
+
+    Ok(format!("{status}: **!{mr_iid}** — {title}"))
+}
+
+/// Close a merge request.
+pub async fn close_mr(
+    client: &GitLabClient,
+    project_id: &str,
+    mr_iid: u64,
+) -> Result<String> {
+    let path = format!(
+        "/projects/{}/merge_requests/{}",
+        urlencoding::encode(project_id),
+        mr_iid
+    );
+
+    let mr: Value = client
+        .put(&path, &serde_json::json!({"state_event": "close"}))
+        .await?;
+
+    let title = mr["title"].as_str().unwrap_or("?");
+    let state = mr["state"].as_str().unwrap_or("?");
+
+    Ok(format!("Closed: **!{mr_iid}** — {title} [{state}]"))
+}
+
+/// Get MR discussions (threaded comments).
+pub async fn get_mr_discussions(
+    client: &GitLabClient,
+    project_id: &str,
+    mr_iid: u64,
+) -> Result<String> {
+    let path = format!(
+        "/projects/{}/merge_requests/{}/discussions",
+        urlencoding::encode(project_id),
+        mr_iid
+    );
+
+    let discussions: Vec<Value> = client
+        .get(&path, &[("per_page", "100")])
+        .await?;
+
+    if discussions.is_empty() {
+        return Ok(format!("No discussions on !{mr_iid}."));
+    }
+
+    // Filter to only non-system discussions with notes
+    let mut lines = Vec::new();
+    let mut discussion_count = 0u32;
+
+    for d in &discussions {
+        let notes = match d["notes"].as_array() {
+            Some(n) => n,
+            None => continue,
+        };
+
+        // Skip system-only discussions
+        let has_user_note = notes.iter().any(|n| !n["system"].as_bool().unwrap_or(true));
+        if !has_user_note {
+            continue;
+        }
+
+        discussion_count += 1;
+        let resolved = d["notes"]
+            .as_array()
+            .and_then(|ns| ns.first())
+            .and_then(|n| n["resolvable"].as_bool())
+            .unwrap_or(false);
+
+        let is_resolved = if resolved {
+            let r = d["notes"]
+                .as_array()
+                .and_then(|ns| ns.first())
+                .and_then(|n| n["resolved"].as_bool())
+                .unwrap_or(false);
+            if r { " ✓ Resolved" } else { " ✗ Unresolved" }
+        } else {
+            ""
+        };
+
+        for (i, note) in notes.iter().enumerate() {
+            if note["system"].as_bool().unwrap_or(true) {
+                continue;
+            }
+            let author = note["author"]["username"].as_str().unwrap_or("?");
+            let body = note["body"].as_str().unwrap_or("");
+            let created = note["created_at"].as_str().unwrap_or("?");
+            let date_short = if created.len() > 10 { &created[..10] } else { created };
+
+            if i == 0 {
+                lines.push(format!("### Discussion by @{author} ({date_short}){is_resolved}"));
+                lines.push(format!("> {}", body.replace('\n', "\n> ")));
+            } else {
+                lines.push(format!("  **@{author}** ({date_short}):"));
+                lines.push(format!("  > {}", body.replace('\n', "\n  > ")));
+            }
+        }
+        lines.push(String::new());
+    }
+
+    if discussion_count == 0 {
+        return Ok(format!("No user discussions on !{mr_iid}."));
+    }
+
+    let header = format!("**Discussions: {discussion_count}** on !{mr_iid}\n");
+    Ok(format!("{header}\n{}", lines.join("\n")))
+}

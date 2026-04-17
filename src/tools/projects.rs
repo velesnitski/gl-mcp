@@ -260,6 +260,148 @@ pub async fn get_user(
     Ok(parts.join("\n"))
 }
 
+/// Search GitLab users by name, username, or email.
+pub async fn search_users(
+    client: &GitLabClient,
+    query: &str,
+    per_page: u32,
+) -> Result<String> {
+    let per_page_str = per_page.to_string();
+    let params = vec![
+        ("search", query),
+        ("per_page", &per_page_str),
+    ];
+
+    let users: Vec<Value> = client.get("/users", &params).await?;
+
+    if users.is_empty() {
+        return Ok("No users found.".to_string());
+    }
+
+    let mut lines = vec![format!("**Found: {} users**\n", users.len())];
+    for u in &users {
+        let username = u["username"].as_str().unwrap_or("?");
+        let name = u["name"].as_str().unwrap_or("?");
+        let state = u["state"].as_str().unwrap_or("?");
+        let email = u["email"]
+            .as_str()
+            .or(u["public_email"].as_str())
+            .unwrap_or("–");
+        let is_admin = u["is_admin"].as_bool().unwrap_or(false);
+        let admin_str = if is_admin { " (admin)" } else { "" };
+
+        lines.push(format!(
+            "- **{name}** (@{username}) [{state}] {email}{admin_str}"
+        ));
+    }
+
+    Ok(lines.join("\n"))
+}
+
+/// Get all members of a group (including inherited members).
+pub async fn get_group_members(
+    client: &GitLabClient,
+    group_id: &str,
+    per_page: u32,
+) -> Result<String> {
+    let per_page_str = per_page.to_string();
+    let path = format!(
+        "/groups/{}/members/all",
+        urlencoding::encode(group_id)
+    );
+
+    let members: Vec<Value> = client
+        .get(&path, &[("per_page", per_page_str.as_str())])
+        .await?;
+
+    if members.is_empty() {
+        return Ok("No members found.".to_string());
+    }
+
+    let mut lines = vec![format!("**Members: {}**\n", members.len())];
+    for m in &members {
+        let name = m["name"].as_str().unwrap_or("?");
+        let username = m["username"].as_str().unwrap_or("?");
+        let state = m["state"].as_str().unwrap_or("?");
+        let access = match m["access_level"].as_u64().unwrap_or(0) {
+            10 => "Guest",
+            20 => "Reporter",
+            30 => "Developer",
+            40 => "Maintainer",
+            50 => "Owner",
+            _ => "?",
+        };
+        let state_str = if state != "active" {
+            format!(" [{state}]")
+        } else {
+            String::new()
+        };
+        lines.push(format!("- **{name}** (@{username}) — {access}{state_str}"));
+    }
+
+    Ok(lines.join("\n"))
+}
+
+/// Get recent project events (activity feed).
+pub async fn get_project_events(
+    client: &GitLabClient,
+    project_id: &str,
+    action: &str,
+    per_page: u32,
+) -> Result<String> {
+    let per_page_str = per_page.to_string();
+    let path = format!(
+        "/projects/{}/events",
+        urlencoding::encode(project_id)
+    );
+
+    let mut params: Vec<(&str, &str)> = vec![
+        ("per_page", &per_page_str),
+    ];
+    if !action.is_empty() {
+        params.push(("action", action));
+    }
+
+    let events: Vec<Value> = client.get(&path, &params).await?;
+
+    if events.is_empty() {
+        return Ok("No events found.".to_string());
+    }
+
+    let mut lines = vec![format!("**Events: {}**\n", events.len())];
+    for e in &events {
+        let author = e["author"]["username"].as_str().unwrap_or("?");
+        let action_name = e["action_name"].as_str().unwrap_or("?");
+        let target_type = e["target_type"].as_str().unwrap_or("");
+        let target_title = e["target_title"].as_str().unwrap_or("");
+        let created = e["created_at"].as_str().unwrap_or("?");
+        let date_short = if created.len() > 10 { &created[..10] } else { created };
+
+        let push_data = if e["push_data"].is_object() {
+            let ref_type = e["push_data"]["ref_type"].as_str().unwrap_or("branch");
+            let ref_name = e["push_data"]["ref"].as_str().unwrap_or("?");
+            let commit_count = e["push_data"]["commit_count"].as_u64().unwrap_or(0);
+            format!(" {ref_type} `{ref_name}` ({commit_count} commits)")
+        } else {
+            String::new()
+        };
+
+        let target_str = if !target_title.is_empty() {
+            format!(" {target_type}: {target_title}")
+        } else if !target_type.is_empty() {
+            format!(" {target_type}")
+        } else {
+            String::new()
+        };
+
+        lines.push(format!(
+            "- [{date_short}] @{author} {action_name}{push_data}{target_str}"
+        ));
+    }
+
+    Ok(lines.join("\n"))
+}
+
 /// Find stale branches: merged but not deleted, or inactive for N days.
 pub async fn get_stale_branches(
     client: &GitLabClient,
