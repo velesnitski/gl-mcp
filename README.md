@@ -1,44 +1,53 @@
 # gl-mcp
 
 [![CI](https://github.com/velesnitski/gl-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/velesnitski/gl-mcp/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/velesnitski/gl-mcp?color=green)](https://github.com/velesnitski/gl-mcp/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.11.0-green.svg)](CHANGELOG.md)
+[![MCP](https://img.shields.io/badge/MCP-compatible-purple)](https://modelcontextprotocol.io)
+[![Rust](https://img.shields.io/badge/Rust-1.80+-orange.svg)](https://www.rust-lang.org)
 
-GitLab MCP server for Claude Code, GitHub Copilot, Cursor, and other MCP clients. Single Rust binary, ~5MB, 58 tools.
+**GitLab MCP server with 66 tools** for projects, issues, merge requests, CI/CD, code review, team analytics, and code quality analysis.
 
-## Install
+Single Rust binary. Zero runtime dependencies. Works with Claude Code, GitHub Copilot, Cursor, Windsurf, n8n, and any MCP-compatible client.
 
-### Pre-built binaries
+---
 
-Download from [GitHub Releases](https://github.com/velesnitski/gl-mcp/releases/latest):
+## Highlights
 
-```bash
-# macOS (Apple Silicon)
-curl -L https://github.com/velesnitski/gl-mcp/releases/latest/download/gl-mcp-aarch64-macos -o gl-mcp
-chmod +x gl-mcp
+- **66 tools** across 9 categories — from basic CRUD to advanced analytics
+- **Code quality analysis** — file-level scoring (A–F), project-wide reports, 41 lint rules for Swift/PHP/Go/Kotlin/TypeScript
+- **Team performance reports** — developer comparison, review matrix, MR turnaround, auto-detected process issues
+- **HTML reports** — dark-theme reports with Export PDF button for dev activity, team performance, and project quality
+- **Token optimization** — `summary_only` mode (~5–10x smaller responses), smart diff filtering, compact mode
+- **Multi-instance** — query multiple GitLab instances, auto-resolve by domain
+- **Response caching** — 60s TTL cache for repeated lookups, rate limit retry with backoff
+- **Docker + n8n** — HTTP/SSE transport, ready-to-use docker-compose
 
-# macOS (Intel)
-curl -L https://github.com/velesnitski/gl-mcp/releases/latest/download/gl-mcp-x86_64-macos -o gl-mcp
-chmod +x gl-mcp
-
-# Linux (x86_64)
-curl -L https://github.com/velesnitski/gl-mcp/releases/latest/download/gl-mcp-x86_64-linux -o gl-mcp
-chmod +x gl-mcp
-
-# Windows (x86_64)
-curl -L https://github.com/velesnitski/gl-mcp/releases/latest/download/gl-mcp-x86_64-windows.exe -o gl-mcp.exe
-```
-
-### Build from source
-
-```bash
-cargo build --release
-# Binary: target/release/gl-mcp
-```
+---
 
 ## Quick Start
 
-### Claude Code
+### Install
+
+Download a pre-built binary from [GitHub Releases](https://github.com/velesnitski/gl-mcp/releases/latest):
+
+| Platform | Download |
+|----------|----------|
+| macOS (Apple Silicon) | [`gl-mcp-aarch64-macos`](https://github.com/velesnitski/gl-mcp/releases/latest/download/gl-mcp-aarch64-macos) |
+| macOS (Intel) | [`gl-mcp-x86_64-macos`](https://github.com/velesnitski/gl-mcp/releases/latest/download/gl-mcp-x86_64-macos) |
+| Linux (x86_64) | [`gl-mcp-x86_64-linux`](https://github.com/velesnitski/gl-mcp/releases/latest/download/gl-mcp-x86_64-linux) |
+| Windows (x86_64) | [`gl-mcp-x86_64-windows.exe`](https://github.com/velesnitski/gl-mcp/releases/latest/download/gl-mcp-x86_64-windows.exe) |
+
+Or build from source:
+
+```bash
+cargo build --release
+```
+
+### Configure
+
+<details>
+<summary><strong>Claude Code</strong></summary>
 
 Add to `.mcp.json` in your project root:
 
@@ -46,7 +55,7 @@ Add to `.mcp.json` in your project root:
 {
   "mcpServers": {
     "gitlab": {
-      "command": "/path/to/gl-mcp/target/release/gl-mcp",
+      "command": "/path/to/gl-mcp",
       "env": {
         "GITLAB_URL": "https://gitlab.example.com",
         "GITLAB_TOKEN": "glpat-your-token-here"
@@ -55,17 +64,19 @@ Add to `.mcp.json` in your project root:
   }
 }
 ```
+</details>
 
-### GitHub Copilot (VS Code)
+<details>
+<summary><strong>GitHub Copilot (VS Code)</strong></summary>
 
-Add to `.vscode/mcp.json` in your project root:
+Add to `.vscode/mcp.json`:
 
 ```json
 {
   "servers": {
     "gitlab": {
       "type": "stdio",
-      "command": "/path/to/gl-mcp/target/release/gl-mcp",
+      "command": "/path/to/gl-mcp",
       "env": {
         "GITLAB_URL": "https://gitlab.example.com",
         "GITLAB_TOKEN": "glpat-your-token-here"
@@ -74,18 +85,16 @@ Add to `.vscode/mcp.json` in your project root:
   }
 }
 ```
+</details>
 
-### Cursor / Windsurf / Other MCP Clients
-
-gl-mcp supports stdio transport (default) – it works with any MCP-compatible client. Point your client's MCP configuration to the binary and set the environment variables above.
-
-### Docker
+<details>
+<summary><strong>Docker / n8n</strong></summary>
 
 ```bash
 docker compose up -d
 ```
 
-Or build and run directly:
+Or run directly:
 
 ```bash
 docker build -t gl-mcp .
@@ -95,40 +104,30 @@ docker run -p 8000:8000 \
   gl-mcp
 ```
 
-The Docker image runs in HTTP mode by default on port 8000.
+In n8n, add an MCP Client node pointing to `http://localhost:8000/mcp`.
 
-### n8n Integration
+</details>
 
-1. Start gl-mcp in HTTP mode:
+<details>
+<summary><strong>Cursor / Windsurf / Other</strong></summary>
 
-```bash
-# Via Docker
-docker compose up -d
+gl-mcp uses stdio transport by default — point your client's MCP config to the binary and set `GITLAB_URL` + `GITLAB_TOKEN`.
 
-# Or directly
-gl-mcp --transport http --port 8000
-```
+For HTTP transport: `gl-mcp --transport http --port 8000`
 
-2. In n8n, add an **MCP Client** node
-3. Set the MCP server URL to `http://localhost:8000/mcp`
-4. All 58 tools will be available as actions in your n8n workflows
+</details>
 
-### Transport Options
+---
 
-| Flag | Description |
-|------|-------------|
-| (default) | stdio transport for Claude Code, Copilot, Cursor |
-| `--transport http` | HTTP/SSE transport for n8n, web clients |
-| `--port 8000` | Port for HTTP transport (default: 8000) |
+## Tools (66)
 
-## Tools (58)
-
-### Projects & Branches
+### Projects & Users
 | Tool | Description |
 |------|-------------|
 | `list_projects` | List accessible projects |
-| `get_user` | User info by username or ID |
 | `get_project` | Project details (stars, forks, topics) |
+| `get_project_stats` | Repo size, file counts, language breakdown, binary detection |
+| `get_user` | User info by username or ID |
 | `list_members` | Project members with access levels |
 | `list_group_projects` | All projects in a group (with subgroups) |
 | `list_branches` | List branches, filtered by name |
@@ -138,7 +137,7 @@ gl-mcp --transport http --port 8000
 ### Issues
 | Tool | Description |
 |------|-------------|
-| `search_issues` | Search across projects, filter by state/labels/assignee |
+| `search_issues` | Search across projects or groups, filter by state/labels/assignee |
 | `get_issue` | Full details with description and comments |
 | `create_issue` | Create issue with labels and assignee |
 | `update_issue` | Update title, description, state, labels, assignee |
@@ -148,7 +147,7 @@ gl-mcp --transport http --port 8000
 | Tool | Description |
 |------|-------------|
 | `list_merge_requests` | List MRs with pipeline status, reviewers; filter by group/state/author/date |
-| `create_merge_request` | Smart MR creation: auto-title from branch, auto-description from commits, duplicate check |
+| `create_merge_request` | Smart MR creation: auto-title from branch, auto-description from commits |
 | `get_merge_request` | Full MR details with pipeline status and comments |
 | `get_mr_turnaround` | Avg/median merge time, per-author and per-merger breakdown |
 | `get_mr_dashboard` | Compact group dashboard: open count, avg age, reviewer bottlenecks |
@@ -164,9 +163,9 @@ gl-mcp --transport http --port 8000
 | `list_pipelines` | List pipelines, filter by status/ref |
 | `get_pipeline` | Pipeline details with jobs grouped by stage |
 | `get_job_log` | Job log output (tail N lines) |
+| `get_mr_pipelines` | List all pipelines for a specific MR |
 | `retry_pipeline` | Retry a failed pipeline |
 | `cancel_pipeline` | Cancel a running pipeline |
-| `get_mr_pipelines` | List all pipelines for a specific MR |
 
 ### Commits & Code Review
 | Tool | Description |
@@ -175,7 +174,8 @@ gl-mcp --transport http --port 8000
 | `get_commit_diff` | Commit diff with smart filtering and language grouping |
 | `get_mr_changes` | MR unified diff with smart filtering |
 | `get_file_content` | File content at any branch/tag/SHA |
-| `get_user_activity` | Developer daily activity across all projects |
+| `compare_developers` | Side-by-side: LOC, MRs, reviews, merge time, review matrix |
+| `get_user_activity` | Developer daily activity across all projects and instances |
 | `get_team_activity` | Multiple users in one call (from teams.json or comma-separated) |
 | `get_group_activity` | Auto-discover group members and aggregate activity |
 
@@ -194,41 +194,44 @@ gl-mcp --transport http --port 8000
 | `get_deploy_frequency` | DORA metric: deploys per day by environment and deployer |
 | `update_file` | Create/update file with branch protection and auto-MR |
 
-### Lint & Quality
+### Code Quality & Lint
 | Tool | Description |
 |------|-------------|
-| `validate_commit` | Regex-based commit validation (zero LLM tokens) |
-| `validate_mr` | Validate all commits in an MR against coding rules |
+| `analyze_file` | File metrics: lines, functions, nesting depth, complexity grade (A–F) |
+| `analyze_project` | Batch quality analysis: per-file scores, grade distribution, top issues |
+| `validate_commit` | Regex-based commit validation against 41 coding rules |
+| `validate_mr` | Validate all commits in an MR |
+| `validate_mr_changes` | Validate full MR unified diff (catches squashed MR issues) |
+| `validate_project_commits` | Bulk commit message validation: conventional format, ticket refs |
 | `list_rules` | Show available rules by language |
 
-### Teams & Reports
+### Teams & HTML Reports
 | Tool | Description |
 |------|-------------|
 | `list_teams` | Show configured teams from `~/.gl-mcp/teams.json` |
 | `save_team` | Create/update team config |
-| `generate_dev_report` | Full HTML daily report with dark theme |
+| `generate_dev_report` | HTML developer report with auto-observations and Export PDF |
+| `generate_team_report` | HTML team comparison with review matrix, MR sizes, process issues |
+| `generate_project_report` | HTML project quality report with grade distribution, commit quality |
 
-## Token Compression
+---
+
+## Token Optimization
 
 Diffs can be large. Three levels of compression:
 
 ```
-# 1. Summary only (~10x smaller) - use first to scan
+# 1. Summary only (~10x smaller) — scan first
 get_commit_diff(sha="abc123", summary_only=true)
 
-# 2. Single file - drill into what matters
+# 2. Single file — drill into what matters
 get_commit_diff(sha="abc123", file="AuthController.php")
 
-# 3. Global compact mode - strip all markdown
+# 3. Global compact mode — strip all markdown
 GITLAB_COMPACT=1
 ```
 
-| Mode | Response size | Use when |
-|------|--------------|----------|
-| Full diff | ~4000 chars | Reviewing 1-2 commits |
-| `summary_only=true` | ~300 chars | Scanning 10+ commits |
-| `file="path"` | ~500 chars | Drilling into specific file |
-| `GITLAB_COMPACT=1` | ~40% smaller | Always-on token savings |
+`summary_only` is available on: `list_merge_requests`, `list_commits`, `get_commit_diff`, `get_mr_changes`, `compare_developers`, `get_mr_dashboard`, `get_mr_review_depth`, `get_mr_timeline`, `analyze_project`.
 
 ### Smart Filtering
 
@@ -237,7 +240,9 @@ Automatically skips lockfiles and generated code:
 - `vendor/`, `node_modules/`, `dist/`, `build/`
 - `.min.js`, `.min.css`, `.map`, `.pb.go`
 
-Language detection for: PHP, Go, Kotlin, Java, Swift, TypeScript, JavaScript, Rust, Python, YAML/Ansible, Shell, SQL, Vue, CSS, Gradle, Docker, CI/CD.
+Language detection for 25+ languages including PHP, Go, Kotlin, Swift, TypeScript, Rust, Python, and more.
+
+---
 
 ## Configuration
 
@@ -251,7 +256,6 @@ Language detection for: PHP, Go, Kotlin, Java, Swift, TypeScript, JavaScript, Ru
 | `GITLAB_READ_ONLY` | No | Disable write tools (`1`/`true`/`yes`) |
 | `DISABLED_TOOLS` | No | Comma-separated tools to disable |
 | `SENTRY_DSN` | No | Sentry DSN for error tracking |
-| `SENTRY_ENVIRONMENT` | No | Sentry environment (default: `production`) |
 | `GITLAB_ALLOW_HTTP` | No | Allow non-HTTPS URLs |
 
 ### Multi-Instance
@@ -268,35 +272,53 @@ Language detection for: PHP, Go, Kotlin, Java, Swift, TypeScript, JavaScript, Ru
 }
 ```
 
-Pass `instance="staging"` to any tool. URLs in issue/MR identifiers auto-resolve to the correct instance.
+Pass `instance="staging"` to any tool. URLs auto-resolve to the correct instance. `get_user_activity` queries all instances when none specified.
+
+### Transport Options
+
+| Flag | Description |
+|------|-------------|
+| *(default)* | stdio — for Claude Code, Copilot, Cursor |
+| `--transport http` | HTTP/SSE — for n8n, web clients, Docker |
+| `--port 8000` | Port for HTTP transport (default: 8000) |
 
 ### Required Token Scopes
 
 | Scope | Needed for |
 |-------|-----------|
 | `read_api` | All read tools (minimum) |
-| `api` | `create_issue` and other write tools |
+| `api` | Write tools (`create_issue`, `create_merge_request`, etc.) |
 | `read_user` | `get_user_activity` |
 | `read_repository` | `get_file_content`, `get_commit_diff` |
 
+---
+
 ## Architecture
 
-Mirrors [yt-mcp](https://github.com/velesnitski/yt-mcp) patterns:
-
-- **Frozen config** from env vars, parsed once at startup
-- **Multi-instance resolver** with domain auto-detection
-- **Analytics logging** to `~/.gl-mcp/analytics.log` (JSON, safe params only)
-- **Persistent instance_id** for installation tracking
-- **Write tool filtering** via `GITLAB_READ_ONLY` / `DISABLED_TOOLS`
-- **Response size warnings** on >15KB responses
+- **Single binary** — ~9MB, zero runtime dependencies
+- **Frozen config** — env vars parsed once at startup
+- **Multi-instance resolver** — domain auto-detection from URLs
+- **Response cache** — 60s TTL for user/project lookups, auto-eviction
+- **Rate limit retry** — HTTP 429 with Retry-After header, up to 3 attempts
+- **Analytics logging** — `~/.gl-mcp/analytics.log` (JSON, safe params only)
+- **Sentry integration** — optional error tracking with PII scrubbing
 
 ### Stack
 
-- [rmcp](https://github.com/modelcontextprotocol/rust-sdk) 0.11 - MCP protocol
-- [reqwest](https://crates.io/crates/reqwest) - HTTP client with connection pooling
-- [tokio](https://tokio.rs) - async runtime
-- [serde](https://serde.rs) / [schemars](https://crates.io/crates/schemars) - JSON + schema generation
+| Crate | Purpose |
+|-------|---------|
+| [rmcp](https://github.com/modelcontextprotocol/rust-sdk) | MCP protocol (stdio + HTTP) |
+| [axum](https://github.com/tokio-rs/axum) | HTTP server for n8n/Docker |
+| [reqwest](https://crates.io/crates/reqwest) | HTTP client with connection pooling |
+| [tokio](https://tokio.rs) | Async runtime |
+| [serde](https://serde.rs) / [schemars](https://crates.io/crates/schemars) | JSON + schema generation |
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
-MIT
+[MIT](LICENSE)
