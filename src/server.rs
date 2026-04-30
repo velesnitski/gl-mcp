@@ -345,6 +345,30 @@ impl GlMcpServer {
         )
     }
 
+    #[tool(description = "Reviewer velocity: avg/median time from MR opened to first reviewer activity (notes), per reviewer. Sort by fastest first.")]
+    async fn get_reviewer_velocity(&self, Parameters(p): Parameters<GetReviewerVelocityParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        tool_call!(self, "get_reviewer_velocity",
+            tools::merge_requests::get_reviewer_velocity(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.days.unwrap_or(14)).await
+        )
+    }
+
+    #[tool(description = "Code review load distribution: who reviews most/least, % share, bus factor, imbalance recommendations.")]
+    async fn get_review_load(&self, Parameters(p): Parameters<GetReviewLoadParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        tool_call!(self, "get_review_load",
+            tools::merge_requests::get_review_load(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.days.unwrap_or(14)).await
+        )
+    }
+
+    #[tool(description = "MR size trend: weekly buckets of avg files-changed and avg LOC, with arrow trend (↑↓→) and verdict.")]
+    async fn get_mr_size_trend(&self, Parameters(p): Parameters<GetMrSizeTrendParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        tool_call!(self, "get_mr_size_trend",
+            tools::merge_requests::get_mr_size_trend(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.days.unwrap_or(30)).await
+        )
+    }
+
     #[tool(description = "Cross-instance MR dashboard: aggregate MR stats across multiple GitLab instances and groups.")]
     async fn get_cross_instance_dashboard(&self, Parameters(p): Parameters<GetCrossInstanceDashboardParams>) -> Result<CallToolResult, McpError> {
         // Parse targets: "instance:group,instance:group" or just "group,group" with default instance
@@ -512,6 +536,31 @@ impl GlMcpServer {
         )
     }
 
+    #[tool(description = "Check protection status of a branch: push/merge access levels, force push, code owner approval requirements.")]
+    async fn check_branch_protection(&self, Parameters(p): Parameters<CheckBranchProtectionParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "check_branch_protection",
+            tools::projects::check_branch_protection(client, &p.project_id, &p.branch).await
+        )
+    }
+
+    #[tool(description = "Update branch protection settings (delete + recreate). Access levels: 0=None, 30=Developer, 40=Maintainer, 60=Admin.")]
+    async fn update_branch_protection(&self, Parameters(p): Parameters<UpdateBranchProtectionParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "update_branch_protection");
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "update_branch_protection",
+            tools::projects::update_branch_protection(
+                client,
+                &p.project_id,
+                &p.branch,
+                p.push_access_level.unwrap_or(40),
+                p.merge_access_level.unwrap_or(40),
+                p.allow_force_push.unwrap_or(false),
+                p.code_owner_approval_required.unwrap_or(false),
+            ).await
+        )
+    }
+
     #[tool(description = "Look up a GitLab user by username or numeric ID. Returns profile info, state, and admin status.")]
     async fn get_user(&self, Parameters(p): Parameters<GetUserParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
@@ -577,6 +626,33 @@ impl GlMcpServer {
         let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
         tool_call!(self, "get_code_hotspots",
             tools::commits::get_code_hotspots(client, &p.project_id, p.days.unwrap_or(30), p.branch.as_deref().unwrap_or("")).await
+        )
+    }
+
+    #[tool(description = "List all branches and tags that contain a given commit SHA. Useful for tracing where a fix landed.")]
+    async fn get_commit_refs(&self, Parameters(p): Parameters<GetCommitRefsParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "get_commit_refs",
+            tools::commits::get_commit_refs(client, &p.project_id, &p.sha).await
+        )
+    }
+
+    #[tool(description = "Revert a commit by creating a new revert commit on the target branch.")]
+    async fn revert_commit(&self, Parameters(p): Parameters<RevertCommitParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "revert_commit");
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "revert_commit",
+            tools::commits::revert_commit(client, &p.project_id, &p.sha, &p.branch).await
+        )
+    }
+
+    #[tool(description = "Analyze team timezone distribution: peak working hours (UTC), likely timezone, weekend work percentage per developer.")]
+    async fn get_team_timezone(&self, Parameters(p): Parameters<GetTeamTimezoneParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        let raw_usernames: Vec<String> = p.usernames.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        let usernames: Vec<&str> = raw_usernames.iter().map(|s| s.as_str()).collect();
+        tool_call!(self, "get_team_timezone",
+            tools::commits::get_team_timezone(client, &usernames, p.days.unwrap_or(14)).await
         )
     }
 
