@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-04-25
+
+### Added
+- `check_branch_protection` — view protected branch settings
+- `update_branch_protection` — create/update protected branch rules (write)
+- `get_commit_refs` — list branches/tags containing a commit
+- `revert_commit` — create revert commit on target branch (write)
+- `get_reviewer_velocity` — per-reviewer first-response time, sorted fastest first
+- `get_review_load` — review distribution, bus factor warning when top reviewer >70%
+- `get_mr_size_trend` — weekly MR size trends (files, LOC) with verdict
+- `get_team_timezone` — UTC peak hour analysis with timezone heuristic and weekend %
+
+86 tools total.
+
 ## [0.12.0] - 2026-04-17
 
 ### Added
