@@ -402,6 +402,137 @@ pub async fn get_project_events(
     Ok(lines.join("\n"))
 }
 
+/// Check protection status for a single branch.
+pub async fn check_branch_protection(
+    client: &GitLabClient,
+    project_id: &str,
+    branch: &str,
+) -> Result<String> {
+    let path = format!(
+        "/projects/{}/protected_branches/{}",
+        urlencoding::encode(project_id),
+        urlencoding::encode(branch)
+    );
+
+    let result: std::result::Result<Value, _> = client.get(&path, &[]).await;
+
+    let pb = match result {
+        Ok(v) => v,
+        Err(crate::error::Error::GitLab { status, .. }) if status.as_u16() == 404 => {
+            return Ok(format!("Branch '{branch}' is not protected."));
+        }
+        Err(e) => return Err(e),
+    };
+
+    let name = pb["name"].as_str().unwrap_or(branch);
+    let allow_force_push = pb["allow_force_push"].as_bool().unwrap_or(false);
+    let code_owner_required = pb["code_owner_approval_required"].as_bool().unwrap_or(false);
+
+    fn level_label(level: u64) -> &'static str {
+        match level {
+            0 => "No access",
+            30 => "Developer",
+            40 => "Maintainer",
+            60 => "Admin",
+            _ => "?",
+        }
+    }
+
+    fn format_access_levels(arr: Option<&Vec<Value>>) -> String {
+        match arr {
+            Some(items) if !items.is_empty() => items
+                .iter()
+                .map(|v| {
+                    let level = v["access_level"].as_u64().unwrap_or(0);
+                    let desc = v["access_level_description"].as_str().unwrap_or("");
+                    if !desc.is_empty() && desc != level_label(level) {
+                        format!("{} ({desc})", level_label(level))
+                    } else {
+                        level_label(level).to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+            _ => "–".to_string(),
+        }
+    }
+
+    let push_access = format_access_levels(pb["push_access_levels"].as_array());
+    let merge_access = format_access_levels(pb["merge_access_levels"].as_array());
+
+    let lines = vec![
+        format!("# Protected branch: {name}"),
+        String::new(),
+        format!("**Push access:** {push_access}"),
+        format!("**Merge access:** {merge_access}"),
+        format!("**Allow force push:** {allow_force_push}"),
+        format!("**Code owner approval required:** {code_owner_required}"),
+    ];
+
+    Ok(lines.join("\n"))
+}
+
+/// Update branch protection settings (delete + recreate, since GitLab has no PATCH).
+pub async fn update_branch_protection(
+    client: &GitLabClient,
+    project_id: &str,
+    branch: &str,
+    push_access_level: u32,
+    merge_access_level: u32,
+    allow_force_push: bool,
+    code_owner_approval_required: bool,
+) -> Result<String> {
+    let enc_project = urlencoding::encode(project_id).to_string();
+    let enc_branch = urlencoding::encode(branch).to_string();
+
+    // Validate access levels
+    let valid_levels = [0u32, 30, 40, 60];
+    if !valid_levels.contains(&push_access_level) {
+        return Ok(format!(
+            "**Error:** Invalid push_access_level {push_access_level}. Use 0 (None), 30 (Developer), 40 (Maintainer), or 60 (Admin)."
+        ));
+    }
+    if !valid_levels.contains(&merge_access_level) {
+        return Ok(format!(
+            "**Error:** Invalid merge_access_level {merge_access_level}. Use 0 (None), 30 (Developer), 40 (Maintainer), or 60 (Admin)."
+        ));
+    }
+
+    // Delete existing protection (if any) — ignore 404
+    let delete_path = format!("/projects/{enc_project}/protected_branches/{enc_branch}");
+    if let Err(e) = client.delete(&delete_path).await {
+        match e {
+            crate::error::Error::GitLab { status, .. } if status.as_u16() == 404 => {
+                // Not previously protected — that's fine
+            }
+            other => return Err(other),
+        }
+    }
+
+    // Create new protection — encode params in URL since GitLab API takes query params here
+    let create_path = format!(
+        "/projects/{enc_project}/protected_branches?name={enc_branch}&push_access_level={push_access_level}&merge_access_level={merge_access_level}&allow_force_push={allow_force_push}&code_owner_approval_required={code_owner_approval_required}",
+    );
+    let body = serde_json::json!({});
+    let _: Value = client.post(&create_path, &body).await?;
+
+    fn level_label(level: u32) -> &'static str {
+        match level {
+            0 => "No access",
+            30 => "Developer",
+            40 => "Maintainer",
+            60 => "Admin",
+            _ => "?",
+        }
+    }
+
+    Ok(format!(
+        "Branch protection updated for `{branch}` on **{project_id}**:\n- Push: {} ({push_access_level})\n- Merge: {} ({merge_access_level})\n- Allow force push: {allow_force_push}\n- Code owner approval required: {code_owner_approval_required}",
+        level_label(push_access_level),
+        level_label(merge_access_level)
+    ))
+}
+
 /// Find stale branches: merged but not deleted, or inactive for N days.
 pub async fn get_stale_branches(
     client: &GitLabClient,
