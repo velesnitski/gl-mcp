@@ -1449,3 +1449,294 @@ pub async fn get_code_hotspots(
 
     Ok(lines.join("\n"))
 }
+
+/// Get the branches and tags that contain a specific commit.
+pub async fn get_commit_refs(
+    client: &GitLabClient,
+    project_id: &str,
+    sha: &str,
+) -> Result<String> {
+    let path = format!(
+        "/projects/{}/repository/commits/{}/refs",
+        urlencoding::encode(project_id),
+        urlencoding::encode(sha)
+    );
+
+    let refs: Vec<Value> = client.get(&path, &[("type", "all"), ("per_page", "100")]).await?;
+
+    if refs.is_empty() {
+        return Ok(format!("No refs contain commit `{sha}` in {project_id}."));
+    }
+
+    let mut branches: Vec<&str> = Vec::new();
+    let mut tags: Vec<&str> = Vec::new();
+
+    for r in &refs {
+        let kind = r["type"].as_str().unwrap_or("");
+        let name = r["name"].as_str().unwrap_or("");
+        if name.is_empty() {
+            continue;
+        }
+        match kind {
+            "branch" => branches.push(name),
+            "tag" => tags.push(name),
+            _ => {}
+        }
+    }
+
+    branches.sort();
+    tags.sort();
+
+    let mut lines = vec![
+        format!("**Refs containing `{sha}`** in {project_id}"),
+        format!("Branches: {} | Tags: {}", branches.len(), tags.len()),
+        String::new(),
+    ];
+
+    if !branches.is_empty() {
+        lines.push("### Branches".to_string());
+        for b in &branches {
+            lines.push(format!("- `{b}`"));
+        }
+        lines.push(String::new());
+    }
+
+    if !tags.is_empty() {
+        lines.push("### Tags".to_string());
+        for t in &tags {
+            lines.push(format!("- `{t}`"));
+        }
+    }
+
+    Ok(lines.join("\n"))
+}
+
+/// Revert a commit on a target branch (creates a new revert commit).
+pub async fn revert_commit(
+    client: &GitLabClient,
+    project_id: &str,
+    sha: &str,
+    branch: &str,
+) -> Result<String> {
+    let path = format!(
+        "/projects/{}/repository/commits/{}/revert",
+        urlencoding::encode(project_id),
+        urlencoding::encode(sha)
+    );
+
+    let body = serde_json::json!({ "branch": branch });
+    let result: Value = client.post(&path, &body).await?;
+
+    let new_sha = result["short_id"].as_str().or(result["id"].as_str()).unwrap_or("?");
+    let title = result["title"].as_str().unwrap_or("");
+    let message = result["message"].as_str().unwrap_or(title);
+    let author = result["author_name"].as_str().unwrap_or("?");
+    let web_url = result["web_url"].as_str().unwrap_or("");
+
+    let mut lines = vec![
+        format!("Reverted `{sha}` on `{branch}` in **{project_id}**"),
+        String::new(),
+        format!("**New commit:** `{new_sha}`"),
+        format!("**Author:** @{author}"),
+    ];
+    if !title.is_empty() {
+        lines.push(format!("**Title:** {title}"));
+    }
+    if !message.is_empty() && message != title {
+        lines.push(format!("**Message:** {message}"));
+    }
+    if !web_url.is_empty() {
+        lines.push(format!("**URL:** {web_url}"));
+    }
+
+    Ok(lines.join("\n"))
+}
+
+/// Analyze team timezone distribution based on event activity.
+pub async fn get_team_timezone(
+    client: &GitLabClient,
+    usernames: &[&str],
+    days: u32,
+) -> Result<String> {
+    use futures::future::join_all;
+
+    if usernames.is_empty() {
+        return Ok("No usernames provided.".to_string());
+    }
+
+    let since = chrono::Utc::now() - chrono::Duration::days(days as i64);
+    let since_ts = since.timestamp();
+
+    // Resolve user IDs
+    let user_lookups: Vec<_> = usernames.iter().map(|&u| {
+        let client = client.clone();
+        let username = u.to_string();
+        async move {
+            let cache_key = format!("user:{username}");
+            let users: Result<Vec<Value>> = client
+                .get_cached(&cache_key, "/users", &[("username", &username)], 60)
+                .await;
+            match users {
+                Ok(list) => list.into_iter().next().map(|u| (username, u)),
+                Err(_) => None,
+            }
+        }
+    }).collect();
+
+    let resolved: Vec<(String, Value)> = join_all(user_lookups).await.into_iter().flatten().collect();
+
+    if resolved.is_empty() {
+        return Ok("No users found.".to_string());
+    }
+
+    struct UserTz {
+        username: String,
+        display_name: String,
+        hour_buckets: [u32; 24],
+        weekday_total: u32,
+        weekend_total: u32,
+        total_events: u32,
+    }
+
+    let mut results: Vec<UserTz> = Vec::new();
+
+    for (username, user) in &resolved {
+        let user_id = match user["id"].as_u64() {
+            Some(id) => id,
+            None => continue,
+        };
+        let display_name = user["name"].as_str().unwrap_or(username).to_string();
+
+        let events = match fetch_user_events(client, user_id, since_ts).await {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let mut hour_buckets = [0u32; 24];
+        let mut weekday_total = 0u32;
+        let mut weekend_total = 0u32;
+
+        for ev in &events {
+            let created = match ev["created_at"].as_str() {
+                Some(s) => s,
+                None => continue,
+            };
+            let dt = match chrono::DateTime::parse_from_rfc3339(created) {
+                Ok(d) => d.with_timezone(&chrono::Utc),
+                Err(_) => continue,
+            };
+
+            use chrono::{Datelike, Timelike};
+            let hour = dt.hour() as usize;
+            hour_buckets[hour] += 1;
+
+            let weekday = dt.weekday().num_days_from_monday();
+            if weekday >= 5 {
+                weekend_total += 1;
+            } else {
+                weekday_total += 1;
+            }
+        }
+
+        let total_events: u32 = hour_buckets.iter().sum();
+        results.push(UserTz {
+            username: username.clone(),
+            display_name,
+            hour_buckets,
+            weekday_total,
+            weekend_total,
+            total_events,
+        });
+    }
+
+    if results.iter().all(|r| r.total_events == 0) {
+        return Ok(format!(
+            "No activity for any of the {} users in the last {days} days.",
+            usernames.len()
+        ));
+    }
+
+    // Find peak window per user: 10-hour rolling window with max activity
+    fn find_peak_window(buckets: &[u32; 24]) -> (usize, usize) {
+        let window_size = 10usize;
+        let mut best_start = 0usize;
+        let mut best_sum = 0u32;
+        // Wrap-around so peaks crossing midnight are detected
+        for start in 0..24 {
+            let sum: u32 = (0..window_size).map(|i| buckets[(start + i) % 24]).sum();
+            if sum > best_sum {
+                best_sum = sum;
+                best_start = start;
+            }
+        }
+        let end = (best_start + window_size) % 24;
+        (best_start, end)
+    }
+
+    fn likely_tz(peak_start: usize) -> String {
+        // Assume people work roughly 9am local. peak_start in UTC ≈ 9 local.
+        // local = UTC + offset → offset = peak_start - 9 (where peak_start is "9 local")
+        // We treat the window start (e.g., 6 UTC) as ~9am local so offset = 9 - peak_start.
+        let offset_i = 9i32 - peak_start as i32;
+        // Normalize to [-11, 12]
+        let offset = ((offset_i + 11).rem_euclid(24)) - 11;
+        let label = match offset {
+            -8 => " (Pacific)",
+            -5 => " (Eastern)",
+            0 => " (UTC)",
+            1 => " (Central Europe)",
+            2 => " (Eastern Europe)",
+            3 => " (Moscow)",
+            4 => " (Caucasus)",
+            5 => " (Pakistan)",
+            6 => " (Bangladesh)",
+            7 => " (SE Asia)",
+            8 => " (China)",
+            9 => " (Japan)",
+            _ => "",
+        };
+        let sign = if offset >= 0 { "+" } else { "" };
+        format!("UTC{sign}{offset}{label}")
+    }
+
+    let mut lines = vec![
+        format!("## Team Timezone Analysis (last {days} days, UTC)"),
+        String::new(),
+        "| Developer | Peak Hours (UTC) | Likely TZ | Weekend Work |".to_string(),
+        "|-----------|------------------|-----------|--------------|".to_string(),
+    ];
+
+    // Sort by total events desc
+    results.sort_by(|a, b| b.total_events.cmp(&a.total_events));
+
+    for r in &results {
+        if r.total_events == 0 {
+            lines.push(format!("| @{} | – | – | – |", r.username));
+            continue;
+        }
+        let (start, end) = find_peak_window(&r.hour_buckets);
+        let tz = likely_tz(start);
+        let weekend_pct = if r.total_events > 0 {
+            (r.weekend_total as f64 / r.total_events as f64) * 100.0
+        } else {
+            0.0
+        };
+        lines.push(format!(
+            "| @{} | {:02}:00-{:02}:00 | {tz} | {:.0}% |",
+            r.username, start, end, weekend_pct
+        ));
+    }
+
+    let active = results.iter().filter(|r| r.total_events > 0).count();
+    lines.push(String::new());
+    lines.push(format!(
+        "**Analyzed:** {active}/{} developers with activity. Total events: {}.",
+        results.len(),
+        results.iter().map(|r| r.total_events).sum::<u32>()
+    ));
+
+    // Suppress unused-field warning
+    let _ = (results.first().map(|r| r.display_name.as_str()), results.first().map(|r| r.weekday_total));
+
+    Ok(lines.join("\n"))
+}
