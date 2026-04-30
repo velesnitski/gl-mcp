@@ -984,6 +984,114 @@ pub struct GetCodeHotspotsParams {
     pub instance: Option<String>,
 }
 
+// ─── Branch Protection ───
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CheckBranchProtectionParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Branch name to check (e.g., 'main')")]
+    pub branch: String,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateBranchProtectionParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Branch name to protect (e.g., 'main')")]
+    pub branch: String,
+    #[schemars(description = "Push access level: 0=No access, 30=Developer, 40=Maintainer, 60=Admin")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    pub push_access_level: Option<u32>,
+    #[schemars(description = "Merge access level: 0=No access, 30=Developer, 40=Maintainer, 60=Admin")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    pub merge_access_level: Option<u32>,
+    #[schemars(description = "Allow force push (default: false)")]
+    pub allow_force_push: Option<bool>,
+    #[schemars(description = "Require code owner approval (default: false)")]
+    pub code_owner_approval_required: Option<bool>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+// ─── Commit Refs / Revert ───
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetCommitRefsParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Commit SHA (full or short)")]
+    pub sha: String,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RevertCommitParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Commit SHA to revert (full or short)")]
+    pub sha: String,
+    #[schemars(description = "Target branch where the revert commit should be created")]
+    pub branch: String,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+// ─── Reviewer Velocity / Review Load / MR Size Trend / Team Timezone ───
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetReviewerVelocityParams {
+    #[schemars(description = "Project ID or path (optional if group_id set)")]
+    pub project_id: Option<String>,
+    #[schemars(description = "Group path for cross-project stats (e.g., 'my-org/backend')")]
+    pub group_id: Option<String>,
+    #[schemars(description = "Number of days to analyze (default: 14)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    pub days: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetReviewLoadParams {
+    #[schemars(description = "Project ID or path (optional if group_id set)")]
+    pub project_id: Option<String>,
+    #[schemars(description = "Group path for cross-project stats (e.g., 'my-org/backend')")]
+    pub group_id: Option<String>,
+    #[schemars(description = "Number of days to analyze (default: 14)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    pub days: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetMrSizeTrendParams {
+    #[schemars(description = "Project ID or path (optional if group_id set)")]
+    pub project_id: Option<String>,
+    #[schemars(description = "Group path for cross-project stats (e.g., 'my-org/backend')")]
+    pub group_id: Option<String>,
+    #[schemars(description = "Number of days to analyze (default: 30)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    pub days: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetTeamTimezoneParams {
+    #[schemars(description = "Comma-separated GitLab usernames")]
+    pub usernames: String,
+    #[schemars(description = "Number of days to analyze (default: 14)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    pub days: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
 // ─── Project Report ───
 
 #[derive(Debug, Deserialize, JsonSchema)]

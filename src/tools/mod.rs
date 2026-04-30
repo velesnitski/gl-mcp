@@ -26,6 +26,8 @@ pub const WRITE_TOOLS: &[&str] = &[
     "save_team",
     "update_file",
     "delete_branch",
+    "update_branch_protection",
+    "revert_commit",
 ];
 
 /// Check if a tool should be available given config.

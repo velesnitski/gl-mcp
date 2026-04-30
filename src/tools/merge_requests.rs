@@ -1321,3 +1321,505 @@ pub async fn get_mr_discussions(
     let header = format!("**Discussions: {discussion_count}** on !{mr_iid}\n");
     Ok(format!("{header}\n{}", lines.join("\n")))
 }
+
+/// Reviewer velocity: how quickly each reviewer responds to MRs.
+pub async fn get_reviewer_velocity(
+    client: &GitLabClient,
+    project_id: &str,
+    group_id: &str,
+    days: u32,
+) -> Result<String> {
+    let since = (chrono::Utc::now() - chrono::Duration::days(days as i64))
+        .format("%Y-%m-%dT00:00:00Z")
+        .to_string();
+
+    let path = if !group_id.is_empty() {
+        format!("/groups/{}/merge_requests", urlencoding::encode(group_id))
+    } else if !project_id.is_empty() {
+        format!("/projects/{}/merge_requests", urlencoding::encode(project_id))
+    } else {
+        "/merge_requests".to_string()
+    };
+
+    let mrs: Vec<Value> = client.get(&path, &[
+        ("state", "merged"),
+        ("created_after", &since),
+        ("per_page", "100"),
+        ("order_by", "updated_at"),
+        ("sort", "desc"),
+    ]).await?;
+
+    if mrs.is_empty() {
+        return Ok("No merged MRs in this period.".to_string());
+    }
+
+    use futures::future::join_all;
+
+    // For each MR with reviewers, fetch notes concurrently and find first reviewer activity
+    let lookups: Vec<_> = mrs.iter().filter_map(|mr| {
+        let reviewers: Vec<String> = mr["reviewers"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v["username"].as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        if reviewers.is_empty() {
+            return None;
+        }
+        let created = mr["created_at"].as_str().unwrap_or("").to_string();
+        let created_dt = chrono::DateTime::parse_from_rfc3339(&created).ok()?;
+
+        let project_path = mr["references"]["full"].as_str()
+            .unwrap_or("")
+            .split('!')
+            .next()
+            .unwrap_or("")
+            .to_string();
+        let mr_iid = mr["iid"].as_u64().unwrap_or(0);
+        if project_path.is_empty() || mr_iid == 0 {
+            return None;
+        }
+
+        let client = client.clone();
+        Some(async move {
+            let notes_path = format!(
+                "/projects/{}/merge_requests/{}/notes",
+                urlencoding::encode(&project_path),
+                mr_iid
+            );
+            let notes: Vec<Value> = client.get(&notes_path, &[
+                ("per_page", "100"),
+                ("order_by", "created_at"),
+                ("sort", "asc"),
+            ]).await.unwrap_or_default();
+
+            // For each reviewer, find their first non-system note timestamp
+            let mut first_responses: Vec<(String, f64)> = Vec::new();
+            for reviewer in &reviewers {
+                for note in &notes {
+                    if note["system"].as_bool().unwrap_or(true) {
+                        continue;
+                    }
+                    let author = note["author"]["username"].as_str().unwrap_or("");
+                    if author != reviewer {
+                        continue;
+                    }
+                    let note_created = note["created_at"].as_str().unwrap_or("");
+                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(note_created) {
+                        let hours = (dt - created_dt).num_minutes() as f64 / 60.0;
+                        if hours >= 0.0 {
+                            first_responses.push((reviewer.clone(), hours));
+                            break;
+                        }
+                    }
+                }
+            }
+            first_responses
+        })
+    }).collect();
+
+    let total_mr_count = mrs.len();
+    let results: Vec<Vec<(String, f64)>> = join_all(lookups).await;
+
+    // Aggregate per reviewer
+    let mut by_reviewer: BTreeMap<String, Vec<f64>> = BTreeMap::new();
+    for batch in results {
+        for (reviewer, hours) in batch {
+            by_reviewer.entry(reviewer).or_default().push(hours);
+        }
+    }
+
+    if by_reviewer.is_empty() {
+        return Ok(format!(
+            "No reviewer activity found across {total_mr_count} merged MRs in the last {days} days."
+        ));
+    }
+
+    fn median(values: &mut [f64]) -> f64 {
+        values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let n = values.len();
+        if n == 0 { 0.0 }
+        else if n % 2 == 1 { values[n / 2] }
+        else { (values[n / 2 - 1] + values[n / 2]) / 2.0 }
+    }
+
+    fn fmt_hours(h: f64) -> String {
+        if h >= 24.0 {
+            format!("{:.1}d", h / 24.0)
+        } else {
+            format!("{:.1}h", h)
+        }
+    }
+
+    // Build sorted entries: (reviewer, count, avg, median)
+    let mut entries: Vec<(String, usize, f64, f64)> = by_reviewer
+        .into_iter()
+        .map(|(rev, mut times)| {
+            let count = times.len();
+            let avg = times.iter().sum::<f64>() / count as f64;
+            let med = median(&mut times);
+            (rev, count, avg, med)
+        })
+        .collect();
+    entries.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+
+    let scope = if !group_id.is_empty() { group_id }
+        else if !project_id.is_empty() { project_id }
+        else { "all" };
+
+    let mut lines = vec![
+        format!("## Reviewer Velocity: {scope} (last {days} days, {total_mr_count} MRs)"),
+        String::new(),
+        "| Reviewer | MRs Reviewed | Avg Response Time | Median |".to_string(),
+        "|----------|--------------|-------------------|--------|".to_string(),
+    ];
+
+    for (reviewer, count, avg, med) in &entries {
+        lines.push(format!(
+            "| @{reviewer} | {count} | {} | {} |",
+            fmt_hours(*avg),
+            fmt_hours(*med)
+        ));
+    }
+
+    Ok(lines.join("\n"))
+}
+
+/// Code review load distribution and bus factor.
+pub async fn get_review_load(
+    client: &GitLabClient,
+    project_id: &str,
+    group_id: &str,
+    days: u32,
+) -> Result<String> {
+    let since = (chrono::Utc::now() - chrono::Duration::days(days as i64))
+        .format("%Y-%m-%dT00:00:00Z")
+        .to_string();
+
+    let path = if !group_id.is_empty() {
+        format!("/groups/{}/merge_requests", urlencoding::encode(group_id))
+    } else if !project_id.is_empty() {
+        format!("/projects/{}/merge_requests", urlencoding::encode(project_id))
+    } else {
+        "/merge_requests".to_string()
+    };
+
+    let mrs: Vec<Value> = client.get(&path, &[
+        ("state", "merged"),
+        ("created_after", &since),
+        ("per_page", "100"),
+        ("order_by", "updated_at"),
+        ("sort", "desc"),
+    ]).await?;
+
+    if mrs.is_empty() {
+        return Ok("No merged MRs in this period.".to_string());
+    }
+
+    let mut reviewer_counts: BTreeMap<String, u32> = BTreeMap::new();
+    let mut mr_with_reviewer = 0u32;
+
+    for mr in &mrs {
+        let reviewers: Vec<&str> = mr["reviewers"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v["username"].as_str()).collect())
+            .unwrap_or_default();
+        if !reviewers.is_empty() {
+            mr_with_reviewer += 1;
+        }
+        for r in reviewers {
+            *reviewer_counts.entry(r.to_string()).or_default() += 1;
+        }
+    }
+
+    if reviewer_counts.is_empty() {
+        return Ok(format!(
+            "No reviewers assigned across {} merged MRs in the last {days} days.",
+            mrs.len()
+        ));
+    }
+
+    let total: u32 = reviewer_counts.values().sum();
+    let mut entries: Vec<(String, u32)> = reviewer_counts.into_iter().collect();
+    entries.sort_by(|a, b| b.1.cmp(&a.1));
+
+    let scope = if !group_id.is_empty() { group_id }
+        else if !project_id.is_empty() { project_id }
+        else { "all" };
+
+    let mut lines = vec![
+        format!("## Code Review Load: {scope} (last {days} days)"),
+        String::new(),
+        "| Reviewer | MRs Reviewed | % of Total | Avg per Day |".to_string(),
+        "|----------|--------------|------------|-------------|".to_string(),
+    ];
+
+    for (reviewer, count) in &entries {
+        let pct = (*count as f64 / total as f64) * 100.0;
+        let avg_per_day = *count as f64 / days as f64;
+        lines.push(format!(
+            "| @{reviewer} | {count} | {pct:.0}% | {avg_per_day:.1} |"
+        ));
+    }
+
+    // Bus factor: how many reviewers cover 80% of reviews
+    let mut cumulative = 0u32;
+    let mut bus_factor = 0u32;
+    for (_, count) in &entries {
+        bus_factor += 1;
+        cumulative += count;
+        if (cumulative as f64 / total as f64) >= 0.8 {
+            break;
+        }
+    }
+
+    let top_pct = if let Some((_, top_count)) = entries.first() {
+        (*top_count as f64 / total as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    lines.push(String::new());
+    lines.push(format!(
+        "**Bus factor:** {bus_factor} (top reviewer{} cover{} 80% of reviews)",
+        if bus_factor == 1 { "" } else { "s" },
+        if bus_factor == 1 { "s" } else { "" }
+    ));
+    lines.push(format!(
+        "**Total reviews:** {total} across {mr_with_reviewer} MRs ({} reviewers)",
+        entries.len()
+    ));
+
+    if top_pct > 70.0 {
+        if let Some((top_reviewer, top_count)) = entries.first() {
+            lines.push(format!(
+                "**Recommendation:** Distribute reviews more evenly — @{top_reviewer} handles {:.0}% ({top_count}/{total})",
+                top_pct
+            ));
+        }
+    } else {
+        lines.push("**Recommendation:** Review load is reasonably distributed.".to_string());
+    }
+
+    Ok(lines.join("\n"))
+}
+
+/// Weekly trend of MR sizes (files changed, LOC).
+pub async fn get_mr_size_trend(
+    client: &GitLabClient,
+    project_id: &str,
+    group_id: &str,
+    days: u32,
+) -> Result<String> {
+    use futures::future::join_all;
+
+    let since_dt = chrono::Utc::now() - chrono::Duration::days(days as i64);
+    let since = since_dt.format("%Y-%m-%dT00:00:00Z").to_string();
+
+    let path = if !group_id.is_empty() {
+        format!("/groups/{}/merge_requests", urlencoding::encode(group_id))
+    } else if !project_id.is_empty() {
+        format!("/projects/{}/merge_requests", urlencoding::encode(project_id))
+    } else {
+        "/merge_requests".to_string()
+    };
+
+    let mrs: Vec<Value> = client.get(&path, &[
+        ("state", "merged"),
+        ("created_after", &since),
+        ("per_page", "100"),
+        ("order_by", "updated_at"),
+        ("sort", "desc"),
+    ]).await?;
+
+    if mrs.is_empty() {
+        return Ok("No merged MRs in this period.".to_string());
+    }
+
+    // Fetch /changes for each MR concurrently to get file count and LOC
+    let lookups: Vec<_> = mrs.iter().filter_map(|mr| {
+        let merged_at = mr["merged_at"].as_str().unwrap_or("").to_string();
+        let merged_dt = chrono::DateTime::parse_from_rfc3339(&merged_at).ok()?;
+
+        let project_path = mr["references"]["full"].as_str()
+            .unwrap_or("")
+            .split('!')
+            .next()
+            .unwrap_or("")
+            .to_string();
+        let mr_iid = mr["iid"].as_u64().unwrap_or(0);
+        if project_path.is_empty() || mr_iid == 0 {
+            return None;
+        }
+
+        let client = client.clone();
+        Some(async move {
+            let path = format!(
+                "/projects/{}/merge_requests/{}/changes",
+                urlencoding::encode(&project_path),
+                mr_iid
+            );
+            let detail: std::result::Result<Value, _> = client
+                .get(&path, &[("access_raw_diffs", "true")])
+                .await;
+
+            if let Ok(d) = detail {
+                if let Some(files) = d["changes"].as_array() {
+                    let file_count = files.len();
+                    let mut loc = 0usize;
+                    for f in files {
+                        let diff = f["diff"].as_str().unwrap_or("");
+                        for line in diff.lines() {
+                            if (line.starts_with('+') && !line.starts_with("+++"))
+                                || (line.starts_with('-') && !line.starts_with("---"))
+                            {
+                                loc += 1;
+                            }
+                        }
+                    }
+                    return Some((merged_dt.with_timezone(&chrono::Utc), file_count, loc));
+                }
+            }
+            None
+        })
+    }).collect();
+
+    let mr_data: Vec<(chrono::DateTime<chrono::Utc>, usize, usize)> =
+        join_all(lookups).await.into_iter().flatten().collect();
+
+    if mr_data.is_empty() {
+        return Ok("No MR change data available.".to_string());
+    }
+
+    // Bucket into weekly windows starting from since_dt
+    struct WeekBucket {
+        start: chrono::DateTime<chrono::Utc>,
+        end: chrono::DateTime<chrono::Utc>,
+        mr_count: usize,
+        total_files: usize,
+        total_loc: usize,
+    }
+
+    // Number of weeks
+    let total_days = days as i64;
+    let week_count = ((total_days + 6) / 7) as usize;
+    let mut buckets: Vec<WeekBucket> = (0..week_count)
+        .map(|i| {
+            let start = since_dt + chrono::Duration::days((i * 7) as i64);
+            let end = start + chrono::Duration::days(7);
+            WeekBucket { start, end, mr_count: 0, total_files: 0, total_loc: 0 }
+        })
+        .collect();
+
+    for (merged_at, files, loc) in &mr_data {
+        for b in buckets.iter_mut() {
+            if *merged_at >= b.start && *merged_at < b.end {
+                b.mr_count += 1;
+                b.total_files += files;
+                b.total_loc += loc;
+                break;
+            }
+        }
+    }
+
+    let scope = if !group_id.is_empty() { group_id }
+        else if !project_id.is_empty() { project_id }
+        else { "all" };
+
+    let mut lines = vec![
+        format!("## MR Size Trend: {scope} (last {days} days, weekly buckets)"),
+        String::new(),
+        "| Week | MRs | Avg Files | Avg LOC | Trend |".to_string(),
+        "|------|-----|-----------|---------|-------|".to_string(),
+    ];
+
+    let mut prev_files: Option<f64> = None;
+    let mut first_files: Option<f64> = None;
+    let mut last_files: Option<f64> = None;
+
+    for b in &buckets {
+        if b.mr_count == 0 {
+            lines.push(format!(
+                "| {} | 0 | – | – | – |",
+                format_week_range(b.start, b.end)
+            ));
+            continue;
+        }
+
+        let avg_files = b.total_files as f64 / b.mr_count as f64;
+        let avg_loc = b.total_loc as f64 / b.mr_count as f64;
+
+        let trend = match prev_files {
+            None => "–".to_string(),
+            Some(prev) => {
+                let delta = avg_files - prev;
+                if delta.abs() / prev.max(1.0) < 0.1 {
+                    "→".to_string()
+                } else if delta > 0.0 {
+                    "↑".to_string()
+                } else {
+                    "↓".to_string()
+                }
+            }
+        };
+
+        lines.push(format!(
+            "| {} | {} | {:.0} | {:.0} | {trend} |",
+            format_week_range(b.start, b.end),
+            b.mr_count,
+            avg_files,
+            avg_loc
+        ));
+
+        prev_files = Some(avg_files);
+        if first_files.is_none() { first_files = Some(avg_files); }
+        last_files = Some(avg_files);
+    }
+
+    lines.push(String::new());
+    let verdict = match (first_files, last_files) {
+        (Some(first), Some(last)) => {
+            let delta = last - first;
+            if delta.abs() / first.max(1.0) < 0.1 {
+                format!(
+                    "**Verdict:** MRs trending stable — avg files {:.0}→{:.0}",
+                    first, last
+                )
+            } else if delta > 0.0 {
+                format!(
+                    "**Verdict:** MRs trending larger — avg files {:.0}→{:.0}",
+                    first, last
+                )
+            } else {
+                format!(
+                    "**Verdict:** MRs trending smaller — avg files {:.0}→{:.0}",
+                    first, last
+                )
+            }
+        }
+        _ => "**Verdict:** insufficient data".to_string(),
+    };
+    lines.push(verdict);
+
+    Ok(lines.join("\n"))
+}
+
+fn format_week_range(start: chrono::DateTime<chrono::Utc>, end: chrono::DateTime<chrono::Utc>) -> String {
+    use chrono::Datelike;
+    let end_inclusive = end - chrono::Duration::days(1);
+    let start_month = match start.month() {
+        1 => "Jan", 2 => "Feb", 3 => "Mar", 4 => "Apr",
+        5 => "May", 6 => "Jun", 7 => "Jul", 8 => "Aug",
+        9 => "Sep", 10 => "Oct", 11 => "Nov", 12 => "Dec",
+        _ => "?",
+    };
+    let end_month = match end_inclusive.month() {
+        1 => "Jan", 2 => "Feb", 3 => "Mar", 4 => "Apr",
+        5 => "May", 6 => "Jun", 7 => "Jul", 8 => "Aug",
+        9 => "Sep", 10 => "Oct", 11 => "Nov", 12 => "Dec",
+        _ => "?",
+    };
+    if start.month() == end_inclusive.month() {
+        format!("{start_month} {}-{}", start.day(), end_inclusive.day())
+    } else {
+        format!("{start_month} {} – {end_month} {}", start.day(), end_inclusive.day())
+    }
+}
