@@ -6,7 +6,7 @@
 [![MCP](https://img.shields.io/badge/MCP-compatible-purple)](https://modelcontextprotocol.io)
 [![Rust](https://img.shields.io/badge/Rust-1.80+-orange.svg)](https://www.rust-lang.org)
 
-**GitLab MCP server with 66 tools** for projects, issues, merge requests, CI/CD, code review, team analytics, and code quality analysis.
+**GitLab MCP server with 86 tools** for projects, issues, merge requests, CI/CD, code review, team analytics, and code quality analysis.
 
 Single Rust binary. Zero runtime dependencies. Works with Claude Code, GitHub Copilot, Cursor, Windsurf, n8n, and any MCP-compatible client.
 
@@ -14,7 +14,7 @@ Single Rust binary. Zero runtime dependencies. Works with Claude Code, GitHub Co
 
 ## Highlights
 
-- **66 tools** across 9 categories — from basic CRUD to advanced analytics
+- **86 tools** across 9 categories — from basic CRUD to advanced analytics
 - **Code quality analysis** — file-level scoring (A–F), project-wide reports, 41 lint rules for Swift/PHP/Go/Kotlin/TypeScript
 - **Team performance reports** — developer comparison, review matrix, MR turnaround, auto-detected process issues
 - **HTML reports** — dark-theme reports with Export PDF button for dev activity, team performance, and project quality
@@ -119,7 +119,7 @@ For HTTP transport: `gl-mcp --transport http --port 8000`
 
 ---
 
-## Tools (66)
+## Tools (86)
 
 ### Projects & Users
 | Tool | Description |
@@ -127,12 +127,17 @@ For HTTP transport: `gl-mcp --transport http --port 8000`
 | `list_projects` | List accessible projects |
 | `get_project` | Project details (stars, forks, topics) |
 | `get_project_stats` | Repo size, file counts, language breakdown, binary detection |
+| `get_project_events` | Project activity feed with action filter |
 | `get_user` | User info by username or ID |
+| `search_users` | Find users by name, username, or email |
 | `list_members` | Project members with access levels |
+| `get_group_members` | All group members including inherited |
 | `list_group_projects` | All projects in a group (with subgroups) |
 | `list_branches` | List branches, filtered by name |
 | `get_stale_branches` | Find merged-but-not-deleted and inactive branches |
 | `delete_branch` | Delete a branch (e.g., after merge) |
+| `check_branch_protection` | View protected branch settings |
+| `update_branch_protection` | Create or update protected branch rules |
 
 ### Issues
 | Tool | Description |
@@ -142,6 +147,9 @@ For HTTP transport: `gl-mcp --transport http --port 8000`
 | `create_issue` | Create issue with labels and assignee |
 | `update_issue` | Update title, description, state, labels, assignee |
 | `add_note` | Add comment to issue or MR |
+| `list_labels` | Project labels with colors and issue counts |
+| `create_label` | Create label with color and description |
+| `get_milestones` | Project milestones with state filter |
 
 ### Merge Requests
 | Tool | Description |
@@ -149,6 +157,10 @@ For HTTP transport: `gl-mcp --transport http --port 8000`
 | `list_merge_requests` | List MRs with pipeline status, reviewers; filter by group/state/author/date |
 | `create_merge_request` | Smart MR creation: auto-title from branch, auto-description from commits |
 | `get_merge_request` | Full MR details with pipeline status and comments |
+| `merge_mr` | Merge MR with squash and remove-branch options |
+| `rebase_mr` | Trigger MR rebase |
+| `close_mr` | Close a merge request without merging |
+| `get_mr_discussions` | Threaded MR discussions with resolved status |
 | `get_mr_turnaround` | Avg/median merge time, per-author and per-merger breakdown |
 | `get_mr_dashboard` | Compact group dashboard: open count, avg age, reviewer bottlenecks |
 | `get_mr_review_depth` | Comments/discussions per MR, zero-review detection |
@@ -156,6 +168,9 @@ For HTTP transport: `gl-mcp --transport http --port 8000`
 | `get_mr_timeline` | Decompose merge time into queue vs review phases |
 | `get_org_mr_dashboard` | Cross-group MR aggregation with reviewer load |
 | `get_cross_instance_dashboard` | Aggregate MR stats across multiple GitLab instances |
+| `get_reviewer_velocity` | Per-reviewer first-response time, sorted fastest first |
+| `get_review_load` | Review distribution with bus factor warning |
+| `get_mr_size_trend` | Weekly MR size trends (files, LOC) with verdict |
 
 ### CI/CD Pipelines
 | Tool | Description |
@@ -166,18 +181,23 @@ For HTTP transport: `gl-mcp --transport http --port 8000`
 | `get_mr_pipelines` | List all pipelines for a specific MR |
 | `retry_pipeline` | Retry a failed pipeline |
 | `cancel_pipeline` | Cancel a running pipeline |
+| `get_ci_variables` | List CI/CD variable keys and metadata (never values) |
 
 ### Commits & Code Review
 | Tool | Description |
 |------|-------------|
 | `list_commits` | Commits by branch/author/date, grouped by author |
 | `get_commit_diff` | Commit diff with smart filtering and language grouping |
+| `get_commit_refs` | List branches/tags containing a commit |
+| `revert_commit` | Create revert commit on target branch |
 | `get_mr_changes` | MR unified diff with smart filtering |
 | `get_file_content` | File content at any branch/tag/SHA |
 | `compare_developers` | Side-by-side: LOC, MRs, reviews, merge time, review matrix |
 | `get_user_activity` | Developer daily activity across all projects and instances |
 | `get_team_activity` | Multiple users in one call (from teams.json or comma-separated) |
 | `get_group_activity` | Auto-discover group members and aggregate activity |
+| `get_team_timezone` | UTC peak hour analysis with timezone heuristic and weekend % |
+| `get_code_hotspots` | Most frequently changed files across recent commits |
 
 ### Repository
 | Tool | Description |
