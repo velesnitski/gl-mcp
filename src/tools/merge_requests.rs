@@ -1245,6 +1245,7 @@ pub async fn get_mr_discussions(
     client: &GitLabClient,
     project_id: &str,
     mr_iid: u64,
+    summary_only: bool,
 ) -> Result<String> {
     let path = format!(
         "/projects/{}/merge_requests/{}/discussions",
@@ -1263,6 +1264,9 @@ pub async fn get_mr_discussions(
     // Filter to only non-system discussions with notes
     let mut lines = Vec::new();
     let mut discussion_count = 0u32;
+    let mut resolved_count = 0u32;
+    let mut unresolved_count = 0u32;
+    let mut authors: BTreeMap<String, u32> = BTreeMap::new();
 
     for d in &discussions {
         let notes = match d["notes"].as_array() {
@@ -1277,19 +1281,28 @@ pub async fn get_mr_discussions(
         }
 
         discussion_count += 1;
-        let resolved = d["notes"]
+        let resolvable = d["notes"]
             .as_array()
             .and_then(|ns| ns.first())
             .and_then(|n| n["resolvable"].as_bool())
             .unwrap_or(false);
 
-        let is_resolved = if resolved {
-            let r = d["notes"]
+        let is_resolved_bool = if resolvable {
+            d["notes"]
                 .as_array()
                 .and_then(|ns| ns.first())
                 .and_then(|n| n["resolved"].as_bool())
-                .unwrap_or(false);
-            if r { " ✓ Resolved" } else { " ✗ Unresolved" }
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
+        if resolvable {
+            if is_resolved_bool { resolved_count += 1; } else { unresolved_count += 1; }
+        }
+
+        let is_resolved = if resolvable {
+            if is_resolved_bool { " ✓ Resolved" } else { " ✗ Unresolved" }
         } else {
             ""
         };
@@ -1299,6 +1312,7 @@ pub async fn get_mr_discussions(
                 continue;
             }
             let author = note["author"]["username"].as_str().unwrap_or("?");
+            *authors.entry(author.to_string()).or_default() += 1;
             let body = note["body"].as_str().unwrap_or("");
             let created = note["created_at"].as_str().unwrap_or("?");
             let date_short = if created.len() > 10 { &created[..10] } else { created };
@@ -1318,6 +1332,19 @@ pub async fn get_mr_discussions(
         return Ok(format!("No user discussions on !{mr_iid}."));
     }
 
+    if summary_only {
+        let mut author_list: Vec<(&String, &u32)> = authors.iter().collect();
+        author_list.sort_by(|a, b| b.1.cmp(a.1));
+        let authors_str = author_list.iter()
+            .take(5)
+            .map(|(name, _)| format!("@{name}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Ok(format!(
+            "{project_id}!{mr_iid}: {discussion_count} discussions, {resolved_count} resolved, {unresolved_count} unresolved ({authors_str})"
+        ));
+    }
+
     let header = format!("**Discussions: {discussion_count}** on !{mr_iid}\n");
     Ok(format!("{header}\n{}", lines.join("\n")))
 }
@@ -1328,6 +1355,7 @@ pub async fn get_reviewer_velocity(
     project_id: &str,
     group_id: &str,
     days: u32,
+    summary_only: bool,
 ) -> Result<String> {
     let since = (chrono::Utc::now() - chrono::Duration::days(days as i64))
         .format("%Y-%m-%dT00:00:00Z")
@@ -1465,6 +1493,19 @@ pub async fn get_reviewer_velocity(
         else if !project_id.is_empty() { project_id }
         else { "all" };
 
+    if summary_only {
+        let reviewers_count = entries.len();
+        let fastest = entries.first()
+            .map(|(name, _, avg, _)| format!("Fastest: @{name} ({:.1}h avg)", avg))
+            .unwrap_or_else(|| "Fastest: –".to_string());
+        let slowest = entries.last()
+            .map(|(name, _, avg, _)| format!("Slowest: @{name} ({:.1}h avg)", avg))
+            .unwrap_or_else(|| "Slowest: –".to_string());
+        return Ok(format!(
+            "{scope}: {total_mr_count} MRs, {reviewers_count} reviewers. {fastest}. {slowest}"
+        ));
+    }
+
     let mut lines = vec![
         format!("## Reviewer Velocity: {scope} (last {days} days, {total_mr_count} MRs)"),
         String::new(),
@@ -1489,6 +1530,7 @@ pub async fn get_review_load(
     project_id: &str,
     group_id: &str,
     days: u32,
+    summary_only: bool,
 ) -> Result<String> {
     let since = (chrono::Utc::now() - chrono::Duration::days(days as i64))
         .format("%Y-%m-%dT00:00:00Z")
@@ -1545,21 +1587,6 @@ pub async fn get_review_load(
         else if !project_id.is_empty() { project_id }
         else { "all" };
 
-    let mut lines = vec![
-        format!("## Code Review Load: {scope} (last {days} days)"),
-        String::new(),
-        "| Reviewer | MRs Reviewed | % of Total | Avg per Day |".to_string(),
-        "|----------|--------------|------------|-------------|".to_string(),
-    ];
-
-    for (reviewer, count) in &entries {
-        let pct = (*count as f64 / total as f64) * 100.0;
-        let avg_per_day = *count as f64 / days as f64;
-        lines.push(format!(
-            "| @{reviewer} | {count} | {pct:.0}% | {avg_per_day:.1} |"
-        ));
-    }
-
     // Bus factor: how many reviewers cover 80% of reviews
     let mut cumulative = 0u32;
     let mut bus_factor = 0u32;
@@ -1576,6 +1603,32 @@ pub async fn get_review_load(
     } else {
         0.0
     };
+
+    if summary_only {
+        let reviewers_count = entries.len();
+        let top_str = entries.first()
+            .map(|(name, _)| format!("Top: @{name} ({:.0}%)", top_pct))
+            .unwrap_or_else(|| "Top: –".to_string());
+        let bus_note = if top_pct > 70.0 { " (top reviewer >70%)" } else { "" };
+        return Ok(format!(
+            "{scope}: {reviewers_count} reviewers, {mr_with_reviewer} MRs. {top_str}. Bus factor: {bus_factor}{bus_note}"
+        ));
+    }
+
+    let mut lines = vec![
+        format!("## Code Review Load: {scope} (last {days} days)"),
+        String::new(),
+        "| Reviewer | MRs Reviewed | % of Total | Avg per Day |".to_string(),
+        "|----------|--------------|------------|-------------|".to_string(),
+    ];
+
+    for (reviewer, count) in &entries {
+        let pct = (*count as f64 / total as f64) * 100.0;
+        let avg_per_day = *count as f64 / days as f64;
+        lines.push(format!(
+            "| @{reviewer} | {count} | {pct:.0}% | {avg_per_day:.1} |"
+        ));
+    }
 
     lines.push(String::new());
     lines.push(format!(
@@ -1608,6 +1661,7 @@ pub async fn get_mr_size_trend(
     project_id: &str,
     group_id: &str,
     days: u32,
+    summary_only: bool,
 ) -> Result<String> {
     use futures::future::join_all;
 
@@ -1723,6 +1777,31 @@ pub async fn get_mr_size_trend(
     let scope = if !group_id.is_empty() { group_id }
         else if !project_id.is_empty() { project_id }
         else { "all" };
+
+    if summary_only {
+        let weeks_with_data: Vec<&WeekBucket> = buckets.iter().filter(|b| b.mr_count > 0).collect();
+        let total_mrs: usize = mr_data.len();
+        let total_weeks = buckets.len();
+        let (trend, start_files, end_files) = if let (Some(first), Some(last)) = (weeks_with_data.first(), weeks_with_data.last()) {
+            let first_avg = first.total_files as f64 / first.mr_count as f64;
+            let last_avg = last.total_files as f64 / last.mr_count as f64;
+            let delta = last_avg - first_avg;
+            let trend = if delta.abs() / first_avg.max(1.0) < 0.1 {
+                "stable"
+            } else if delta > 0.0 {
+                "larger"
+            } else {
+                "smaller"
+            };
+            (trend, first_avg, last_avg)
+        } else {
+            ("insufficient data", 0.0, 0.0)
+        };
+        return Ok(format!(
+            "{scope}: {total_weeks} weeks, {total_mrs} MRs. Trend: {trend}, avg files {:.0}->{:.0}",
+            start_files, end_files
+        ));
+    }
 
     let mut lines = vec![
         format!("## MR Size Trend: {scope} (last {days} days, weekly buckets)"),
