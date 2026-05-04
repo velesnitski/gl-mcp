@@ -1363,6 +1363,7 @@ pub async fn get_code_hotspots(
     project_id: &str,
     days: u32,
     branch: &str,
+    summary_only: bool,
 ) -> Result<String> {
     let encoded = urlencoding::encode(project_id);
     let since = (chrono::Utc::now() - chrono::Duration::days(days as i64))
@@ -1436,6 +1437,16 @@ pub async fn get_code_hotspots(
 
     // Take top 20
     let top = sorted.into_iter().take(20).collect::<Vec<_>>();
+
+    if summary_only {
+        let hot_count = top.iter().filter(|(_, count, _)| *count > 5).count();
+        let top_str = top.first()
+            .map(|(path, count, _)| format!("top hotspot {path} ({count} changes)"))
+            .unwrap_or_else(|| "no hotspots".to_string());
+        return Ok(format!(
+            "{project_id}: {top_str}. {hot_count} files changed >5 times."
+        ));
+    }
 
     let mut lines = vec![
         format!("**Code Hotspots** — {project_id} (last {days} days, {} commits)\n", commits.len()),
@@ -1557,6 +1568,7 @@ pub async fn get_team_timezone(
     client: &GitLabClient,
     usernames: &[&str],
     days: u32,
+    summary_only: bool,
 ) -> Result<String> {
     use futures::future::join_all;
 
@@ -1699,15 +1711,42 @@ pub async fn get_team_timezone(
         format!("UTC{sign}{offset}{label}")
     }
 
+    // Sort by total events desc
+    results.sort_by(|a, b| b.total_events.cmp(&a.total_events));
+
+    if summary_only {
+        let active_devs = results.iter().filter(|r| r.total_events > 0).count();
+        // Compute most common TZ across active devs
+        let mut tz_counts: BTreeMap<String, u32> = BTreeMap::new();
+        let mut weekend_pcts: Vec<f64> = Vec::new();
+        for r in &results {
+            if r.total_events == 0 { continue; }
+            let (start, _) = find_peak_window(&r.hour_buckets);
+            let tz = likely_tz(start);
+            *tz_counts.entry(tz).or_default() += 1;
+            let weekend_pct = (r.weekend_total as f64 / r.total_events as f64) * 100.0;
+            weekend_pcts.push(weekend_pct);
+        }
+        let common_tz = tz_counts.iter().max_by_key(|(_, c)| *c)
+            .map(|(tz, count)| format!("{tz} ({count} devs)"))
+            .unwrap_or_else(|| "–".to_string());
+        let avg_weekend = if weekend_pcts.is_empty() {
+            0.0
+        } else {
+            weekend_pcts.iter().sum::<f64>() / weekend_pcts.len() as f64
+        };
+        return Ok(format!(
+            "{active_devs} developers analyzed. Common TZ: {common_tz}. Weekend work: avg {:.0}%",
+            avg_weekend
+        ));
+    }
+
     let mut lines = vec![
         format!("## Team Timezone Analysis (last {days} days, UTC)"),
         String::new(),
         "| Developer | Peak Hours (UTC) | Likely TZ | Weekend Work |".to_string(),
         "|-----------|------------------|-----------|--------------|".to_string(),
     ];
-
-    // Sort by total events desc
-    results.sort_by(|a, b| b.total_events.cmp(&a.total_events));
 
     for r in &results {
         if r.total_events == 0 {

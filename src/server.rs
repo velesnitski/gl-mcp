@@ -349,7 +349,7 @@ impl GlMcpServer {
     async fn get_reviewer_velocity(&self, Parameters(p): Parameters<GetReviewerVelocityParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         tool_call!(self, "get_reviewer_velocity",
-            tools::merge_requests::get_reviewer_velocity(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.days.unwrap_or(14)).await
+            tools::merge_requests::get_reviewer_velocity(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.days.unwrap_or(14), p.summary_only.unwrap_or(false)).await
         )
     }
 
@@ -357,7 +357,7 @@ impl GlMcpServer {
     async fn get_review_load(&self, Parameters(p): Parameters<GetReviewLoadParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         tool_call!(self, "get_review_load",
-            tools::merge_requests::get_review_load(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.days.unwrap_or(14)).await
+            tools::merge_requests::get_review_load(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.days.unwrap_or(14), p.summary_only.unwrap_or(false)).await
         )
     }
 
@@ -365,7 +365,7 @@ impl GlMcpServer {
     async fn get_mr_size_trend(&self, Parameters(p): Parameters<GetMrSizeTrendParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, "")?;
         tool_call!(self, "get_mr_size_trend",
-            tools::merge_requests::get_mr_size_trend(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.days.unwrap_or(30)).await
+            tools::merge_requests::get_mr_size_trend(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.days.unwrap_or(30), p.summary_only.unwrap_or(false)).await
         )
     }
 
@@ -445,7 +445,7 @@ impl GlMcpServer {
     async fn get_mr_discussions(&self, Parameters(p): Parameters<GetMrDiscussionsParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
         tool_call!(self, "get_mr_discussions",
-            tools::merge_requests::get_mr_discussions(client, &p.project_id, p.mr_iid).await
+            tools::merge_requests::get_mr_discussions(client, &p.project_id, p.mr_iid, p.summary_only.unwrap_or(false)).await
         )
     }
 
@@ -589,7 +589,7 @@ impl GlMcpServer {
     async fn get_project_events(&self, Parameters(p): Parameters<GetProjectEventsParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
         tool_call!(self, "get_project_events",
-            tools::projects::get_project_events(client, &p.project_id, p.action.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
+            tools::projects::get_project_events(client, &p.project_id, p.action.as_deref().unwrap_or(""), p.per_page.unwrap_or(20), p.summary_only.unwrap_or(false)).await
         )
     }
 
@@ -625,7 +625,7 @@ impl GlMcpServer {
     async fn get_code_hotspots(&self, Parameters(p): Parameters<GetCodeHotspotsParams>) -> Result<CallToolResult, McpError> {
         let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
         tool_call!(self, "get_code_hotspots",
-            tools::commits::get_code_hotspots(client, &p.project_id, p.days.unwrap_or(30), p.branch.as_deref().unwrap_or("")).await
+            tools::commits::get_code_hotspots(client, &p.project_id, p.days.unwrap_or(30), p.branch.as_deref().unwrap_or(""), p.summary_only.unwrap_or(false)).await
         )
     }
 
@@ -652,7 +652,7 @@ impl GlMcpServer {
         let raw_usernames: Vec<String> = p.usernames.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
         let usernames: Vec<&str> = raw_usernames.iter().map(|s| s.as_str()).collect();
         tool_call!(self, "get_team_timezone",
-            tools::commits::get_team_timezone(client, &usernames, p.days.unwrap_or(14)).await
+            tools::commits::get_team_timezone(client, &usernames, p.days.unwrap_or(14), p.summary_only.unwrap_or(false)).await
         )
     }
 
