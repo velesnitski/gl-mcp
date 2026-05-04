@@ -901,6 +901,8 @@ pub struct GetMrDiscussionsParams {
     pub project_id: String,
     #[schemars(description = "Merge request IID (the ! number)")]
     pub mr_iid: u64,
+    #[schemars(description = "Return compact one-line summary (~5x smaller). Use first to scan.")]
+    pub summary_only: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }
@@ -916,6 +918,8 @@ pub struct GetProjectEventsParams {
     #[schemars(description = "Max results (default: 20)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub per_page: Option<u32>,
+    #[schemars(description = "Return compact one-line summary (~5x smaller). Use first to scan.")]
+    pub summary_only: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }
@@ -980,6 +984,8 @@ pub struct GetCodeHotspotsParams {
     pub days: Option<u32>,
     #[schemars(description = "Branch name (default: default branch)")]
     pub branch: Option<String>,
+    #[schemars(description = "Return compact one-line summary (~5x smaller). Use first to scan.")]
+    pub summary_only: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }
@@ -1051,6 +1057,8 @@ pub struct GetReviewerVelocityParams {
     #[schemars(description = "Number of days to analyze (default: 14)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub days: Option<u32>,
+    #[schemars(description = "Return compact one-line summary (~5x smaller). Use first to scan.")]
+    pub summary_only: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }
@@ -1064,6 +1072,8 @@ pub struct GetReviewLoadParams {
     #[schemars(description = "Number of days to analyze (default: 14)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub days: Option<u32>,
+    #[schemars(description = "Return compact one-line summary (~5x smaller). Use first to scan.")]
+    pub summary_only: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }
@@ -1077,6 +1087,8 @@ pub struct GetMrSizeTrendParams {
     #[schemars(description = "Number of days to analyze (default: 30)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub days: Option<u32>,
+    #[schemars(description = "Return compact one-line summary (~5x smaller). Use first to scan.")]
+    pub summary_only: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }
@@ -1088,6 +1100,8 @@ pub struct GetTeamTimezoneParams {
     #[schemars(description = "Number of days to analyze (default: 14)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub days: Option<u32>,
+    #[schemars(description = "Return compact one-line summary (~5x smaller). Use first to scan.")]
+    pub summary_only: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }
