@@ -348,6 +348,7 @@ pub async fn get_project_events(
     project_id: &str,
     action: &str,
     per_page: u32,
+    summary_only: bool,
 ) -> Result<String> {
     let per_page_str = per_page.to_string();
     let path = format!(
@@ -366,6 +367,33 @@ pub async fn get_project_events(
 
     if events.is_empty() {
         return Ok("No events found.".to_string());
+    }
+
+    if summary_only {
+        use std::collections::BTreeSet;
+        let total = events.len();
+        let mut pushes = 0u32;
+        let mut mrs = 0u32;
+        let mut comments = 0u32;
+        let mut authors: BTreeSet<String> = BTreeSet::new();
+        for e in &events {
+            let action_name = e["action_name"].as_str().unwrap_or("");
+            let target_type = e["target_type"].as_str().unwrap_or("");
+            if e["push_data"].is_object() || action_name.contains("pushed") {
+                pushes += 1;
+            } else if target_type == "MergeRequest" || action_name.contains("merge") {
+                mrs += 1;
+            } else if target_type == "Note" || target_type == "DiffNote" || target_type == "DiscussionNote" || action_name.contains("comment") {
+                comments += 1;
+            }
+            if let Some(a) = e["author"]["username"].as_str() {
+                authors.insert(a.to_string());
+            }
+        }
+        return Ok(format!(
+            "{project_id}: {total} events ({pushes} pushes, {mrs} MRs, {comments} comments) by {} authors",
+            authors.len()
+        ));
     }
 
     let mut lines = vec![format!("**Events: {}**\n", events.len())];
