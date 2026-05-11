@@ -146,15 +146,45 @@ fn add_sentry_breadcrumb(tool: &str, duration_ms: u128, status: &str, error: Opt
         ..Default::default()
     });
 
-    // Capture errors as Sentry events
+    // Capture errors as Sentry events — but only actionable ones
     if status == "error" {
         if let Some(err) = error {
-            sentry::capture_message(
-                &format!("Tool error: {tool}: {err}"),
-                sentry::Level::Error,
-            );
+            if is_actionable_error(err) {
+                sentry::capture_message(
+                    &format!("Tool error: {tool}: {err}"),
+                    sentry::Level::Error,
+                );
+            }
         }
     }
+}
+
+/// Returns true if the error is worth alerting on.
+/// Filters out expected user-side errors (404, 401, 403, validation errors, not-found-by-name).
+fn is_actionable_error(err: &str) -> bool {
+    // GitLab API client/auth errors — user issue, not code bug
+    let user_errors = [
+        "404 Not Found",
+        "404 Project Not Found",
+        "404 User Not Found",
+        "401 Unauthorized",
+        "403 Forbidden",
+        "Not found:",
+        "User not found",
+        "Unknown instance:",
+        "User has no ID",
+        "No commits in MR",
+        "No changes found",
+        "No activity",
+    ];
+    if user_errors.iter().any(|p| err.contains(p)) {
+        return false;
+    }
+    // 4xx codes generally are user errors except 408 (timeout) and 429 (rate limit — we retry)
+    if err.contains("GitLab API error (4") && !err.contains("(408") && !err.contains("(429") {
+        return false;
+    }
+    true
 }
 
 
@@ -253,5 +283,25 @@ mod tests {
         let input = "private-token abcdefghijklmnopqrstuvwxyz1234";
         let result = scrub_tokens(input);
         assert_eq!(result, "[REDACTED]");
+    }
+
+    #[test]
+    fn test_is_actionable_error() {
+        // User errors — should NOT be captured
+        assert!(!is_actionable_error("GitLab API error (404 Not Found): \"404 Project Not Found\""));
+        assert!(!is_actionable_error("GitLab API error (401 Unauthorized)"));
+        assert!(!is_actionable_error("GitLab API error (403 Forbidden)"));
+        assert!(!is_actionable_error("Not found: User @foo"));
+        assert!(!is_actionable_error("Unknown instance: production"));
+
+        // Real errors — should be captured
+        assert!(is_actionable_error("GitLab API error (500 Internal Server Error)"));
+        assert!(is_actionable_error("GitLab API error (502 Bad Gateway)"));
+        assert!(is_actionable_error("HTTP error: connection timeout"));
+        assert!(is_actionable_error("JSON parse error: invalid syntax"));
+
+        // 408 timeout and 429 rate limit are still captured
+        assert!(is_actionable_error("GitLab API error (408 Request Timeout)"));
+        assert!(is_actionable_error("GitLab API error (429 Too Many Requests)"));
     }
 }
