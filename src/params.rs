@@ -973,6 +973,105 @@ pub struct GetCiVariablesParams {
     pub instance: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetCiVariableParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Variable key (uppercase letters, digits, underscores)")]
+    pub key: String,
+    #[schemars(description = "Variable value")]
+    pub value: String,
+    #[schemars(description = "Protected variable: only exposed to protected branches/tags (default: false)")]
+    pub protected: Option<bool>,
+    #[schemars(description = "Masked variable: hidden in job logs (default: false)")]
+    pub masked: Option<bool>,
+    #[schemars(description = "Environment scope (default: '*' for all environments)")]
+    pub environment_scope: Option<String>,
+    #[schemars(description = "Variable type: 'env_var' or 'file' (default: 'env_var')")]
+    pub variable_type: Option<String>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateCiVariableParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Variable key to update")]
+    pub key: String,
+    #[schemars(description = "New variable value")]
+    pub value: String,
+    #[schemars(description = "Protected variable: only exposed to protected branches/tags")]
+    pub protected: Option<bool>,
+    #[schemars(description = "Masked variable: hidden in job logs")]
+    pub masked: Option<bool>,
+    #[schemars(description = "Environment scope (e.g., '*', 'production')")]
+    pub environment_scope: Option<String>,
+    #[schemars(description = "Variable type: 'env_var' or 'file'")]
+    pub variable_type: Option<String>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DeleteCiVariableParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Variable key to delete")]
+    pub key: String,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+// ─── Create Project ───
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateProjectParams {
+    #[schemars(description = "Project name")]
+    pub name: String,
+    #[schemars(description = "Project path/slug (default: derived from name)")]
+    pub path: Option<String>,
+    #[schemars(description = "Namespace (group) ID for project placement (numeric)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    pub namespace_id: Option<u32>,
+    #[schemars(description = "Visibility: 'private', 'internal', or 'public' (default: 'private')")]
+    pub visibility: Option<String>,
+    #[schemars(description = "Default branch name (default: 'main')")]
+    pub default_branch: Option<String>,
+    #[schemars(description = "Project description")]
+    pub description: Option<String>,
+    #[schemars(description = "Initialize repository with a README (default: true)")]
+    pub initialize_with_readme: Option<bool>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+// ─── Deploy Tokens ───
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateDeployTokenParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Deploy token name")]
+    pub name: String,
+    #[schemars(description = "Comma-separated scopes: read_repository, read_registry, write_registry, read_package_registry, write_package_registry")]
+    pub scopes: String,
+    #[schemars(description = "Expiration as ISO date (e.g., '2026-12-31T23:59:59Z'). Optional, omit for no expiry.")]
+    pub expires_at: Option<String>,
+    #[schemars(description = "Custom username for the token (optional)")]
+    pub username: Option<String>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListDeployTokensParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
 // ─── Code Hotspots ───
 
 #[derive(Debug, Deserialize, JsonSchema)]
