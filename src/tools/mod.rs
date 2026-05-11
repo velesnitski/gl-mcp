@@ -28,6 +28,11 @@ pub const WRITE_TOOLS: &[&str] = &[
     "delete_branch",
     "update_branch_protection",
     "revert_commit",
+    "create_project",
+    "set_ci_variable",
+    "update_ci_variable",
+    "delete_ci_variable",
+    "create_deploy_token",
 ];
 
 /// Check if a tool should be available given config.

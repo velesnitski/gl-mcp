@@ -561,6 +561,166 @@ pub async fn update_branch_protection(
     ))
 }
 
+/// Create a new GitLab project.
+#[allow(clippy::too_many_arguments)]
+pub async fn create_project(
+    client: &GitLabClient,
+    name: &str,
+    path: &str,
+    namespace_id: Option<u32>,
+    visibility: &str,
+    default_branch: &str,
+    description: &str,
+    initialize_with_readme: bool,
+) -> Result<String> {
+    let effective_path = if path.is_empty() { name } else { path };
+
+    let mut body = serde_json::json!({
+        "name": name,
+        "path": effective_path,
+        "visibility": visibility,
+        "default_branch": default_branch,
+        "initialize_with_readme": initialize_with_readme,
+    });
+    if let Some(ns) = namespace_id {
+        body["namespace_id"] = serde_json::json!(ns);
+    }
+    if !description.is_empty() {
+        body["description"] = serde_json::json!(description);
+    }
+
+    let p: Value = client.post("/projects", &body).await?;
+
+    let id = p["id"].as_u64().unwrap_or(0);
+    let full_path = p["path_with_namespace"].as_str().unwrap_or("?");
+    let web_url = p["web_url"].as_str().unwrap_or("");
+    let default_branch_resp = p["default_branch"].as_str().unwrap_or(default_branch);
+    let visibility_resp = p["visibility"].as_str().unwrap_or(visibility);
+
+    let lines = vec![
+        format!("Project **{full_path}** created."),
+        String::new(),
+        format!("**ID:** {id}"),
+        format!("**Path:** {full_path}"),
+        format!("**Visibility:** {visibility_resp}"),
+        format!("**Default branch:** {default_branch_resp}"),
+        format!("**URL:** {web_url}"),
+    ];
+
+    Ok(lines.join("\n"))
+}
+
+/// Create a new deploy token for a project.
+pub async fn create_deploy_token(
+    client: &GitLabClient,
+    project_id: &str,
+    name: &str,
+    scopes: &[&str],
+    expires_at: &str,
+    username: &str,
+) -> Result<String> {
+    let valid_scopes = [
+        "read_repository",
+        "read_registry",
+        "write_registry",
+        "read_package_registry",
+        "write_package_registry",
+    ];
+    for s in scopes {
+        if !valid_scopes.contains(s) {
+            return Ok(format!(
+                "**Error:** Invalid scope '{s}'. Valid scopes: {}",
+                valid_scopes.join(", ")
+            ));
+        }
+    }
+
+    if scopes.is_empty() {
+        return Ok("**Error:** At least one scope is required.".to_string());
+    }
+
+    let path = format!(
+        "/projects/{}/deploy_tokens",
+        urlencoding::encode(project_id)
+    );
+
+    let mut body = serde_json::json!({
+        "name": name,
+        "scopes": scopes,
+    });
+    if !expires_at.is_empty() {
+        body["expires_at"] = serde_json::json!(expires_at);
+    }
+    if !username.is_empty() {
+        body["username"] = serde_json::json!(username);
+    }
+
+    let t: Value = client.post(&path, &body).await?;
+
+    let id = t["id"].as_u64().unwrap_or(0);
+    let token_name = t["name"].as_str().unwrap_or(name);
+    let token_username = t["username"].as_str().unwrap_or("?");
+    let token_value = t["token"].as_str().unwrap_or("");
+    let token_expires = t["expires_at"].as_str().unwrap_or("never");
+    let token_scopes: Vec<&str> = t["scopes"]
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+
+    let lines = vec![
+        format!("Deploy token **{token_name}** created for **{project_id}**."),
+        String::new(),
+        format!("**ID:** {id}"),
+        format!("**Username:** {token_username}"),
+        format!("**Scopes:** {}", token_scopes.join(", ")),
+        format!("**Expires:** {token_expires}"),
+        String::new(),
+        "**Token (shown only once — save it now):**".to_string(),
+        format!("```\n{token_value}\n```"),
+    ];
+
+    Ok(lines.join("\n"))
+}
+
+/// List deploy tokens for a project (token values are never returned by GitLab).
+pub async fn list_deploy_tokens(
+    client: &GitLabClient,
+    project_id: &str,
+) -> Result<String> {
+    let path = format!(
+        "/projects/{}/deploy_tokens",
+        urlencoding::encode(project_id)
+    );
+
+    let tokens: Vec<Value> = client.get(&path, &[("per_page", "100")]).await?;
+
+    if tokens.is_empty() {
+        return Ok("No deploy tokens found.".to_string());
+    }
+
+    let mut lines = vec![format!("**Deploy Tokens: {}**\n", tokens.len())];
+    lines.push("| Name | Username | Scopes | Expires | Revoked |".to_string());
+    lines.push("|------|----------|--------|---------|---------|".to_string());
+
+    for t in &tokens {
+        let name = t["name"].as_str().unwrap_or("?");
+        let username = t["username"].as_str().unwrap_or("?");
+        let scopes: Vec<&str> = t["scopes"]
+            .as_array()
+            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+        let expires = t["expires_at"].as_str().unwrap_or("never");
+        let revoked = if t["revoked"].as_bool().unwrap_or(false) { "yes" } else { "no" };
+
+        lines.push(format!(
+            "| {name} | {username} | {} | {expires} | {revoked} |",
+            scopes.join(", ")
+        ));
+    }
+
+    Ok(lines.join("\n"))
+}
+
 /// Find stale branches: merged but not deleted, or inactive for N days.
 pub async fn get_stale_branches(
     client: &GitLabClient,
