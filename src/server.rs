@@ -182,6 +182,50 @@ impl GlMcpServer {
         )
     }
 
+    #[tool(description = "Create a new GitLab project. Optionally place in a group via namespace_id. Returns project URL, ID, and default branch.")]
+    async fn create_project(&self, Parameters(p): Parameters<CreateProjectParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "create_project");
+        let client = resolve_client(&self.resolver, &p.instance, "")?;
+        tool_call!(self, "create_project",
+            tools::projects::create_project(
+                client,
+                &p.name,
+                p.path.as_deref().unwrap_or(""),
+                p.namespace_id,
+                p.visibility.as_deref().unwrap_or("private"),
+                p.default_branch.as_deref().unwrap_or("main"),
+                p.description.as_deref().unwrap_or(""),
+                p.initialize_with_readme.unwrap_or(true),
+            ).await
+        )
+    }
+
+    #[tool(description = "Create a deploy token for a project. Returns the token value once at creation — save it immediately. Scopes: read_repository, read_registry, write_registry, read_package_registry, write_package_registry.")]
+    async fn create_deploy_token(&self, Parameters(p): Parameters<CreateDeployTokenParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "create_deploy_token");
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        let raw_scopes: Vec<String> = p.scopes.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        let scopes: Vec<&str> = raw_scopes.iter().map(|s| s.as_str()).collect();
+        tool_call!(self, "create_deploy_token",
+            tools::projects::create_deploy_token(
+                client,
+                &p.project_id,
+                &p.name,
+                &scopes,
+                p.expires_at.as_deref().unwrap_or(""),
+                p.username.as_deref().unwrap_or(""),
+            ).await
+        )
+    }
+
+    #[tool(description = "List deploy tokens for a project. Token values are never returned by GitLab — only metadata (name, username, scopes, expiration, revoked status).")]
+    async fn list_deploy_tokens(&self, Parameters(p): Parameters<ListDeployTokensParams>) -> Result<CallToolResult, McpError> {
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "list_deploy_tokens",
+            tools::projects::list_deploy_tokens(client, &p.project_id).await
+        )
+    }
+
     // ─── Issues ───
 
     #[tool(description = "Search GitLab issues across all projects, within a specific project, or within a group")]
@@ -506,6 +550,51 @@ impl GlMcpServer {
         let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
         tool_call!(self, "get_ci_variables",
             tools::pipelines::get_ci_variables(client, &p.project_id).await
+        )
+    }
+
+    #[tool(description = "Create a CI/CD variable for a project. Confirmation never includes the value. Mark sensitive values masked=true and protected=true.")]
+    async fn set_ci_variable(&self, Parameters(p): Parameters<SetCiVariableParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "set_ci_variable");
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "set_ci_variable",
+            tools::pipelines::set_ci_variable(
+                client,
+                &p.project_id,
+                &p.key,
+                &p.value,
+                p.protected.unwrap_or(false),
+                p.masked.unwrap_or(false),
+                p.environment_scope.as_deref().unwrap_or("*"),
+                p.variable_type.as_deref().unwrap_or("env_var"),
+            ).await
+        )
+    }
+
+    #[tool(description = "Update an existing CI/CD variable's value and flags. Confirmation never includes the value.")]
+    async fn update_ci_variable(&self, Parameters(p): Parameters<UpdateCiVariableParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "update_ci_variable");
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "update_ci_variable",
+            tools::pipelines::update_ci_variable(
+                client,
+                &p.project_id,
+                &p.key,
+                &p.value,
+                p.protected,
+                p.masked,
+                p.environment_scope.as_deref(),
+                p.variable_type.as_deref(),
+            ).await
+        )
+    }
+
+    #[tool(description = "Delete a CI/CD variable from a project.")]
+    async fn delete_ci_variable(&self, Parameters(p): Parameters<DeleteCiVariableParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "delete_ci_variable");
+        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
+        tool_call!(self, "delete_ci_variable",
+            tools::pipelines::delete_ci_variable(client, &p.project_id, &p.key).await
         )
     }
 

@@ -287,6 +287,113 @@ pub async fn cancel_pipeline(
     Ok(format!("Pipeline #{pipeline_id} canceled. **Status:** {status}"))
 }
 
+/// Create a new CI/CD variable for a project. NEVER echoes the value back.
+#[allow(clippy::too_many_arguments)]
+pub async fn set_ci_variable(
+    client: &GitLabClient,
+    project_id: &str,
+    key: &str,
+    value: &str,
+    protected: bool,
+    masked: bool,
+    environment_scope: &str,
+    variable_type: &str,
+) -> Result<String> {
+    let valid_types = ["env_var", "file"];
+    if !valid_types.contains(&variable_type) {
+        return Ok(format!(
+            "**Error:** Invalid variable_type '{variable_type}'. Use 'env_var' or 'file'."
+        ));
+    }
+
+    let path = format!(
+        "/projects/{}/variables",
+        urlencoding::encode(project_id)
+    );
+
+    let body = serde_json::json!({
+        "key": key,
+        "value": value,
+        "protected": protected,
+        "masked": masked,
+        "environment_scope": environment_scope,
+        "variable_type": variable_type,
+    });
+
+    let _: Value = client.post(&path, &body).await?;
+
+    Ok(format!(
+        "CI variable `{key}` set on **{project_id}** (masked: {masked}, protected: {protected}, scope: {environment_scope}, type: {variable_type}). Value not shown."
+    ))
+}
+
+/// Update an existing CI/CD variable. NEVER echoes the value back.
+#[allow(clippy::too_many_arguments)]
+pub async fn update_ci_variable(
+    client: &GitLabClient,
+    project_id: &str,
+    key: &str,
+    value: &str,
+    protected: Option<bool>,
+    masked: Option<bool>,
+    environment_scope: Option<&str>,
+    variable_type: Option<&str>,
+) -> Result<String> {
+    if let Some(vt) = variable_type {
+        let valid_types = ["env_var", "file"];
+        if !valid_types.contains(&vt) {
+            return Ok(format!(
+                "**Error:** Invalid variable_type '{vt}'. Use 'env_var' or 'file'."
+            ));
+        }
+    }
+
+    let path = format!(
+        "/projects/{}/variables/{}",
+        urlencoding::encode(project_id),
+        urlencoding::encode(key)
+    );
+
+    let mut body = serde_json::json!({ "value": value });
+    if let Some(p) = protected {
+        body["protected"] = serde_json::json!(p);
+    }
+    if let Some(m) = masked {
+        body["masked"] = serde_json::json!(m);
+    }
+    if let Some(env) = environment_scope {
+        body["environment_scope"] = serde_json::json!(env);
+    }
+    if let Some(vt) = variable_type {
+        body["variable_type"] = serde_json::json!(vt);
+    }
+
+    let _: Value = client.put(&path, &body).await?;
+
+    Ok(format!(
+        "CI variable `{key}` updated on **{project_id}**. Value not shown."
+    ))
+}
+
+/// Delete a CI/CD variable.
+pub async fn delete_ci_variable(
+    client: &GitLabClient,
+    project_id: &str,
+    key: &str,
+) -> Result<String> {
+    let path = format!(
+        "/projects/{}/variables/{}",
+        urlencoding::encode(project_id),
+        urlencoding::encode(key)
+    );
+
+    client.delete(&path).await?;
+
+    Ok(format!(
+        "CI variable `{key}` deleted from **{project_id}**."
+    ))
+}
+
 /// Get CI/CD variables for a project (keys and metadata only, never values).
 pub async fn get_ci_variables(
     client: &GitLabClient,
