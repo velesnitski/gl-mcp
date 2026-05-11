@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-05-04
+
+### Added
+- `create_project` — create new GitLab project with namespace/visibility/branch options (write)
+- `set_ci_variable` / `update_ci_variable` / `delete_ci_variable` — full CRUD for CI/CD variables (write)
+- `create_deploy_token` — create deploy token with custom scopes (write)
+- `list_deploy_tokens` — list existing deploy tokens (metadata only)
+- `summary_only` parameter on 7 more analytics tools: get_mr_discussions, get_project_events, get_reviewer_velocity, get_review_load, get_mr_size_trend, get_team_timezone, get_code_hotspots
+- Sentry noise filter: skip 4xx user errors (404, 401, 403), keep 5xx and network errors
+- 2 new unit tests for `is_actionable_error` filter
+
+92 tools total.
+
 ## [0.13.0] - 2026-04-25
 
 ### Added
