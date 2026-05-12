@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-05-12
+
+### Added
+- Cargo features `sentry` and `http` (both default on) — slim builds via `--no-default-features` are 7.1 MB vs 9.8 MB default
+- `simple_tool!` macro collapses 86 of 92 tool body boilerplate
+- `mr_project_path` helper using `url::Url` parsing — replaces fragile `references["full"]` split
+
+### Changed
+- `save_team` now properly respects `GITLAB_READ_ONLY` mode
+- `analyze_project` reuses `compute_file_metrics` (removed 120 lines of duplication)
+- `get_code_hotspots` and `get_group_activity` now fetch concurrently (10× latency improvement)
+- Sentry events filtered: 4xx user errors (404, 401, 403) skipped, only 5xx and network errors captured
+
+### Fixed
+- Critical: `save_team` was missing `write_guard!` — read-only mode is now enforced
+- `get_code_hotspots` no longer times out on busy repos (was sequential N HTTP calls)
+- Commit message validation extracted to shared helper — no more drift between lint.rs and reports.rs
+
 ## [0.14.0] - 2026-05-04
 
 ### Added
