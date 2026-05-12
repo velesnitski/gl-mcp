@@ -5,6 +5,24 @@ use crate::error::Result;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+/// Extract the project path (e.g. `group/subgroup/project`) from an MR JSON object.
+///
+/// Prefers `web_url` (always present, format is stable) over `references.full`
+/// which uses a `group/project!iid` notation that silently corrupts on malformed
+/// input. Returns `None` if the URL cannot be parsed or does not look like an MR URL.
+fn mr_project_path(mr: &Value) -> Option<String> {
+    let url = mr["web_url"].as_str()?;
+    let parsed = url::Url::parse(url).ok()?;
+    let path = parsed.path();
+    // Path format: /group/subgroup/project/-/merge_requests/42
+    let idx = path.find("/-/merge_requests/")?;
+    let project_path = path[..idx].strip_prefix('/').unwrap_or(&path[..idx]);
+    if project_path.is_empty() {
+        return None;
+    }
+    Some(project_path.to_string())
+}
+
 /// List merge requests.
 pub async fn list_merge_requests(
     client: &GitLabClient,
@@ -500,17 +518,12 @@ pub async fn get_mr_turnaround(
         let merged_dt = chrono::DateTime::parse_from_rfc3339(merged).ok();
 
         if let (Some(c), Some(m)) = (created_dt, merged_dt) {
+            let Some(project) = mr_project_path(mr) else { continue };
             let hours = (m - c).num_minutes() as f64 / 60.0;
             let iid = mr["iid"].as_u64().unwrap_or(0);
             let title = mr["title"].as_str().unwrap_or("?").to_string();
             let author = mr["author"]["username"].as_str().unwrap_or("?").to_string();
             let merged_by = mr["merged_by"]["username"].as_str().unwrap_or("?").to_string();
-            let project = mr["references"]["full"].as_str()
-                .unwrap_or("")
-                .split('!')
-                .next()
-                .unwrap_or("?")
-                .to_string();
 
             stats.push(MrStats { iid, title, author, merged_by, hours_to_merge: hours, project });
         }
@@ -617,6 +630,7 @@ pub async fn get_mr_dashboard(
     let mut project_counts: BTreeMap<String, u32> = BTreeMap::new();
 
     for mr in &mrs {
+        let Some(project) = mr_project_path(mr) else { continue };
         let created = mr["created_at"].as_str().unwrap_or("");
         let age_hours = chrono::DateTime::parse_from_rfc3339(created)
             .ok()
@@ -624,12 +638,6 @@ pub async fn get_mr_dashboard(
             .unwrap_or(0.0);
 
         let author = mr["author"]["username"].as_str().unwrap_or("?").to_string();
-        let project = mr["references"]["full"].as_str()
-            .unwrap_or("")
-            .split('!')
-            .next()
-            .unwrap_or("?")
-            .to_string();
         let draft = mr["draft"].as_bool().unwrap_or(false);
         let iid = mr["iid"].as_u64().unwrap_or(0);
         let title = mr["title"].as_str().unwrap_or("?").to_string();
@@ -751,16 +759,11 @@ pub async fn get_mr_review_depth(
     let mut infos: Vec<ReviewInfo> = Vec::new();
 
     for mr in &mrs {
+        let Some(project) = mr_project_path(mr) else { continue };
         let iid = mr["iid"].as_u64().unwrap_or(0);
         let user_notes = mr["user_notes_count"].as_u64().unwrap_or(0);
         let title = mr["title"].as_str().unwrap_or("?").to_string();
         let author = mr["author"]["username"].as_str().unwrap_or("?").to_string();
-        let project = mr["references"]["full"].as_str()
-            .unwrap_or("")
-            .split('!')
-            .next()
-            .unwrap_or("?")
-            .to_string();
 
         // Fetch discussions count from API
         let proj_path = mr["source_project_id"].as_u64().unwrap_or(0);
@@ -964,12 +967,11 @@ pub async fn get_mr_timeline(
         let merged = chrono::DateTime::parse_from_rfc3339(merged_str).ok();
         let (Some(created_dt), Some(merged_dt)) = (created, merged) else { continue };
 
+        let Some(project) = mr_project_path(mr) else { continue };
         let iid = mr["iid"].as_u64().unwrap_or(0);
         let title = mr["title"].as_str().unwrap_or("?").to_string();
         let author = mr["author"]["username"].as_str().unwrap_or("?").to_string();
         let project_id_num = mr["source_project_id"].as_u64().unwrap_or(0);
-        let project = mr["references"]["full"].as_str()
-            .unwrap_or("").split('!').next().unwrap_or("?").to_string();
 
         let total_hours = (merged_dt - created_dt).num_minutes() as f64 / 60.0;
 
@@ -1395,14 +1397,9 @@ pub async fn get_reviewer_velocity(
         let created = mr["created_at"].as_str().unwrap_or("").to_string();
         let created_dt = chrono::DateTime::parse_from_rfc3339(&created).ok()?;
 
-        let project_path = mr["references"]["full"].as_str()
-            .unwrap_or("")
-            .split('!')
-            .next()
-            .unwrap_or("")
-            .to_string();
+        let project_path = mr_project_path(mr)?;
         let mr_iid = mr["iid"].as_u64().unwrap_or(0);
-        if project_path.is_empty() || mr_iid == 0 {
+        if mr_iid == 0 {
             return None;
         }
 
@@ -1693,14 +1690,9 @@ pub async fn get_mr_size_trend(
         let merged_at = mr["merged_at"].as_str().unwrap_or("").to_string();
         let merged_dt = chrono::DateTime::parse_from_rfc3339(&merged_at).ok()?;
 
-        let project_path = mr["references"]["full"].as_str()
-            .unwrap_or("")
-            .split('!')
-            .next()
-            .unwrap_or("")
-            .to_string();
+        let project_path = mr_project_path(mr)?;
         let mr_iid = mr["iid"].as_u64().unwrap_or(0);
-        if project_path.is_empty() || mr_iid == 0 {
+        if mr_iid == 0 {
             return None;
         }
 

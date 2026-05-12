@@ -14,6 +14,7 @@ use std::time::Instant;
 use uuid::Uuid;
 
 /// Sentry guard — must be held alive for the lifetime of the process.
+#[cfg(feature = "sentry")]
 static SENTRY_GUARD: OnceLock<Option<sentry::ClientInitGuard>> = OnceLock::new();
 
 /// Persistent instance ID (8-char UUID).
@@ -69,6 +70,9 @@ pub fn setup_logging() {
 }
 
 /// Initialize Sentry if SENTRY_DSN is set.
+///
+/// When compiled without the `sentry` feature, this is a no-op.
+#[cfg(feature = "sentry")]
 pub fn setup_sentry() {
     SENTRY_GUARD.get_or_init(|| {
         let dsn = std::env::var("SENTRY_DSN").ok()?;
@@ -111,6 +115,10 @@ pub fn setup_sentry() {
     });
 }
 
+/// No-op when compiled without the `sentry` feature.
+#[cfg(not(feature = "sentry"))]
+pub fn setup_sentry() {}
+
 /// Scrub GitLab tokens and other secrets from strings.
 pub(crate) fn scrub_tokens(s: &str) -> String {
     static RE: std::sync::LazyLock<regex::Regex> =
@@ -121,6 +129,7 @@ pub(crate) fn scrub_tokens(s: &str) -> String {
 }
 
 /// Add a Sentry breadcrumb for a tool call.
+#[cfg(feature = "sentry")]
 fn add_sentry_breadcrumb(tool: &str, duration_ms: u128, status: &str, error: Option<&str>) {
     if sentry::Hub::current().client().is_none() {
         return;
@@ -159,8 +168,13 @@ fn add_sentry_breadcrumb(tool: &str, duration_ms: u128, status: &str, error: Opt
     }
 }
 
+/// No-op when compiled without the `sentry` feature.
+#[cfg(not(feature = "sentry"))]
+fn add_sentry_breadcrumb(_tool: &str, _duration_ms: u128, _status: &str, _error: Option<&str>) {}
+
 /// Returns true if the error is worth alerting on.
 /// Filters out expected user-side errors (404, 401, 403, validation errors, not-found-by-name).
+#[cfg(feature = "sentry")]
 fn is_actionable_error(err: &str) -> bool {
     // GitLab API client/auth errors — user issue, not code bug
     let user_errors = [
@@ -285,6 +299,7 @@ mod tests {
         assert_eq!(result, "[REDACTED]");
     }
 
+    #[cfg(feature = "sentry")]
     #[test]
     fn test_is_actionable_error() {
         // User errors — should NOT be captured
