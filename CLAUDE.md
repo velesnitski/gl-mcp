@@ -1,6 +1,6 @@
 # gl-mcp
 
-GitLab MCP server. Rust, single binary, 66 tools.
+GitLab MCP server. Rust, single binary, 92 tools.
 
 ## Build & Test
 
@@ -16,7 +16,7 @@ src/
 ├── main.rs          # Entry point: stdio (default) or HTTP transport
 ├── lib.rs           # Library crate (for tests)
 ├── server.rs        # rmcp tool registration, tool_call! + write_guard! macros
-├── params.rs        # All 66 parameter structs (serde + schemars)
+├── params.rs        # All 92 parameter structs (serde + schemars)
 ├── config.rs        # Env var config (GITLAB_URL, GITLAB_TOKEN, etc.)
 ├── client.rs        # GitLab API HTTP client (reqwest, caching, retry, pagination)
 ├── resolver.rs      # Multi-instance resolution (domain auto-detect from URLs)
