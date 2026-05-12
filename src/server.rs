@@ -129,6 +129,25 @@ macro_rules! tool_call {
     }};
 }
 
+/// Collapses the standard tool body: resolve client + dispatch via `tool_call!`.
+///
+/// Usage:
+/// ```ignore
+/// simple_tool!(self, p, "tool_name", &p.project_id, |client|
+///     tools::projects::get_project(client, &p.project_id).await
+/// )
+/// ```
+///
+/// - `$id` is the identifier passed to `resolve_client` (used to auto-detect instance
+///   from URLs that contain a project/group path). Pass `""` when no identifier applies.
+/// - `$client` is the binding for the resolved `&GitLabClient` inside the body.
+macro_rules! simple_tool {
+    ($self:expr, $p:expr, $name:literal, $id:expr, |$client:ident| $body:expr) => {{
+        let $client = resolve_client(&$self.resolver, &$p.instance, $id)?;
+        tool_call!($self, $name, $body)
+    }};
+}
+
 // ─── Tool registration ───
 
 #[tool_router]
@@ -152,32 +171,28 @@ impl GlMcpServer {
 
     #[tool(description = "List GitLab projects accessible to the authenticated user")]
     async fn list_projects(&self, Parameters(p): Parameters<ListProjectsParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "list_projects",
+        simple_tool!(self, p, "list_projects", "", |client|
             tools::projects::list_projects(client, p.search.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
         )
     }
 
     #[tool(description = "Get detailed info about a GitLab project")]
     async fn get_project(&self, Parameters(p): Parameters<GetProjectParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "get_project",
+        simple_tool!(self, p, "get_project", &p.project_id, |client|
             tools::projects::get_project(client, &p.project_id).await
         )
     }
 
     #[tool(description = "List members of a GitLab project")]
     async fn list_members(&self, Parameters(p): Parameters<ListMembersParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "list_members",
+        simple_tool!(self, p, "list_members", "", |client|
             tools::projects::list_members(client, &p.project_id).await
         )
     }
 
     #[tool(description = "List all projects in a GitLab group (including subgroups)")]
     async fn list_group_projects(&self, Parameters(p): Parameters<ListGroupProjectsParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "list_group_projects",
+        simple_tool!(self, p, "list_group_projects", "", |client|
             tools::commits::list_group_projects(client, &p.group_path, p.per_page.unwrap_or(50)).await
         )
     }
@@ -185,8 +200,7 @@ impl GlMcpServer {
     #[tool(description = "Create a new GitLab project. Optionally place in a group via namespace_id. Returns project URL, ID, and default branch.")]
     async fn create_project(&self, Parameters(p): Parameters<CreateProjectParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "create_project");
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "create_project",
+        simple_tool!(self, p, "create_project", "", |client|
             tools::projects::create_project(
                 client,
                 &p.name,
@@ -203,10 +217,9 @@ impl GlMcpServer {
     #[tool(description = "Create a deploy token for a project. Returns the token value once at creation — save it immediately. Scopes: read_repository, read_registry, write_registry, read_package_registry, write_package_registry.")]
     async fn create_deploy_token(&self, Parameters(p): Parameters<CreateDeployTokenParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "create_deploy_token");
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
         let raw_scopes: Vec<String> = p.scopes.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
         let scopes: Vec<&str> = raw_scopes.iter().map(|s| s.as_str()).collect();
-        tool_call!(self, "create_deploy_token",
+        simple_tool!(self, p, "create_deploy_token", &p.project_id, |client|
             tools::projects::create_deploy_token(
                 client,
                 &p.project_id,
@@ -220,8 +233,7 @@ impl GlMcpServer {
 
     #[tool(description = "List deploy tokens for a project. Token values are never returned by GitLab — only metadata (name, username, scopes, expiration, revoked status).")]
     async fn list_deploy_tokens(&self, Parameters(p): Parameters<ListDeployTokensParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "list_deploy_tokens",
+        simple_tool!(self, p, "list_deploy_tokens", &p.project_id, |client|
             tools::projects::list_deploy_tokens(client, &p.project_id).await
         )
     }
@@ -230,16 +242,14 @@ impl GlMcpServer {
 
     #[tool(description = "Search GitLab issues across all projects, within a specific project, or within a group")]
     async fn search_issues(&self, Parameters(p): Parameters<SearchIssuesParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "search_issues",
+        simple_tool!(self, p, "search_issues", "", |client|
             tools::issues::search_issues(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.search.as_deref().unwrap_or(""), p.state.as_deref().unwrap_or("opened"), p.labels.as_deref().unwrap_or(""), p.assignee.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
         )
     }
 
     #[tool(description = "Get full details of a GitLab issue including description and comments")]
     async fn get_issue(&self, Parameters(p): Parameters<GetIssueParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "get_issue",
+        simple_tool!(self, p, "get_issue", "", |client|
             tools::issues::get_issue(client, &p.project_id, p.issue_iid, p.include_notes.unwrap_or(true)).await
         )
     }
@@ -247,8 +257,7 @@ impl GlMcpServer {
     #[tool(description = "Create a new issue in a GitLab project")]
     async fn create_issue(&self, Parameters(p): Parameters<CreateIssueParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "create_issue");
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "create_issue",
+        simple_tool!(self, p, "create_issue", "", |client|
             tools::issues::create_issue(client, &p.project_id, &p.title, p.description.as_deref().unwrap_or(""), p.labels.as_deref().unwrap_or(""), p.assignee.as_deref().unwrap_or(""), None).await
         )
     }
@@ -256,8 +265,7 @@ impl GlMcpServer {
     #[tool(description = "Update a GitLab issue: title, description, state, labels, assignee")]
     async fn update_issue(&self, Parameters(p): Parameters<UpdateIssueParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "update_issue");
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "update_issue",
+        simple_tool!(self, p, "update_issue", "", |client|
             tools::issues::update_issue(client, &p.project_id, p.issue_iid, p.title.as_deref(), p.description.as_deref(), p.state_event.as_deref(), p.labels.as_deref(), p.assignee.as_deref()).await
         )
     }
@@ -265,9 +273,8 @@ impl GlMcpServer {
     #[tool(description = "Add a comment (note) to an issue or merge request")]
     async fn add_note(&self, Parameters(p): Parameters<AddNoteParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "add_note");
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
         let note_type = p.note_type.as_deref().unwrap_or("issue");
-        tool_call!(self, "add_note",
+        simple_tool!(self, p, "add_note", "", |client|
             tools::issues::add_note(client, &p.project_id, p.iid, note_type, &p.body).await
         )
     }
@@ -276,8 +283,7 @@ impl GlMcpServer {
 
     #[tool(description = "List project labels with color, description, and open issue count")]
     async fn list_labels(&self, Parameters(p): Parameters<ListLabelsParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "list_labels",
+        simple_tool!(self, p, "list_labels", &p.project_id, |client|
             tools::issues::list_labels(client, &p.project_id).await
         )
     }
@@ -285,16 +291,14 @@ impl GlMcpServer {
     #[tool(description = "Create a new label in a project")]
     async fn create_label(&self, Parameters(p): Parameters<CreateLabelParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "create_label");
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "create_label",
+        simple_tool!(self, p, "create_label", &p.project_id, |client|
             tools::issues::create_label(client, &p.project_id, &p.name, &p.color, p.description.as_deref().unwrap_or("")).await
         )
     }
 
     #[tool(description = "Get project milestones with due dates and state")]
     async fn get_milestones(&self, Parameters(p): Parameters<GetMilestonesParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "get_milestones",
+        simple_tool!(self, p, "get_milestones", &p.project_id, |client|
             tools::issues::get_milestones(client, &p.project_id, p.state.as_deref().unwrap_or("all"), p.per_page.unwrap_or(20)).await
         )
     }
@@ -303,8 +307,7 @@ impl GlMcpServer {
 
     #[tool(description = "List merge requests. Filter by project, group, state, author, scope, created_after, opened_before.")]
     async fn list_merge_requests(&self, Parameters(p): Parameters<ListMergeRequestsParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "list_merge_requests",
+        simple_tool!(self, p, "list_merge_requests", "", |client|
             tools::merge_requests::list_merge_requests(client, p.project_id.as_deref().unwrap_or(""), p.state.as_deref().unwrap_or("opened"), p.author.as_deref().unwrap_or(""), p.scope.as_deref().unwrap_or("all"), p.created_after.as_deref().unwrap_or(""), p.opened_before.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.per_page.unwrap_or(20), p.summary_only.unwrap_or(false)).await
         )
     }
@@ -312,8 +315,7 @@ impl GlMcpServer {
     #[tool(description = "Create a merge request with smart defaults. Auto-generates title from branch name (e.g., 'feature/PROJ-123-add-auth' → 'PROJ-123: Add auth'), auto-fills description from commit list, validates source branch exists, checks for duplicate MRs. Returns MR URL + diff stats.")]
     async fn create_merge_request(&self, Parameters(p): Parameters<CreateMergeRequestParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "create_merge_request");
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "create_merge_request",
+        simple_tool!(self, p, "create_merge_request", &p.project_id, |client|
             tools::merge_requests::create_merge_request(
                 client,
                 &p.project_id,
@@ -333,82 +335,72 @@ impl GlMcpServer {
 
     #[tool(description = "Get full details of a merge request including pipeline status and comments")]
     async fn get_merge_request(&self, Parameters(p): Parameters<GetMergeRequestParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "get_merge_request",
+        simple_tool!(self, p, "get_merge_request", "", |client|
             tools::merge_requests::get_merge_request(client, &p.project_id, p.mr_iid, p.include_notes.unwrap_or(true)).await
         )
     }
 
     #[tool(description = "Get MR review turnaround stats: avg/median time to merge, slowest MRs, per-author breakdown.")]
     async fn get_mr_turnaround(&self, Parameters(p): Parameters<GetMrTurnaroundParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "get_mr_turnaround",
+        simple_tool!(self, p, "get_mr_turnaround", "", |client|
             tools::merge_requests::get_mr_turnaround(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.days.unwrap_or(7)).await
         )
     }
 
     #[tool(description = "Compact MR dashboard for a group: open count, avg age, reviewer bottlenecks, stale MRs.")]
     async fn get_mr_dashboard(&self, Parameters(p): Parameters<GetMrDashboardParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "get_mr_dashboard",
+        simple_tool!(self, p, "get_mr_dashboard", "", |client|
             tools::merge_requests::get_mr_dashboard(client, &p.group_id, p.summary_only.unwrap_or(false)).await
         )
     }
 
     #[tool(description = "Get MR review depth: how many comments/discussions per MR before merge. Shows zero-review MRs.")]
     async fn get_mr_review_depth(&self, Parameters(p): Parameters<GetMrReviewDepthParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "get_mr_review_depth",
+        simple_tool!(self, p, "get_mr_review_depth", "", |client|
             tools::merge_requests::get_mr_review_depth(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.days.unwrap_or(7), p.summary_only.unwrap_or(false)).await
         )
     }
 
     #[tool(description = "Cross-group MR dashboard: aggregate open MRs, reviewer load, stale counts across multiple groups.")]
     async fn get_org_mr_dashboard(&self, Parameters(p): Parameters<GetOrgMrDashboardParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
         let groups_raw: Vec<String> = p.groups.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
         let groups: Vec<&str> = groups_raw.iter().map(|s| s.as_str()).collect();
-        tool_call!(self, "get_org_mr_dashboard",
+        simple_tool!(self, p, "get_org_mr_dashboard", "", |client|
             tools::merge_requests::get_org_mr_dashboard(client, &groups).await
         )
     }
 
     #[tool(description = "Classify MRs by category (feature, hotfix, bugfix, chore) based on branch naming conventions.")]
     async fn get_mr_categories(&self, Parameters(p): Parameters<GetMrCategoriesParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "get_mr_categories",
+        simple_tool!(self, p, "get_mr_categories", "", |client|
             tools::merge_requests::get_mr_categories(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.state.as_deref().unwrap_or(""), p.days.unwrap_or(7)).await
         )
     }
 
     #[tool(description = "Decompose MR merge time into queue time (waiting for review) and review time. Shows which MRs sat longest.")]
     async fn get_mr_timeline(&self, Parameters(p): Parameters<GetMrTimelineParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "get_mr_timeline",
+        simple_tool!(self, p, "get_mr_timeline", "", |client|
             tools::merge_requests::get_mr_timeline(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.days.unwrap_or(7), p.summary_only.unwrap_or(false)).await
         )
     }
 
     #[tool(description = "Reviewer velocity: avg/median time from MR opened to first reviewer activity (notes), per reviewer. Sort by fastest first.")]
     async fn get_reviewer_velocity(&self, Parameters(p): Parameters<GetReviewerVelocityParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "get_reviewer_velocity",
+        simple_tool!(self, p, "get_reviewer_velocity", "", |client|
             tools::merge_requests::get_reviewer_velocity(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.days.unwrap_or(14), p.summary_only.unwrap_or(false)).await
         )
     }
 
     #[tool(description = "Code review load distribution: who reviews most/least, % share, bus factor, imbalance recommendations.")]
     async fn get_review_load(&self, Parameters(p): Parameters<GetReviewLoadParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "get_review_load",
+        simple_tool!(self, p, "get_review_load", "", |client|
             tools::merge_requests::get_review_load(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.days.unwrap_or(14), p.summary_only.unwrap_or(false)).await
         )
     }
 
     #[tool(description = "MR size trend: weekly buckets of avg files-changed and avg LOC, with arrow trend (↑↓→) and verdict.")]
     async fn get_mr_size_trend(&self, Parameters(p): Parameters<GetMrSizeTrendParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "get_mr_size_trend",
+        simple_tool!(self, p, "get_mr_size_trend", "", |client|
             tools::merge_requests::get_mr_size_trend(client, p.project_id.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.days.unwrap_or(30), p.summary_only.unwrap_or(false)).await
         )
     }
@@ -461,8 +453,7 @@ impl GlMcpServer {
     #[tool(description = "Merge a merge request. Optionally squash commits, remove source branch, set custom merge commit message.")]
     async fn merge_mr(&self, Parameters(p): Parameters<MergeMrParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "merge_mr");
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "merge_mr",
+        simple_tool!(self, p, "merge_mr", &p.project_id, |client|
             tools::merge_requests::merge_mr(client, &p.project_id, p.mr_iid, p.squash, p.should_remove_source_branch, p.merge_commit_message.as_deref()).await
         )
     }
@@ -470,8 +461,7 @@ impl GlMcpServer {
     #[tool(description = "Rebase a merge request onto the target branch")]
     async fn rebase_mr(&self, Parameters(p): Parameters<RebaseMrParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "rebase_mr");
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "rebase_mr",
+        simple_tool!(self, p, "rebase_mr", &p.project_id, |client|
             tools::merge_requests::rebase_mr(client, &p.project_id, p.mr_iid).await
         )
     }
@@ -479,16 +469,14 @@ impl GlMcpServer {
     #[tool(description = "Close a merge request without merging")]
     async fn close_mr(&self, Parameters(p): Parameters<CloseMrParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "close_mr");
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "close_mr",
+        simple_tool!(self, p, "close_mr", &p.project_id, |client|
             tools::merge_requests::close_mr(client, &p.project_id, p.mr_iid).await
         )
     }
 
     #[tool(description = "Get MR discussions: threaded review comments with resolved/unresolved status")]
     async fn get_mr_discussions(&self, Parameters(p): Parameters<GetMrDiscussionsParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "get_mr_discussions",
+        simple_tool!(self, p, "get_mr_discussions", &p.project_id, |client|
             tools::merge_requests::get_mr_discussions(client, &p.project_id, p.mr_iid, p.summary_only.unwrap_or(false)).await
         )
     }
@@ -497,32 +485,28 @@ impl GlMcpServer {
 
     #[tool(description = "List CI/CD pipelines for a project")]
     async fn list_pipelines(&self, Parameters(p): Parameters<ListPipelinesParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "list_pipelines",
+        simple_tool!(self, p, "list_pipelines", "", |client|
             tools::pipelines::list_pipelines(client, &p.project_id, p.status.as_deref().unwrap_or(""), p.ref_name.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
         )
     }
 
     #[tool(description = "Get pipeline details including all jobs grouped by stage")]
     async fn get_pipeline(&self, Parameters(p): Parameters<GetPipelineParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "get_pipeline",
+        simple_tool!(self, p, "get_pipeline", "", |client|
             tools::pipelines::get_pipeline(client, &p.project_id, p.pipeline_id).await
         )
     }
 
     #[tool(description = "Get CI job log output. Returns last N lines (tail). Critical for debugging failed jobs.")]
     async fn get_job_log(&self, Parameters(p): Parameters<GetJobLogParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "get_job_log",
+        simple_tool!(self, p, "get_job_log", "", |client|
             tools::pipelines::get_job_log(client, &p.project_id, p.job_id, p.tail.unwrap_or(100)).await
         )
     }
 
     #[tool(description = "List pipelines for a merge request, showing status, ref, SHA, and creation time")]
     async fn get_mr_pipelines(&self, Parameters(p): Parameters<GetMrPipelinesParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "get_mr_pipelines",
+        simple_tool!(self, p, "get_mr_pipelines", &p.project_id, |client|
             tools::pipelines::get_mr_pipelines(client, &p.project_id, p.mr_iid).await
         )
     }
@@ -530,8 +514,7 @@ impl GlMcpServer {
     #[tool(description = "Retry a failed pipeline")]
     async fn retry_pipeline(&self, Parameters(p): Parameters<RetryPipelineParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "retry_pipeline");
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "retry_pipeline",
+        simple_tool!(self, p, "retry_pipeline", "", |client|
             tools::pipelines::retry_pipeline(client, &p.project_id, p.pipeline_id).await
         )
     }
@@ -539,16 +522,14 @@ impl GlMcpServer {
     #[tool(description = "Cancel a running pipeline")]
     async fn cancel_pipeline(&self, Parameters(p): Parameters<CancelPipelineParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "cancel_pipeline");
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "cancel_pipeline",
+        simple_tool!(self, p, "cancel_pipeline", "", |client|
             tools::pipelines::cancel_pipeline(client, &p.project_id, p.pipeline_id).await
         )
     }
 
     #[tool(description = "Get CI/CD variable keys and metadata for a project. Never exposes values for security.")]
     async fn get_ci_variables(&self, Parameters(p): Parameters<GetCiVariablesParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "get_ci_variables",
+        simple_tool!(self, p, "get_ci_variables", &p.project_id, |client|
             tools::pipelines::get_ci_variables(client, &p.project_id).await
         )
     }
@@ -556,8 +537,7 @@ impl GlMcpServer {
     #[tool(description = "Create a CI/CD variable for a project. Confirmation never includes the value. Mark sensitive values masked=true and protected=true.")]
     async fn set_ci_variable(&self, Parameters(p): Parameters<SetCiVariableParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "set_ci_variable");
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "set_ci_variable",
+        simple_tool!(self, p, "set_ci_variable", &p.project_id, |client|
             tools::pipelines::set_ci_variable(
                 client,
                 &p.project_id,
@@ -574,8 +554,7 @@ impl GlMcpServer {
     #[tool(description = "Update an existing CI/CD variable's value and flags. Confirmation never includes the value.")]
     async fn update_ci_variable(&self, Parameters(p): Parameters<UpdateCiVariableParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "update_ci_variable");
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "update_ci_variable",
+        simple_tool!(self, p, "update_ci_variable", &p.project_id, |client|
             tools::pipelines::update_ci_variable(
                 client,
                 &p.project_id,
@@ -592,8 +571,7 @@ impl GlMcpServer {
     #[tool(description = "Delete a CI/CD variable from a project.")]
     async fn delete_ci_variable(&self, Parameters(p): Parameters<DeleteCiVariableParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "delete_ci_variable");
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "delete_ci_variable",
+        simple_tool!(self, p, "delete_ci_variable", &p.project_id, |client|
             tools::pipelines::delete_ci_variable(client, &p.project_id, &p.key).await
         )
     }
@@ -602,16 +580,14 @@ impl GlMcpServer {
 
     #[tool(description = "List branches for a project, optionally filtered by name")]
     async fn list_branches(&self, Parameters(p): Parameters<ListBranchesParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "list_branches",
+        simple_tool!(self, p, "list_branches", "", |client|
             tools::projects::list_branches(client, &p.project_id, p.search.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
         )
     }
 
     #[tool(description = "Find stale branches: merged but not deleted, or inactive for N days. Helps with repo hygiene.")]
     async fn get_stale_branches(&self, Parameters(p): Parameters<GetStaleBranchesParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "get_stale_branches",
+        simple_tool!(self, p, "get_stale_branches", &p.project_id, |client|
             tools::projects::get_stale_branches(client, &p.project_id, p.inactive_days.unwrap_or(30)).await
         )
     }
@@ -619,16 +595,14 @@ impl GlMcpServer {
     #[tool(description = "Delete a branch from a project")]
     async fn delete_branch(&self, Parameters(p): Parameters<DeleteBranchParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "delete_branch");
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "delete_branch",
+        simple_tool!(self, p, "delete_branch", &p.project_id, |client|
             tools::projects::delete_branch(client, &p.project_id, &p.branch).await
         )
     }
 
     #[tool(description = "Check protection status of a branch: push/merge access levels, force push, code owner approval requirements.")]
     async fn check_branch_protection(&self, Parameters(p): Parameters<CheckBranchProtectionParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "check_branch_protection",
+        simple_tool!(self, p, "check_branch_protection", &p.project_id, |client|
             tools::projects::check_branch_protection(client, &p.project_id, &p.branch).await
         )
     }
@@ -636,8 +610,7 @@ impl GlMcpServer {
     #[tool(description = "Update branch protection settings (delete + recreate). Access levels: 0=None, 30=Developer, 40=Maintainer, 60=Admin.")]
     async fn update_branch_protection(&self, Parameters(p): Parameters<UpdateBranchProtectionParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "update_branch_protection");
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "update_branch_protection",
+        simple_tool!(self, p, "update_branch_protection", &p.project_id, |client|
             tools::projects::update_branch_protection(
                 client,
                 &p.project_id,
@@ -652,32 +625,28 @@ impl GlMcpServer {
 
     #[tool(description = "Look up a GitLab user by username or numeric ID. Returns profile info, state, and admin status.")]
     async fn get_user(&self, Parameters(p): Parameters<GetUserParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "get_user",
+        simple_tool!(self, p, "get_user", "", |client|
             tools::projects::get_user(client, p.username.as_deref().unwrap_or(""), p.user_id).await
         )
     }
 
     #[tool(description = "Search GitLab users by name, username, or email")]
     async fn search_users(&self, Parameters(p): Parameters<SearchUsersParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "search_users",
+        simple_tool!(self, p, "search_users", "", |client|
             tools::projects::search_users(client, &p.query, p.per_page.unwrap_or(20)).await
         )
     }
 
     #[tool(description = "Get all members of a GitLab group (including inherited members)")]
     async fn get_group_members(&self, Parameters(p): Parameters<GetGroupMembersParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "get_group_members",
+        simple_tool!(self, p, "get_group_members", "", |client|
             tools::projects::get_group_members(client, &p.group_id, p.per_page.unwrap_or(100)).await
         )
     }
 
     #[tool(description = "Get recent project events (activity feed): pushes, merges, comments, etc.")]
     async fn get_project_events(&self, Parameters(p): Parameters<GetProjectEventsParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "get_project_events",
+        simple_tool!(self, p, "get_project_events", &p.project_id, |client|
             tools::projects::get_project_events(client, &p.project_id, p.action.as_deref().unwrap_or(""), p.per_page.unwrap_or(20), p.summary_only.unwrap_or(false)).await
         )
     }
@@ -686,42 +655,37 @@ impl GlMcpServer {
 
     #[tool(description = "List commits for a project, optionally filtered by branch, author, and date range")]
     async fn list_commits(&self, Parameters(p): Parameters<ListCommitsParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "list_commits",
+        simple_tool!(self, p, "list_commits", "", |client|
             tools::commits::list_commits(client, &p.project_id, p.branch.as_deref().unwrap_or(""), p.author.as_deref().unwrap_or(""), p.since.as_deref().unwrap_or(""), p.until.as_deref().unwrap_or(""), p.per_page.unwrap_or(20), p.summary_only.unwrap_or(false)).await
         )
     }
 
     #[tool(description = "Get commit diff with smart filtering. Use summary_only=true first, then file= to drill in.")]
     async fn get_commit_diff(&self, Parameters(p): Parameters<GetCommitDiffParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
         let compact = p.compact.unwrap_or(self.config.compact);
-        tool_call!(self, "get_commit_diff",
+        simple_tool!(self, p, "get_commit_diff", "", |client|
             tools::commits::get_commit_diff(client, &p.project_id, &p.sha, p.max_lines_per_file.unwrap_or(200), p.skip_generated.unwrap_or(true), p.summary_only.unwrap_or(false), p.file.as_deref().unwrap_or(""), compact).await
         )
     }
 
     #[tool(description = "Get all MR changes as unified diff. Use summary_only=true first, then file= for specific files.")]
     async fn get_mr_changes(&self, Parameters(p): Parameters<GetMrChangesParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
         let compact = p.compact.unwrap_or(self.config.compact);
-        tool_call!(self, "get_mr_changes",
+        simple_tool!(self, p, "get_mr_changes", "", |client|
             tools::commits::get_mr_changes(client, &p.project_id, p.mr_iid, p.max_lines_per_file.unwrap_or(200), p.skip_generated.unwrap_or(true), p.summary_only.unwrap_or(false), p.file.as_deref().unwrap_or(""), compact).await
         )
     }
 
     #[tool(description = "Identify code hotspots: top 20 most frequently changed files in recent commits. Helps find unstable/risky code areas.")]
     async fn get_code_hotspots(&self, Parameters(p): Parameters<GetCodeHotspotsParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "get_code_hotspots",
+        simple_tool!(self, p, "get_code_hotspots", &p.project_id, |client|
             tools::commits::get_code_hotspots(client, &p.project_id, p.days.unwrap_or(30), p.branch.as_deref().unwrap_or(""), p.summary_only.unwrap_or(false)).await
         )
     }
 
     #[tool(description = "List all branches and tags that contain a given commit SHA. Useful for tracing where a fix landed.")]
     async fn get_commit_refs(&self, Parameters(p): Parameters<GetCommitRefsParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "get_commit_refs",
+        simple_tool!(self, p, "get_commit_refs", &p.project_id, |client|
             tools::commits::get_commit_refs(client, &p.project_id, &p.sha).await
         )
     }
@@ -729,26 +693,23 @@ impl GlMcpServer {
     #[tool(description = "Revert a commit by creating a new revert commit on the target branch.")]
     async fn revert_commit(&self, Parameters(p): Parameters<RevertCommitParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "revert_commit");
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "revert_commit",
+        simple_tool!(self, p, "revert_commit", &p.project_id, |client|
             tools::commits::revert_commit(client, &p.project_id, &p.sha, &p.branch).await
         )
     }
 
     #[tool(description = "Analyze team timezone distribution: peak working hours (UTC), likely timezone, weekend work percentage per developer.")]
     async fn get_team_timezone(&self, Parameters(p): Parameters<GetTeamTimezoneParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
         let raw_usernames: Vec<String> = p.usernames.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
         let usernames: Vec<&str> = raw_usernames.iter().map(|s| s.as_str()).collect();
-        tool_call!(self, "get_team_timezone",
+        simple_tool!(self, p, "get_team_timezone", "", |client|
             tools::commits::get_team_timezone(client, &usernames, p.days.unwrap_or(14), p.summary_only.unwrap_or(false)).await
         )
     }
 
     #[tool(description = "Get file content at a specific branch, tag, or commit SHA")]
     async fn get_file_content(&self, Parameters(p): Parameters<GetFileContentParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "get_file_content",
+        simple_tool!(self, p, "get_file_content", "", |client|
             tools::commits::get_file_content(client, &p.project_id, &p.file_path, p.ref_name.as_deref().unwrap_or("HEAD")).await
         )
     }
@@ -790,7 +751,6 @@ impl GlMcpServer {
 
     #[tool(description = "Get team activity. Pass team key from teams.json (e.g., 'devops') or comma-separated usernames.")]
     async fn get_team_activity(&self, Parameters(p): Parameters<GetTeamActivityParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
         let hours = parse_period(p.period.as_deref().unwrap_or("24"));
 
         // Resolve: team key from teams.json OR raw usernames
@@ -804,16 +764,15 @@ impl GlMcpServer {
         };
         let usernames: Vec<&str> = raw_usernames.iter().map(|s| s.as_str()).collect();
 
-        tool_call!(self, "get_team_activity",
+        simple_tool!(self, p, "get_team_activity", "", |client|
             tools::commits::get_team_activity(client, &usernames, hours).await
         )
     }
 
     #[tool(description = "Get activity for all members of a GitLab group. Auto-discovers members, no config needed.")]
     async fn get_group_activity(&self, Parameters(p): Parameters<GetGroupActivityParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
         let hours = parse_period(p.period.as_deref().unwrap_or("24"));
-        tool_call!(self, "get_group_activity",
+        simple_tool!(self, p, "get_group_activity", "", |client|
             tools::commits::get_group_activity(client, &p.group_path, hours).await
         )
     }
@@ -942,28 +901,25 @@ impl GlMcpServer {
 
     #[tool(description = "Generate a complete HTML team performance report with developer comparison, review matrix, MR sizes, turnaround stats, and auto-detected process issues. Save to file and open in browser.")]
     async fn generate_team_report(&self, Parameters(p): Parameters<GenerateTeamReportParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
         let raw_usernames: Vec<String> = p.usernames.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
         let usernames: Vec<&str> = raw_usernames.iter().map(|s| s.as_str()).collect();
-        tool_call!(self, "generate_team_report",
+        simple_tool!(self, p, "generate_team_report", &p.project_id, |client|
             tools::reports::generate_team_report(client, &p.project_id, &usernames, p.days.unwrap_or(14)).await
         )
     }
 
     #[tool(description = "Generate a complete HTML project quality report with file scores, grade distribution, language breakdown, commit quality, binary detection, and recommendations. Save to file and open in browser.")]
     async fn generate_project_report(&self, Parameters(p): Parameters<GenerateProjectReportParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "generate_project_report",
+        simple_tool!(self, p, "generate_project_report", &p.project_id, |client|
             tools::reports::generate_project_report(client, &p.project_id, p.ref_name.as_deref().unwrap_or(""), p.max_files.unwrap_or(50)).await
         )
     }
 
     #[tool(description = "Compare developers side-by-side in a project: MRs opened/merged/reviewed, approvals, avg merge time, comments, commits.")]
     async fn compare_developers(&self, Parameters(p): Parameters<CompareDevelopersParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
         let raw_usernames: Vec<String> = p.usernames.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
         let usernames: Vec<&str> = raw_usernames.iter().map(|s| s.as_str()).collect();
-        tool_call!(self, "compare_developers",
+        simple_tool!(self, p, "compare_developers", &p.project_id, |client|
             tools::commits::compare_developers(client, &p.project_id, &usernames, p.days.unwrap_or(14), p.summary_only.unwrap_or(false)).await
         )
     }
@@ -972,48 +928,42 @@ impl GlMcpServer {
 
     #[tool(description = "Search code in a project. Returns matching file paths, line numbers, and code snippets.")]
     async fn search_code(&self, Parameters(p): Parameters<SearchCodeParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "search_code",
+        simple_tool!(self, p, "search_code", &p.project_id, |client|
             tools::repository::search_code(client, &p.project_id, &p.query, p.ref_name.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
         )
     }
 
     #[tool(description = "Get project language breakdown (e.g., PHP 80%, Go 15%).")]
     async fn get_languages(&self, Parameters(p): Parameters<GetLanguagesParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "get_languages",
+        simple_tool!(self, p, "get_languages", &p.project_id, |client|
             tools::repository::get_languages(client, &p.project_id).await
         )
     }
 
     #[tool(description = "Get repository directory listing. Use recursive=true for full tree.")]
     async fn get_tree(&self, Parameters(p): Parameters<GetTreeParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "get_tree",
+        simple_tool!(self, p, "get_tree", &p.project_id, |client|
             tools::repository::get_tree(client, &p.project_id, p.path.as_deref().unwrap_or(""), p.ref_name.as_deref().unwrap_or(""), p.recursive.unwrap_or(false), p.per_page.unwrap_or(100)).await
         )
     }
 
     #[tool(description = "Compare two branches/tags/SHAs. Shows commits and changed files between them.")]
     async fn compare_branches(&self, Parameters(p): Parameters<CompareBranchesParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "compare_branches",
+        simple_tool!(self, p, "compare_branches", &p.project_id, |client|
             tools::repository::compare_branches(client, &p.project_id, &p.from, &p.to).await
         )
     }
 
     #[tool(description = "List tags (releases) for a project.")]
     async fn list_tags(&self, Parameters(p): Parameters<ListTagsParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "list_tags",
+        simple_tool!(self, p, "list_tags", &p.project_id, |client|
             tools::repository::list_tags(client, &p.project_id, p.search.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
         )
     }
 
     #[tool(description = "Get merge request approval status: who approved, how many remaining.")]
     async fn get_mr_approvals(&self, Parameters(p): Parameters<GetMrApprovalsParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, "")?;
-        tool_call!(self, "get_mr_approvals",
+        simple_tool!(self, p, "get_mr_approvals", "", |client|
             tools::repository::get_mr_approvals(client, &p.project_id, p.mr_iid).await
         )
     }
@@ -1021,8 +971,7 @@ impl GlMcpServer {
     #[tool(description = "Create or update a file in a GitLab repo. Always commits to a new branch (never main), optionally creates MR. Use for README fixes, translations, config updates.")]
     async fn update_file(&self, Parameters(p): Parameters<UpdateFileParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "update_file");
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "update_file",
+        simple_tool!(self, p, "update_file", &p.project_id, |client|
             tools::repository::update_file(
                 client, &p.project_id, &p.file_path, &p.content, &p.branch,
                 &p.commit_message, p.source_branch.as_deref().unwrap_or(""),
@@ -1033,32 +982,28 @@ impl GlMcpServer {
 
     #[tool(description = "List project environments with last deployment info (SHA, branch, status, deployer).")]
     async fn list_environments(&self, Parameters(p): Parameters<ListEnvironmentsParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "list_environments",
+        simple_tool!(self, p, "list_environments", &p.project_id, |client|
             tools::repository::list_environments(client, &p.project_id, p.per_page.unwrap_or(20)).await
         )
     }
 
     #[tool(description = "Get all-time contributor stats: commits, additions, deletions per person.")]
     async fn get_contributors(&self, Parameters(p): Parameters<GetContributorsParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "get_contributors",
+        simple_tool!(self, p, "get_contributors", &p.project_id, |client|
             tools::repository::get_contributors(client, &p.project_id).await
         )
     }
 
     #[tool(description = "Get project-level MR approval rules: who must approve, required count.")]
     async fn get_approval_rules(&self, Parameters(p): Parameters<GetApprovalRulesParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "get_approval_rules",
+        simple_tool!(self, p, "get_approval_rules", &p.project_id, |client|
             tools::repository::get_approval_rules(client, &p.project_id).await
         )
     }
 
     #[tool(description = "Get deployment frequency (DORA metric): deploys per day, by environment and deployer.")]
     async fn get_deploy_frequency(&self, Parameters(p): Parameters<GetDeployFrequencyParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "get_deploy_frequency",
+        simple_tool!(self, p, "get_deploy_frequency", &p.project_id, |client|
             tools::repository::get_deploy_frequency(client, &p.project_id, p.environment.as_deref().unwrap_or(""), p.days.unwrap_or(30)).await
         )
     }
@@ -1067,32 +1012,28 @@ impl GlMcpServer {
 
     #[tool(description = "Validate a commit against coding rules (regex-based, zero LLM tokens). Returns only violations grouped by severity.")]
     async fn validate_commit(&self, Parameters(p): Parameters<ValidateCommitParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "validate_commit",
+        simple_tool!(self, p, "validate_commit", &p.project_id, |client|
             tools::lint::validate_commit(client, &p.project_id, &p.sha).await
         )
     }
 
     #[tool(description = "Validate all commits in a merge request against coding rules. Returns only violations.")]
     async fn validate_mr(&self, Parameters(p): Parameters<ValidateMrParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "validate_mr",
+        simple_tool!(self, p, "validate_mr", &p.project_id, |client|
             tools::lint::validate_mr(client, &p.project_id, p.mr_iid).await
         )
     }
 
     #[tool(description = "Validate MR using the full unified diff (not individual commits). Catches issues in squashed MRs where commit diffs are minimal. Checks all added lines against Swift, PHP, Kotlin, Go, TypeScript, and global rules.")]
     async fn validate_mr_changes(&self, Parameters(p): Parameters<ValidateMrChangesParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "validate_mr_changes",
+        simple_tool!(self, p, "validate_mr_changes", &p.project_id, |client|
             tools::lint::validate_mr_changes(client, &p.project_id, p.mr_iid).await
         )
     }
 
     #[tool(description = "Analyze a file's code quality: line count, function count, nesting depth, complexity score, imports, lint violations. Returns metrics with A-F grade.")]
     async fn analyze_file(&self, Parameters(p): Parameters<AnalyzeFileParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "analyze_file",
+        simple_tool!(self, p, "analyze_file", &p.project_id, |client|
             tools::lint::analyze_file(client, &p.project_id, &p.file_path, p.ref_name.as_deref().unwrap_or("")).await
         )
     }
@@ -1106,24 +1047,21 @@ impl GlMcpServer {
 
     #[tool(description = "Analyze code quality of all source files in a project. Returns per-file scores (A-F), aggregate summary, top issues, and recommendations. Fetches files concurrently.")]
     async fn analyze_project(&self, Parameters(p): Parameters<AnalyzeProjectParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "analyze_project",
+        simple_tool!(self, p, "analyze_project", &p.project_id, |client|
             tools::lint::analyze_project(client, &p.project_id, p.ref_name.as_deref().unwrap_or(""), p.max_files.unwrap_or(50), p.summary_only.unwrap_or(false)).await
         )
     }
 
     #[tool(description = "Get project statistics: repo size, file counts by type, language breakdown, binary files list.")]
     async fn get_project_stats(&self, Parameters(p): Parameters<GetProjectStatsParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "get_project_stats",
+        simple_tool!(self, p, "get_project_stats", &p.project_id, |client|
             tools::repository::get_project_stats(client, &p.project_id).await
         )
     }
 
     #[tool(description = "Validate recent commits against message conventions (conventional commits, ticket refs, length) and code rules. Skips merge commits.")]
     async fn validate_project_commits(&self, Parameters(p): Parameters<ValidateProjectCommitsParams>) -> Result<CallToolResult, McpError> {
-        let client = resolve_client(&self.resolver, &p.instance, &p.project_id)?;
-        tool_call!(self, "validate_project_commits",
+        simple_tool!(self, p, "validate_project_commits", &p.project_id, |client|
             tools::lint::validate_project_commits(client, &p.project_id, p.days.unwrap_or(14), p.branch.as_deref().unwrap_or("")).await
         )
     }
