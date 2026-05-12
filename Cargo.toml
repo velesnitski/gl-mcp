@@ -2,7 +2,7 @@
 name = "gl-mcp"
 version = "0.14.0"
 edition = "2024"
-description = "GitLab MCP server for Claude Code — 54 tools for projects, issues, MRs, CI/CD, code review, and team analytics"
+description = "GitLab MCP server for Claude Code — 92 tools for projects, issues, MRs, CI/CD, code review, and team analytics"
 license = "MIT"
 authors = ["Alex Velesnitski <velesnitski@gmail.com>"]
 repository = "https://github.com/velesnitski/gl-mcp"
@@ -19,10 +19,15 @@ path = "src/lib.rs"
 name = "gl-mcp"
 path = "src/main.rs"
 
+[features]
+default = ["sentry", "http"]
+sentry = ["dep:sentry"]
+http = ["dep:axum", "rmcp/transport-streamable-http-server"]
+
 [dependencies]
-rmcp = { version = "0.11", features = ["transport-io", "transport-streamable-http-server"] }
+rmcp = { version = "0.11", features = ["transport-io"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "time", "sync", "net"] }
-axum = "0.8"
+axum = { version = "0.8", optional = true }
 futures = "0.3"
 reqwest = { version = "0.12", features = ["json"] }
 serde = { version = "1", features = ["derive"] }
@@ -38,7 +43,7 @@ anyhow = "1"
 thiserror = "2"
 toml = "0.8"
 regex = "1"
-sentry = { version = "0.37", default-features = false, features = ["reqwest", "rustls"] }
+sentry = { version = "0.37", default-features = false, features = ["reqwest", "rustls"], optional = true }
 
 [profile.release]
 strip = true
