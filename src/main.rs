@@ -51,9 +51,18 @@ async fn main() -> anyhow::Result<()> {
 
     match transport {
         "http" | "sse" | "streamable-http" => {
-            serve_http(config, port).await
+            #[cfg(feature = "http")]
+            {
+                serve_http(config, port).await
+            }
+            #[cfg(not(feature = "http"))]
+            {
+                let _ = (config, port);
+                anyhow::bail!("HTTP transport not compiled (rebuild with --features http)");
+            }
         }
         "stdio" | _ => {
+            let _ = port;
             serve_stdio(config).await
         }
     }
@@ -70,6 +79,7 @@ async fn serve_stdio(config: Config) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "http")]
 async fn serve_http(config: Config, port: u16) -> anyhow::Result<()> {
     use rmcp::transport::streamable_http_server::{
         StreamableHttpService, StreamableHttpServerConfig,
