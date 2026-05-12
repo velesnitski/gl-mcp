@@ -950,19 +950,8 @@ pub async fn analyze_project(
         return Ok(format!("No source files found in {project_id} at {ref_param}."));
     }
 
-    // 3. Fetch file contents concurrently in batches of 10
-    struct FileMetrics {
-        path: String,
-        total_lines: usize,
-        functions: usize,
-        max_nesting: usize,
-        violations: usize,
-        score: i32,
-        grade: &'static str,
-        violation_details: Vec<(String, String)>, // (rule_id, name)
-    }
-
-    let mut all_metrics: Vec<FileMetrics> = Vec::new();
+    // 3. Fetch file contents concurrently in batches of 10, compute metrics via shared helper.
+    let mut all_metrics: Vec<FileMetricsPub> = Vec::new();
 
     for chunk in files_to_analyze.chunks(10) {
         let futs: Vec<_> = chunk
@@ -996,142 +985,8 @@ pub async fn analyze_project(
             let content_b64 = file_info["content"].as_str().unwrap_or("");
             let content = base64_decode(content_b64);
             let lang = detect_language(&file_path);
-            let lines: Vec<&str> = content.lines().collect();
-            let total_lines = lines.len();
 
-            if total_lines == 0 {
-                all_metrics.push(FileMetrics {
-                    path: file_path,
-                    total_lines: 0,
-                    functions: 0,
-                    max_nesting: 0,
-                    violations: 0,
-                    score: 100,
-                    grade: "A",
-                    violation_details: Vec::new(),
-                });
-                continue;
-            }
-
-            // Function detection
-            let func_pattern = match lang {
-                "Swift" => r"(?:func|init)\s+",
-                "PHP" => r"function\s+\w+",
-                "Go" => r"func\s+",
-                "Kotlin" | "Java" => r"fun\s+",
-                "TypeScript" | "JavaScript" => r"(?:function\s+|(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?(?:\([^)]*\)|[a-zA-Z_]\w*)\s*=>)",
-                "Rust" => r"fn\s+",
-                "Python" => r"def\s+",
-                _ => r"function\s+|func\s+|fn\s+|def\s+",
-            };
-            let func_re = regex::Regex::new(func_pattern).ok();
-            let mut func_count = 0usize;
-            let mut func_starts: Vec<usize> = Vec::new();
-            if let Some(re) = &func_re {
-                for (i, line) in lines.iter().enumerate() {
-                    if re.is_match(line) {
-                        func_count += 1;
-                        func_starts.push(i);
-                    }
-                }
-            }
-
-            // Nesting depth
-            let mut max_nesting: usize = 0;
-            let indent_size: usize = 4;
-            for line in &lines {
-                if line.trim().is_empty() {
-                    continue;
-                }
-                let tab_adjusted: usize = line
-                    .chars()
-                    .take_while(|c| c.is_whitespace())
-                    .map(|c| if c == '\t' { indent_size } else { 1 })
-                    .sum();
-                let nesting = tab_adjusted / indent_size;
-                if nesting > max_nesting {
-                    max_nesting = nesting;
-                }
-            }
-
-            // Long functions
-            let mut long_func_count = 0usize;
-            for i in 0..func_starts.len() {
-                let start = func_starts[i];
-                let end = if i + 1 < func_starts.len() {
-                    func_starts[i + 1]
-                } else {
-                    total_lines
-                };
-                if end - start > 50 {
-                    long_func_count += 1;
-                }
-            }
-
-            // Lint violations
-            let compiled_rules = get_compiled_rules(lang);
-            let mut violation_details: Vec<(String, String)> = Vec::new();
-            let mut violation_count = 0usize;
-            for line in &lines {
-                for cr in compiled_rules {
-                    if (cr.rule.applies_to.is_empty() || cr.rule.applies_to == "line")
-                        && matches_compiled_rule(cr, line, &file_path)
-                    {
-                        violation_count += 1;
-                        violation_details.push((cr.rule.id.clone(), cr.rule.name.clone()));
-                    }
-                }
-            }
-
-            // Imports
-            let import_pattern = match lang {
-                "Swift" => "import ",
-                "PHP" => "use ",
-                "Go" => "import",
-                "TypeScript" | "JavaScript" => "import ",
-                "Rust" => "use ",
-                "Python" => "import ",
-                "Kotlin" | "Java" => "import ",
-                _ => "import ",
-            };
-            let imports = lines.iter().filter(|l| l.trim().starts_with(import_pattern)).count();
-            let comment_lines = lines.iter().filter(|l| {
-                let t = l.trim();
-                t.starts_with("//") || t.starts_with('#') || t.starts_with("/*") || t.starts_with('*')
-            }).count();
-            let code_lines = total_lines - lines.iter().filter(|l| l.trim().is_empty()).count() - comment_lines;
-
-            // Score
-            let mut score = 100i32;
-            if total_lines > 500 { score -= 20; }
-            else if total_lines > 300 { score -= 10; }
-            if func_count > 20 { score -= 15; }
-            if max_nesting >= 6 { score -= 20; }
-            else if max_nesting >= 4 { score -= 10; }
-            if imports > 15 { score -= 10; }
-            if comment_lines == 0 && code_lines > 50 { score -= 5; }
-            score -= (long_func_count as i32) * 5;
-            score -= (violation_count as i32).min(20);
-            score = score.max(0);
-
-            let grade = match score {
-                90..=100 => "A",
-                75..=89 => "B",
-                60..=74 => "C",
-                40..=59 => "D",
-                _ => "F",
-            };
-
-            all_metrics.push(FileMetrics {
-                path: file_path,
-                total_lines,
-                functions: func_count,
-                max_nesting,
-                violations: violation_count,
-                score,
-                grade,
-                violation_details,
-            });
+            all_metrics.push(compute_file_metrics(&file_path, &content, lang));
         }
     }
 
@@ -1322,19 +1177,10 @@ pub async fn validate_project_commits(
         return Ok(format!("Only merge commits in the last {days} days for {project_id}."));
     }
 
-    // Conventional commit prefixes
-    let conventional_prefixes = [
-        "feat:", "fix:", "docs:", "build:", "chore:", "refactor:",
-        "test:", "ci:", "perf:", "style:", "revert:",
-        "feat(", "fix(", "docs(", "build(", "chore(", "refactor(",
-        "test(", "ci(", "perf(", "style(", "revert(",
-    ];
-    let ticket_re = regex::Regex::new(r"[A-Z]{2,10}-\d+").ok();
-
     let mut conventional_pass = 0u32;
     let mut ticket_pass = 0u32;
     let mut length_pass = 0u32;
-    let mut failing_messages: Vec<(String, String, Vec<&str>)> = Vec::new(); // (sha, subject, issues)
+    let mut failing_messages: Vec<(String, String, Vec<String>)> = Vec::new(); // (sha, subject, issues)
 
     for commit in &non_merge {
         let msg = commit["message"].as_str().unwrap_or("");
@@ -1343,38 +1189,14 @@ pub async fn validate_project_commits(
             .as_str()
             .unwrap_or("???????");
 
-        let mut issues: Vec<&str> = Vec::new();
+        let report = validate_commit_message(msg);
 
-        // Conventional format check
-        let is_conventional = conventional_prefixes
-            .iter()
-            .any(|p| subject.to_lowercase().starts_with(&p.to_lowercase()));
-        if is_conventional {
-            conventional_pass += 1;
-        } else {
-            issues.push("no conventional prefix");
-        }
+        if report.has_conventional_prefix { conventional_pass += 1; }
+        if report.has_ticket_ref { ticket_pass += 1; }
+        if !report.is_too_long { length_pass += 1; }
 
-        // Ticket reference check
-        let has_ticket = ticket_re
-            .as_ref()
-            .map(|re| re.is_match(msg))
-            .unwrap_or(false);
-        if has_ticket {
-            ticket_pass += 1;
-        } else {
-            issues.push("no ticket reference");
-        }
-
-        // Subject length check
-        if subject.len() <= 72 {
-            length_pass += 1;
-        } else {
-            issues.push("subject >72 chars");
-        }
-
-        if !issues.is_empty() {
-            failing_messages.push((short_sha.to_string(), subject.to_string(), issues));
+        if !report.failures.is_empty() {
+            failing_messages.push((short_sha.to_string(), subject.to_string(), report.failures));
         }
     }
 
@@ -1460,6 +1282,61 @@ pub async fn validate_project_commits(
     }
 
     Ok(out.join("\n"))
+}
+
+/// Result of validating a single commit message against project conventions.
+pub struct CommitMessageReport {
+    pub has_conventional_prefix: bool,
+    pub has_ticket_ref: bool,
+    pub subject_length: usize,
+    pub is_too_long: bool, // subject >72 chars
+    pub failures: Vec<String>, // human-readable issues
+}
+
+/// Conventional Commit prefixes recognized by `validate_commit_message`.
+const CONVENTIONAL_PREFIXES: &[&str] = &[
+    "feat:", "fix:", "docs:", "build:", "chore:", "refactor:",
+    "test:", "ci:", "perf:", "style:", "revert:",
+    "feat(", "fix(", "docs(", "build(", "chore(", "refactor(",
+    "test(", "ci(", "perf(", "style(", "revert(",
+];
+
+/// Validate a commit message against shared project conventions:
+/// conventional-commit prefix, ticket reference, subject length <=72.
+pub fn validate_commit_message(msg: &str) -> CommitMessageReport {
+    let subject = msg.lines().next().unwrap_or("").trim();
+    let subject_lower = subject.to_lowercase();
+
+    let has_conventional_prefix = CONVENTIONAL_PREFIXES
+        .iter()
+        .any(|p| subject_lower.starts_with(&p.to_lowercase()));
+
+    let has_ticket_ref = regex::Regex::new(r"[A-Z]{2,10}-\d+")
+        .ok()
+        .map(|re| re.is_match(msg))
+        .unwrap_or(false);
+
+    let subject_length = subject.len();
+    let is_too_long = subject_length > 72;
+
+    let mut failures: Vec<String> = Vec::new();
+    if !has_conventional_prefix {
+        failures.push("no conventional prefix".to_string());
+    }
+    if !has_ticket_ref {
+        failures.push("no ticket reference".to_string());
+    }
+    if is_too_long {
+        failures.push("subject >72 chars".to_string());
+    }
+
+    CommitMessageReport {
+        has_conventional_prefix,
+        has_ticket_ref,
+        subject_length,
+        is_too_long,
+        failures,
+    }
 }
 
 /// Public file metrics struct for cross-module use.
