@@ -845,6 +845,7 @@ impl GlMcpServer {
 
     #[tool(description = "Save a team to ~/.gl-mcp/teams.json (not committed to repo)")]
     async fn save_team(&self, Parameters(p): Parameters<SaveTeamParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "save_team");
         let instances_list: Vec<&str> = p.instances
             .as_deref()
             .unwrap_or("")

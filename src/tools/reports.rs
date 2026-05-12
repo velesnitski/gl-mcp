@@ -1047,7 +1047,7 @@ pub async fn generate_project_report(
     max_files: usize,
 ) -> Result<String> {
     use crate::tools::commits::detect_language;
-    use crate::tools::lint::{base64_decode_pub, compute_file_metrics, FileMetricsPub};
+    use crate::tools::lint::{base64_decode_pub, compute_file_metrics, validate_commit_message, FileMetricsPub};
 
     let encoded = urlencoding::encode(project_id);
 
@@ -1162,14 +1162,6 @@ pub async fn generate_project_report(
         })
         .collect();
 
-    let conventional_prefixes = [
-        "feat:", "fix:", "docs:", "build:", "chore:", "refactor:",
-        "test:", "ci:", "perf:", "style:", "revert:",
-        "feat(", "fix(", "docs(", "build(", "chore(", "refactor(",
-        "test(", "ci(", "perf(", "style(", "revert(",
-    ];
-    let ticket_re = regex::Regex::new(r"[A-Z]{2,10}-\d+").ok();
-
     let mut conventional_pass = 0u32;
     let mut ticket_pass = 0u32;
     let mut length_pass = 0u32;
@@ -1180,35 +1172,14 @@ pub async fn generate_project_report(
         let subject = msg.lines().next().unwrap_or("").trim();
         let short_sha = commit["short_id"].as_str().unwrap_or("???????");
 
-        let mut issues: Vec<String> = Vec::new();
+        let report = validate_commit_message(msg);
 
-        let is_conventional = conventional_prefixes
-            .iter()
-            .any(|p| subject.to_lowercase().starts_with(&p.to_lowercase()));
-        if is_conventional {
-            conventional_pass += 1;
-        } else {
-            issues.push("no conventional prefix".to_string());
-        }
+        if report.has_conventional_prefix { conventional_pass += 1; }
+        if report.has_ticket_ref { ticket_pass += 1; }
+        if !report.is_too_long { length_pass += 1; }
 
-        let has_ticket = ticket_re
-            .as_ref()
-            .map(|re| re.is_match(msg))
-            .unwrap_or(false);
-        if has_ticket {
-            ticket_pass += 1;
-        } else {
-            issues.push("no ticket reference".to_string());
-        }
-
-        if subject.len() <= 72 {
-            length_pass += 1;
-        } else {
-            issues.push("subject >72 chars".to_string());
-        }
-
-        if !issues.is_empty() {
-            failing_messages.push((short_sha.to_string(), subject.to_string(), issues));
+        if !report.failures.is_empty() {
+            failing_messages.push((short_sha.to_string(), subject.to_string(), report.failures));
         }
     }
 
