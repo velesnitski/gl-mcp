@@ -896,23 +896,27 @@ pub async fn get_group_activity(
     let mut total_mrs = 0u64;
     let mut active_count = 0u32;
 
-    for member in &members {
-        let username = match member["username"].as_str() {
-            Some(u) => u,
-            None => continue,
-        };
-        let name = member["name"].as_str().unwrap_or(username);
-        let user_id = match member["id"].as_u64() {
-            Some(id) => id,
-            None => continue,
-        };
+    // Fetch all members' events concurrently (same pattern as get_team_activity).
+    let member_futures: Vec<_> = members.iter().filter_map(|member| {
+        let username = member["username"].as_str()?.to_string();
+        let name = member["name"].as_str().unwrap_or(&username).to_string();
+        let user_id = member["id"].as_u64()?;
 
         // Skip bots
         if username.contains("bot") || username.starts_with("group_") {
-            continue;
+            return None;
         }
 
-        let events = fetch_user_events(client, user_id, since_ts).await?;
+        let client = client.clone();
+        Some(async move {
+            let events = fetch_user_events(&client, user_id, since_ts).await.unwrap_or_default();
+            (username, name, events)
+        })
+    }).collect();
+
+    let results = futures::future::join_all(member_futures).await;
+
+    for (username, name, events) in results {
         if events.is_empty() {
             lines.push(format!("- @{username} ({name}): no activity"));
             continue;
@@ -1388,38 +1392,59 @@ pub async fn get_code_hotspots(
         return Ok(format!("No commits found in the last {days} days."));
     }
 
-    // For each commit, get the diff stats and count file changes
+    // For each commit, get the diff stats and count file changes.
+    // Fetch diffs concurrently in batches of 10 to parallelize I/O.
     let mut file_changes: BTreeMap<String, (u32, String)> = BTreeMap::new(); // path -> (count, last_author)
 
-    for commit in &commits {
-        let sha = match commit["id"].as_str() {
-            Some(s) => s,
-            None => continue,
-        };
-        let author = commit["author_name"].as_str().unwrap_or("?");
+    // Pre-extract (sha, author) pairs from commits that have an id.
+    let commit_meta: Vec<(String, String)> = commits
+        .iter()
+        .filter_map(|c| {
+            let sha = c["id"].as_str()?.to_string();
+            let author = c["author_name"].as_str().unwrap_or("?").to_string();
+            Some((sha, author))
+        })
+        .collect();
 
-        let diff_path = format!("/projects/{encoded}/repository/commits/{sha}/diff");
-        let diffs: std::result::Result<Vec<Value>, _> = client
-            .get(&diff_path, &[("per_page", "100")])
-            .await;
-
-        if let Ok(diffs) = diffs {
-            for d in &diffs {
-                let file_path = d["new_path"]
-                    .as_str()
-                    .or(d["old_path"].as_str())
-                    .unwrap_or("?");
-
-                // Skip generated/lock files
-                if should_skip_file(file_path) {
-                    continue;
+    for chunk in commit_meta.chunks(10) {
+        let futs: Vec<_> = chunk
+            .iter()
+            .map(|(sha, author)| {
+                let client = client.clone();
+                let encoded = encoded.to_string();
+                let sha = sha.clone();
+                let author = author.clone();
+                async move {
+                    let diff_path = format!("/projects/{encoded}/repository/commits/{sha}/diff");
+                    let diffs: std::result::Result<Vec<Value>, _> = client
+                        .get(&diff_path, &[("per_page", "100")])
+                        .await;
+                    (author, diffs)
                 }
+            })
+            .collect();
 
-                let entry = file_changes
-                    .entry(file_path.to_string())
-                    .or_insert((0, String::new()));
-                entry.0 += 1;
-                entry.1 = author.to_string(); // last modifier
+        let results = futures::future::join_all(futs).await;
+
+        for (author, diffs) in results {
+            if let Ok(diffs) = diffs {
+                for d in &diffs {
+                    let file_path = d["new_path"]
+                        .as_str()
+                        .or(d["old_path"].as_str())
+                        .unwrap_or("?");
+
+                    // Skip generated/lock files
+                    if should_skip_file(file_path) {
+                        continue;
+                    }
+
+                    let entry = file_changes
+                        .entry(file_path.to_string())
+                        .or_insert((0, String::new()));
+                    entry.0 += 1;
+                    entry.1 = author.clone(); // last modifier
+                }
             }
         }
     }
