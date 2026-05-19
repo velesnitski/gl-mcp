@@ -234,6 +234,8 @@ pub struct ListMergeRequestsParams {
     pub per_page: Option<u32>,
     #[schemars(description = "Return compact one-line-per-MR summary (~5x smaller). Use first to scan, then get_merge_request to drill in.")]
     pub summary_only: Option<bool>,
+    #[schemars(description = "Include MR descriptions in output (useful for parsing ticket IDs or context). Adds ~1KB per MR.")]
+    pub include_descriptions: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }

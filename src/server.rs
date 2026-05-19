@@ -308,7 +308,7 @@ impl GlMcpServer {
     #[tool(description = "List merge requests. Filter by project, group, state, author, scope, created_after, opened_before.")]
     async fn list_merge_requests(&self, Parameters(p): Parameters<ListMergeRequestsParams>) -> Result<CallToolResult, McpError> {
         simple_tool!(self, p, "list_merge_requests", "", |client|
-            tools::merge_requests::list_merge_requests(client, p.project_id.as_deref().unwrap_or(""), p.state.as_deref().unwrap_or("opened"), p.author.as_deref().unwrap_or(""), p.scope.as_deref().unwrap_or("all"), p.created_after.as_deref().unwrap_or(""), p.opened_before.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.per_page.unwrap_or(20), p.summary_only.unwrap_or(false)).await
+            tools::merge_requests::list_merge_requests(client, p.project_id.as_deref().unwrap_or(""), p.state.as_deref().unwrap_or("opened"), p.author.as_deref().unwrap_or(""), p.scope.as_deref().unwrap_or("all"), p.created_after.as_deref().unwrap_or(""), p.opened_before.as_deref().unwrap_or(""), p.group_id.as_deref().unwrap_or(""), p.per_page.unwrap_or(20), p.summary_only.unwrap_or(false), p.include_descriptions.unwrap_or(false)).await
         )
     }
 

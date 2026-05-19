@@ -35,6 +35,7 @@ pub async fn list_merge_requests(
     group_id: &str,
     per_page: u32,
     summary_only: bool,
+    include_descriptions: bool,
 ) -> Result<String> {
     let per_page_str = per_page.to_string();
     let path = if !group_id.is_empty() {
@@ -86,6 +87,15 @@ pub async fn list_merge_requests(
             let project = mr["references"]["full"].as_str().unwrap_or("?");
             let draft = if mr["draft"].as_bool().unwrap_or(false) { "D" } else { "" };
             lines.push(format!("{project}!{iid}|{state}{draft}|{author}|{title}"));
+            if include_descriptions {
+                let desc = mr["description"].as_str().unwrap_or("").trim();
+                if !desc.is_empty() {
+                    // Indent description lines for readability, strip trailing whitespace
+                    for line in desc.lines() {
+                        lines.push(format!("  {}", line.trim_end()));
+                    }
+                }
+            }
         }
         return Ok(lines.join("\n"));
     }
