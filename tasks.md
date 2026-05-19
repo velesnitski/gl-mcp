@@ -14,19 +14,10 @@ issue IDs without falling back to direct REST calls.
 
 ## Other observations (not blocking)
 
-### `list_merge_requests` — expose descriptions in summary mode
+### ~~`list_merge_requests` — expose descriptions in summary mode~~ ✅ DONE (2026-05-19)
 
-Currently `list_merge_requests(summary_only=true)` returns
-`{project}!{iid}|{state}{draft}|{author}|{title}` — title only, no
-description. For downstream parsing (e.g. extracting YouTrack/JIRA IDs
-from MR descriptions) we have to fetch each MR individually with
-`get_merge_request`, which is N+1.
-
-**Possible fix:** add `include_descriptions: bool = false` param. When
-true, return full description bodies even in summary mode. Tradeoff:
-defeats some of the token-saving purpose of summary_only, so opt-in.
-
-**Priority:** Low — workaround exists.
+Added `include_descriptions: bool` opt-in param. When true with
+`summary_only=true`, returns indented description lines under each MR.
 
 ### `get_group_activity` — return per-commit messages
 
