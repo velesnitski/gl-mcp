@@ -438,8 +438,10 @@ pub struct CancelPipelineParams {
 pub struct ListCommitsParams {
     #[schemars(description = "Project ID or path")]
     pub project_id: String,
-    #[schemars(description = "Branch or tag name (empty = default branch)")]
+    #[schemars(description = "Branch or tag name (empty = default branch). Mutually exclusive with all_branches.")]
     pub branch: Option<String>,
+    #[schemars(description = "When true, returns commits from all branches, not just the default. Useful for catching work-in-progress on feature branches. Mutually exclusive with branch.")]
+    pub all_branches: Option<bool>,
     #[schemars(description = "Filter by author name or email")]
     pub author: Option<String>,
     #[schemars(description = "ISO date: commits after this date (e.g., '2026-03-24T00:00:00Z')")]

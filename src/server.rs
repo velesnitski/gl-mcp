@@ -653,10 +653,10 @@ impl GlMcpServer {
 
     // ─── Commits & Diffs ───
 
-    #[tool(description = "List commits for a project, optionally filtered by branch, author, and date range")]
+    #[tool(description = "List commits for a project, optionally filtered by branch, author, and date range. Use all_branches=true to scan feature branches (useful for catching WIP that hasn't merged to default).")]
     async fn list_commits(&self, Parameters(p): Parameters<ListCommitsParams>) -> Result<CallToolResult, McpError> {
         simple_tool!(self, p, "list_commits", "", |client|
-            tools::commits::list_commits(client, &p.project_id, p.branch.as_deref().unwrap_or(""), p.author.as_deref().unwrap_or(""), p.since.as_deref().unwrap_or(""), p.until.as_deref().unwrap_or(""), p.per_page.unwrap_or(20), p.summary_only.unwrap_or(false)).await
+            tools::commits::list_commits(client, &p.project_id, p.branch.as_deref().unwrap_or(""), p.all_branches.unwrap_or(false), p.author.as_deref().unwrap_or(""), p.since.as_deref().unwrap_or(""), p.until.as_deref().unwrap_or(""), p.per_page.unwrap_or(20), p.summary_only.unwrap_or(false)).await
         )
     }
 
