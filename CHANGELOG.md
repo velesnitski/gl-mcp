@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-05-19
+
+### Added
+- `list_commits` now accepts `all_branches: bool` parameter — maps to GitLab's `?all=true` query. Useful for catching feature-branch work that hasn't merged to default branch. Mutually exclusive with `branch` (branch wins if both set).
+- `list_merge_requests` now accepts `include_descriptions: bool` parameter — when true with `summary_only`, includes MR description bodies (useful for parsing ticket IDs).
+
 ## [0.15.0] - 2026-05-12
 
 ### Added
