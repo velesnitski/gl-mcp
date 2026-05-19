@@ -269,6 +269,7 @@ pub async fn list_commits(
     client: &GitLabClient,
     project_id: &str,
     branch: &str,
+    all_branches: bool,
     author: &str,
     since: &str,
     until: &str,
@@ -285,7 +286,11 @@ pub async fn list_commits(
     // Cyrillic names (e.g. "Malykhin" won't match "Владимир Малыхин").
     // Fetch all commits and filter client-side with fuzzy contains.
     let mut params: Vec<(&str, &str)> = vec![("per_page", &per_page_str)];
-    if !branch.is_empty() {
+    if all_branches {
+        // Scan all branches — catches feature-branch work mobile teams
+        // do before merging. Mutually exclusive with branch (branch wins if both set).
+        params.push(("all", "true"));
+    } else if !branch.is_empty() {
         params.push(("ref_name", branch));
     }
     if !since.is_empty() {
