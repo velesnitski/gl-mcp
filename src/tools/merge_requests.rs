@@ -1904,3 +1904,83 @@ fn format_week_range(start: chrono::DateTime<chrono::Utc>, end: chrono::DateTime
         format!("{start_month} {} – {end_month} {}", start.day(), end_inclusive.day())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Locks down `mr_project_path` behavior across the full surface of
+    /// realistic inputs. This helper feeds 6 downstream tools — a regression
+    /// here silently breaks MR analytics across the whole suite.
+    ///
+    /// Mutations this test catches:
+    /// - Changing `/-/merge_requests/` → `/merge_requests/` (breaks subgroups)
+    /// - Replacing `strip_prefix('/')` with `trim_start_matches('/')` (works) vs
+    ///   `replace('/', "")` (silently flattens `group/subgroup/proj` to `groupsubgroupproj`)
+    /// - Returning `Some("?".to_string())` on parse failure instead of `None`
+    /// - Returning `Some("".to_string())` for malformed URLs
+    /// - Skipping the empty-string guard
+    /// - Using `references.full` first (corrupts on `!` in project names)
+    /// - Trimming the wrong number of path segments
+    #[test]
+    fn mr_project_path_extracts_correctly_across_url_shapes() {
+        // Standard project
+        let mr = json!({
+            "web_url": "https://gitlab.example.com/my-group/my-project/-/merge_requests/42"
+        });
+        assert_eq!(mr_project_path(&mr).as_deref(), Some("my-group/my-project"));
+
+        // Nested subgroup (the main mutation hazard — `find("/merge_requests/")` would match too early)
+        let mr = json!({
+            "web_url": "https://gitlab.example.com/org/team/backend/api/-/merge_requests/7"
+        });
+        assert_eq!(mr_project_path(&mr).as_deref(), Some("org/team/backend/api"));
+
+        // Self-hosted instance with non-default port
+        let mr = json!({
+            "web_url": "https://gitlab.internal.corp:8443/devops/platform/-/merge_requests/1"
+        });
+        assert_eq!(mr_project_path(&mr).as_deref(), Some("devops/platform"));
+
+        // Single-segment path (user namespace, no group)
+        let mr = json!({
+            "web_url": "https://gitlab.com/alice/personal-repo/-/merge_requests/3"
+        });
+        assert_eq!(mr_project_path(&mr).as_deref(), Some("alice/personal-repo"));
+
+        // Project name containing `!` (would corrupt naive `references.full` parsing)
+        let mr = json!({
+            "web_url": "https://gitlab.example.com/group/wow!stuff/-/merge_requests/1",
+            "references": {"full": "group/wow!stuff!1"}  // ambiguous on .split('!').next()
+        });
+        // web_url path-decoded keeps the `!` literally; we should still get the right path
+        assert_eq!(mr_project_path(&mr).as_deref(), Some("group/wow!stuff"));
+
+        // ── Negative cases — all must return None, NOT Some("?") or Some("") ──
+
+        // Missing web_url
+        assert_eq!(mr_project_path(&json!({})), None);
+
+        // web_url present but not a URL
+        let mr = json!({"web_url": "not-a-url"});
+        assert_eq!(mr_project_path(&mr), None);
+
+        // Wrong URL shape (no /-/merge_requests/ segment)
+        let mr = json!({"web_url": "https://gitlab.com/group/proj"});
+        assert_eq!(mr_project_path(&mr), None);
+
+        // The /merge_requests/ segment without the /-/ prefix must NOT match
+        // (catches the most plausible refactor mutation: dropping `/-/`)
+        let mr = json!({"web_url": "https://gitlab.com/group/proj/merge_requests/1"});
+        assert_eq!(mr_project_path(&mr), None);
+
+        // Empty path before the marker should yield None, not Some("")
+        let mr = json!({"web_url": "https://gitlab.com/-/merge_requests/1"});
+        assert_eq!(mr_project_path(&mr), None);
+
+        // web_url is the wrong type (number instead of string)
+        let mr = json!({"web_url": 42});
+        assert_eq!(mr_project_path(&mr), None);
+    }
+}
