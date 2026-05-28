@@ -1072,12 +1072,19 @@ impl GlMcpServer {
 #[tool_handler]
 impl ServerHandler for GlMcpServer {
     fn get_info(&self) -> ServerInfo {
+        // Include the version in the displayed name so `/mcp` in Claude Code
+        // shows e.g. "gl-mcp v0.16.0" instead of just "gl-mcp".
+        let version = env!("CARGO_PKG_VERSION");
         ServerInfo {
             protocol_version: ProtocolVersion::V_2025_06_18,
             capabilities: ServerCapabilities::builder()
                 .enable_tools()
                 .build(),
-            server_info: Implementation::from_build_env(),
+            server_info: Implementation {
+                name: format!("gl-mcp v{version}"),
+                version: version.to_string(),
+                ..Default::default()
+            },
             instructions: Some(
                 "GitLab MCP server — projects, issues, merge requests, CI/CD pipelines, commits, and code review.".to_string(),
             ),
