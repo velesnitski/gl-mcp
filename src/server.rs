@@ -1072,16 +1072,18 @@ impl GlMcpServer {
 #[tool_handler]
 impl ServerHandler for GlMcpServer {
     fn get_info(&self) -> ServerInfo {
-        // Include the version in the displayed name so `/mcp` in Claude Code
-        // shows e.g. "gl-mcp v0.16.0" instead of just "gl-mcp".
+        // Set both `name` (programmatic ID) and `title` (display name) so
+        // `/mcp` in Claude Code shows e.g. "gl-mcp v0.16.0".
         let version = env!("CARGO_PKG_VERSION");
+        let display = format!("gl-mcp v{version}");
         ServerInfo {
             protocol_version: ProtocolVersion::V_2025_06_18,
             capabilities: ServerCapabilities::builder()
                 .enable_tools()
                 .build(),
             server_info: Implementation {
-                name: format!("gl-mcp v{version}"),
+                name: display.clone(),
+                title: Some(display),
                 version: version.to_string(),
                 ..Default::default()
             },
