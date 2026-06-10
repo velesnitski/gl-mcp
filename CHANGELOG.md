@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-06-10
+
+### Added
+- `get_ai_adoption` — per-team Claude Code adoption scorecard: levels L0–L3, trajectory (↑→↓), quality flags (stale config, setup unused, no attribution, squash-hidden usage), in-flight branch radar, MR-description usage detection (survives squash), ADR cadence, config staleness, `.tasks`/`.claude` activity tracking
+- Version shown in MCP server name — `/mcp` displays "gl-mcp v0.17.0"
+- Mutation-resistant test suite for `mr_project_path` (11 input shapes)
+
+### Fixed
+- `list_branches` returned 400 on GitLab 17+ (invalid `sort`/`order_by` params); now uses `sort=updated_desc`
+- Adoption branch radar sorts branches by recent activity — alphabetical default buried real hits below the 100-branch cutoff
+- Browser user-agent / agency branch names no longer false-positive as AI work
+
+93 tools total.
+
 ## [0.16.0] - 2026-05-19
 
 ### Added
