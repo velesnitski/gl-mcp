@@ -269,6 +269,26 @@ async fn count_md_files(client: &GitLabClient, project_id: u64, path: &str, per_
         .count()
 }
 
+/// Count skills under `.claude/skills`. Supports both layouts: flat `<name>.md`
+/// files and the directory format `<name>/SKILL.md` (each subdirectory = one skill).
+async fn count_skills(client: &GitLabClient, project_id: u64) -> usize {
+    let entries: Vec<Value> = client
+        .get(
+            &format!("/projects/{project_id}/repository/tree"),
+            &[("path", ".claude/skills"), ("per_page", "100")],
+        )
+        .await
+        .unwrap_or_default();
+    entries
+        .iter()
+        .filter(|e| match e["type"].as_str() {
+            Some("blob") => e["name"].as_str().is_some_and(|n| n.ends_with(".md")),
+            Some("tree") => true, // directory-format skill
+            _ => false,
+        })
+        .count()
+}
+
 /// Detect all AI adoption markers for a single repo. Never fails — a broken
 /// repo just yields default (empty) markers so the group scan continues.
 async fn scan_repo(
@@ -336,7 +356,7 @@ async fn scan_repo(
             m.agents_count = count_md_files(client, project_id, ".claude/agents", "100").await;
         }
         if has_skills {
-            m.skills_count = count_md_files(client, project_id, ".claude/skills", "100").await;
+            m.skills_count = count_skills(client, project_id).await;
         }
     }
 
@@ -663,6 +683,19 @@ pub async fn get_ai_adoption(
         .filter(|r| !r.markers.has_any_marker() && !r.markers.branch_hits.is_empty())
         .collect();
 
+    // Invisible usage = AI-trailed commits but ZERO config markers. Devs adopted
+    // Claude on their own; the repo gives it no context. Sorted heaviest first.
+    let mut invisible: Vec<&RepoResult> = results
+        .iter()
+        .filter(|r| !r.markers.has_any_marker() && r.markers.ai_commits > 0)
+        .collect();
+    invisible.sort_by(|a, b| {
+        b.markers
+            .ai_pct()
+            .partial_cmp(&a.markers.ai_pct())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
     // Step 4: aggregate per team
     struct TeamStats {
         repos: usize,
@@ -810,6 +843,35 @@ pub async fn get_ai_adoption(
             let branch = r.markers.branch_hits.first().map(String::as_str).unwrap_or("?");
             let last = if r.last_activity.is_empty() { "–" } else { &r.last_activity };
             out.push(format!("| {short_path} | {branch} | {last} |"));
+        }
+    }
+
+    // Invisible usage section: heavy AI users with zero config
+    if !invisible.is_empty() {
+        out.push(String::new());
+        out.push("### Invisible usage (no config)".to_string());
+        out.push(String::new());
+        out.push("Devs adopted Claude on their own — the repo gives it no context. Cheapest win: add a CLAUDE.md.".to_string());
+        out.push(String::new());
+        out.push("| Repo | AI commits | Attribution |".to_string());
+        out.push("|------|-----------|-------------|".to_string());
+        for r in &invisible {
+            let short_path = r
+                .path
+                .strip_prefix(&format!("{group_path}/"))
+                .unwrap_or(&r.path);
+            let m = &r.markers;
+            let attribution = if m.ai_commits_default == 0 {
+                "squash-hidden (branches only)"
+            } else {
+                "visible on default"
+            };
+            out.push(format!(
+                "| {short_path} | {:.0}% ({}/{}) | {attribution} |",
+                m.ai_pct(),
+                m.ai_commits,
+                m.total_commits
+            ));
         }
     }
 
@@ -984,6 +1046,18 @@ pub async fn generate_ai_adoption_report(
     // funnel rows are disjoint.
     let l0_plain = level_counts[0] - in_flight.len();
     let adopting_count = level_counts[1] + level_counts[2] + level_counts[3];
+
+    // Invisible usage = AI-trailed commits but zero config markers, heaviest first.
+    let mut invisible: Vec<&RepoResult> = results
+        .iter()
+        .filter(|r| !r.markers.has_any_marker() && r.markers.ai_commits > 0)
+        .collect();
+    invisible.sort_by(|a, b| {
+        b.markers
+            .ai_pct()
+            .partial_cmp(&a.markers.ai_pct())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let adopting_markers: Vec<&RepoMarkers> = results
         .iter()
@@ -1247,6 +1321,34 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
                 esc(branch),
             ));
         }
+    }
+
+    // ── Invisible usage: heavy AI users with zero config ──
+
+    if !invisible.is_empty() {
+        html.push_str("<h2>Invisible usage (no config)</h2>\n");
+        html.push_str("<p class=\"sub\">Devs adopted Claude on their own &mdash; the repo gives it no context. Cheapest win: add a CLAUDE.md.</p>\n");
+        html.push_str("<table>\n<tr><th>Repo</th><th>AI Commits</th><th>Attribution</th></tr>\n");
+        for r in &invisible {
+            let short_path = r
+                .path
+                .strip_prefix(&format!("{group_path}/"))
+                .unwrap_or(&r.path);
+            let m = &r.markers;
+            let attribution = if m.ai_commits_default == 0 {
+                "<span class=\"y\">squash-hidden (branches only)</span>"
+            } else {
+                "<span class=\"g\">visible on default</span>"
+            };
+            html.push_str(&format!(
+                "<tr><td><b>{}</b></td><td>{:.0}% ({}/{})</td><td>{attribution}</td></tr>\n",
+                esc(short_path),
+                m.ai_pct(),
+                m.ai_commits,
+                m.total_commits
+            ));
+        }
+        html.push_str("</table>\n");
     }
 
     // ── Quality Flags ──
