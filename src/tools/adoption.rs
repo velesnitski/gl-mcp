@@ -18,9 +18,15 @@ const DORMANT_DAYS: i64 = 180;
 static AI_BRANCH_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"(?i)(claude|copilot|llm|agentic|agent|ai[-_])").unwrap());
 
+/// "agent" matches that are NOT about AI: browser user agents, agency, etc.
+static AI_BRANCH_EXCLUDE_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"(?i)(user[-_ ]?agents?|agency|agenda)").unwrap());
+
 /// True when a branch name looks AI-related.
 pub(crate) fn is_ai_branch(name: &str) -> bool {
-    AI_BRANCH_RE.is_match(name)
+    // Strip known false-positive phrases first so the remainder is judged on its own.
+    let cleaned = AI_BRANCH_EXCLUDE_RE.replace_all(name, "");
+    AI_BRANCH_RE.is_match(&cleaned)
 }
 
 /// Markers detected for a single repository.
@@ -1270,5 +1276,12 @@ mod tests {
         assert!(!is_ai_branch("main"));
         assert!(!is_ai_branch("fix/email-validation")); // "ai" inside a word, no -/_
         assert!(!is_ai_branch("release/2.0"));
+        // Browser user-agent branches are NOT AI work (real-world false positive)
+        assert!(!is_ai_branch("Feature/x-775-script-loading-rocket/UserAgent"));
+        assert!(!is_ai_branch("fix/user-agent-parsing"));
+        assert!(!is_ai_branch("feature/user_agents-table"));
+        assert!(!is_ai_branch("marketing/agency-page"));
+        // But a genuine agent branch alongside the word still matches
+        assert!(is_ai_branch("user-agent-and-claude-agents"));
     }
 }
