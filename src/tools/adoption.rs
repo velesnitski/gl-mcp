@@ -30,6 +30,10 @@ pub(crate) struct RepoMarkers {
     pub adr_count: usize,
     pub ai_commits: usize,
     pub total_commits: usize,
+    /// Commits touching `.tasks/` in the scan window — agent activity even without attribution.
+    pub tasks_recent_commits: usize,
+    /// Commits touching `.claude/` in the scan window.
+    pub claude_recent_commits: usize,
 }
 
 impl RepoMarkers {
@@ -55,14 +59,21 @@ impl RepoMarkers {
     }
 }
 
+/// Active usage = measurable AI commit share OR recent commits touching `.tasks/`.
+/// Teams often disable Co-Authored-By attribution (or squash strips it), so live
+/// task-state files are first-class usage evidence.
+pub(crate) fn has_active_usage(m: &RepoMarkers) -> bool {
+    m.ai_pct() >= 10.0 || m.tasks_recent_commits > 0
+}
+
 /// Compute the adoption level (0-3) for a repo from its markers.
 ///
 /// - L0 None: no markers at all
 /// - L1 Exploring: any config marker (CLAUDE.md / AGENTS.md / cursorrules / mcp.json)
 /// - L2 Practicing: CLAUDE.md + one of commands/settings/mcp/adr/hooks — OR agents with no AI commits
-/// - L3 Scaling: agents + skills + (ai_pct >= 10 OR tasks dir) — full agentic workflow in use
+/// - L3 Scaling: agents + active usage (ai_pct >= 10 OR recent .tasks commits) — agentic workflow in use
 pub(crate) fn adoption_level(m: &RepoMarkers) -> u8 {
-    if m.agents_count > 0 && m.skills_count > 0 && (m.ai_pct() >= 10.0 || m.tasks_dir) {
+    if m.agents_count > 0 && has_active_usage(m) {
         return 3;
     }
     let practicing = m.claude_md
@@ -85,8 +96,16 @@ pub(crate) fn quality_flags(m: &RepoMarkers) -> Vec<&'static str> {
     if m.claude_md && m.claude_md_size > 15000 {
         flags.push("bloated CLAUDE.md");
     }
-    if m.agents_count > 0 && m.ai_commits == 0 {
+    if m.agents_count > 0
+        && m.ai_commits == 0
+        && m.tasks_recent_commits == 0
+        && m.claude_recent_commits == 0
+    {
         flags.push("setup unused");
+    }
+    if (m.tasks_recent_commits > 0 || m.claude_recent_commits > 0) && m.ai_commits == 0 {
+        // Workflow is active but commits carry no Co-Authored-By trailer.
+        flags.push("no attribution");
     }
     if m.ai_pct() > 10.0 && !m.claude_md {
         flags.push("usage w/o config");
@@ -284,7 +303,33 @@ async fn scan_repo(
         })
         .count();
 
+    // 6. Agent activity without attribution: recent commits touching .tasks / .claude.
+    // Only queried for repos that have the marker — no extra calls for unmarked repos.
+    if m.tasks_dir {
+        m.tasks_recent_commits = count_path_commits(client, project_id, ".tasks", since).await;
+    }
+    if has_claude_dir {
+        m.claude_recent_commits = count_path_commits(client, project_id, ".claude", since).await;
+    }
+
     m
+}
+
+/// Count commits touching `path` since the window start. Returns 0 on any error.
+async fn count_path_commits(
+    client: &GitLabClient,
+    project_id: u64,
+    path: &str,
+    since: &str,
+) -> usize {
+    let commits: Vec<Value> = client
+        .get(
+            &format!("/projects/{project_id}/repository/commits"),
+            &[("path", path), ("since", since), ("per_page", "20")],
+        )
+        .await
+        .unwrap_or_default();
+    commits.len()
 }
 
 /// Team = second path segment: `group/team/repo` → `team`; `group/repo` → `(root)`.
@@ -483,11 +528,15 @@ pub async fn get_ai_adoption(
         let shown = adopting.len().min(25);
         for r in adopting.iter().take(25) {
             let m = &r.markers;
-            let ai_str = if m.total_commits == 0 {
+            let mut ai_str = if m.total_commits == 0 {
                 "0%".to_string()
             } else {
                 format!("{:.0}% ({}/{})", m.ai_pct(), m.ai_commits, m.total_commits)
             };
+            if m.tasks_recent_commits > 0 {
+                // Agent activity visible even when attribution is missing
+                ai_str.push_str(&format!(" +{} task commits", m.tasks_recent_commits));
+            }
             let flags = quality_flags(m);
             let flags_str = if flags.is_empty() {
                 "–".to_string()
@@ -532,6 +581,10 @@ pub async fn get_ai_adoption(
                     "- {}: setup unused — .claude/agents present, 0 AI commits in {days}d",
                     r.path
                 )),
+                "no attribution" => flag_lines.push(format!(
+                    "- {}: no attribution — {} .tasks / {} .claude commits in {days}d but 0 AI-trailed commits — enable Co-Authored-By attribution for measurable adoption",
+                    r.path, m.tasks_recent_commits, m.claude_recent_commits
+                )),
                 "usage w/o config" => flag_lines.push(format!(
                     "- {}: usage w/o config — {:.0}% AI commits but no CLAUDE.md (add one)",
                     r.path,
@@ -571,6 +624,15 @@ pub async fn get_ai_adoption(
     if no_config_count > 0 {
         recs.push(format!(
             "- {no_config_count} repos have AI commits but no CLAUDE.md — quick win: add one"
+        ));
+    }
+    let no_attribution_count = results
+        .iter()
+        .filter(|r| quality_flags(&r.markers).contains(&"no attribution"))
+        .count();
+    if no_attribution_count > 0 {
+        recs.push(format!(
+            "- {no_attribution_count} repos show agent activity without commit attribution — standardize Co-Authored-By trailers to measure adoption"
         ));
     }
     if !recs.is_empty() {
@@ -664,18 +726,53 @@ mod tests {
     }
 
     #[test]
-    fn test_level_3_via_tasks_dir() {
+    fn test_level_3_via_recent_task_commits() {
+        // Real-world case: agents in use, attribution disabled/squash-stripped —
+        // live .tasks activity is the usage evidence.
+        let m = RepoMarkers {
+            agents_count: 2,
+            tasks_dir: true,
+            tasks_recent_commits: 2,
+            total_commits: 30,
+            ai_commits: 0,
+            ..empty()
+        };
+        assert_eq!(adoption_level(&m), 3);
+        let flags = quality_flags(&m);
+        assert!(!flags.contains(&"setup unused"));
+        assert!(flags.contains(&"no attribution"));
+    }
+
+    #[test]
+    fn test_level_2_tasks_dir_without_recent_commits() {
+        // A stale .tasks dir is a marker, not active usage
         let m = RepoMarkers {
             agents_count: 2,
             skills_count: 1,
             tasks_dir: true,
+            tasks_recent_commits: 0,
             total_commits: 0,
             ai_commits: 0,
             ..empty()
         };
-        // tasks_dir substitutes for ai_pct, but agents with 0 AI commits also flags
-        assert_eq!(adoption_level(&m), 3);
+        assert_eq!(adoption_level(&m), 2);
         assert!(quality_flags(&m).contains(&"setup unused"));
+    }
+
+    #[test]
+    fn test_level_3_agents_with_ai_pct_no_skills() {
+        // Skills are a marker, not a gate: agents + measurable usage = scaling
+        let m = RepoMarkers {
+            claude_md: true,
+            claude_md_size: 2_000,
+            agents_count: 3,
+            skills_count: 0,
+            total_commits: 50,
+            ai_commits: 10, // 20% >= 10%
+            ..empty()
+        };
+        assert_eq!(adoption_level(&m), 3);
+        assert!(quality_flags(&m).is_empty());
     }
 
     #[test]
@@ -684,9 +781,42 @@ mod tests {
             agents_count: 3,
             total_commits: 40,
             ai_commits: 0,
+            tasks_recent_commits: 0,
+            claude_recent_commits: 0,
             ..empty()
         };
+        assert_eq!(adoption_level(&m), 2);
         assert!(quality_flags(&m).contains(&"setup unused"));
+    }
+
+    #[test]
+    fn test_no_setup_unused_when_claude_dir_active() {
+        // Recent .claude commits mean the setup is being maintained, not abandoned
+        let m = RepoMarkers {
+            agents_count: 3,
+            total_commits: 40,
+            ai_commits: 0,
+            claude_recent_commits: 4,
+            ..empty()
+        };
+        let flags = quality_flags(&m);
+        assert!(!flags.contains(&"setup unused"));
+        assert!(flags.contains(&"no attribution"));
+        // .claude activity alone is not usage evidence — stays L2
+        assert_eq!(adoption_level(&m), 2);
+    }
+
+    #[test]
+    fn test_no_attribution_not_flagged_when_ai_commits_present() {
+        let m = RepoMarkers {
+            agents_count: 2,
+            tasks_recent_commits: 5,
+            total_commits: 40,
+            ai_commits: 8, // 20%
+            ..empty()
+        };
+        assert!(!quality_flags(&m).contains(&"no attribution"));
+        assert_eq!(adoption_level(&m), 3);
     }
 
     #[test]
