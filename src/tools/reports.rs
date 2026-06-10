@@ -7,7 +7,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 /// Shared print CSS + export button for all HTML reports.
-const PRINT_CSS: &str = r#"
+pub(crate) const PRINT_CSS: &str = r#"
 @media print {
   body { background: #fff !important; color: #000 !important; padding: 16px !important; }
   h1, h2 { color: #000 !important; border-color: #ccc !important; }
@@ -32,7 +32,7 @@ const PRINT_CSS: &str = r#"
 }
 "#;
 
-const EXPORT_BUTTON: &str = r#"<div class="no-print" style="position:fixed;top:16px;right:16px;z-index:100">
+pub(crate) const EXPORT_BUTTON: &str = r#"<div class="no-print" style="position:fixed;top:16px;right:16px;z-index:100">
 <button onclick="window.print()" style="background:#238636;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">Export PDF</button>
 </div>"#;
 
@@ -1598,7 +1598,7 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
     Ok(html)
 }
 
-fn htmlescape(s: &str) -> String {
+pub(crate) fn htmlescape(s: &str) -> String {
     s.replace('&', "&amp;")
      .replace('<', "&lt;")
      .replace('>', "&gt;")

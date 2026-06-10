@@ -1227,6 +1227,17 @@ pub struct GenerateProjectReportParams {
 // ─── AI Adoption ───
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct GenerateAiAdoptionReportParams {
+    #[schemars(description = "Group path (e.g., 'my-org'). Scans all projects including subgroups.")]
+    pub group_path: String,
+    #[schemars(description = "Days of commit history to scan for AI co-authorship (default: 30)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    pub days: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetAiAdoptionParams {
     #[schemars(description = "Group path (e.g., 'my-org'). Scans all projects including subgroups.")]
     pub group_path: String,
