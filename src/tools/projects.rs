@@ -155,10 +155,11 @@ pub async fn list_branches(
         urlencoding::encode(project_id)
     );
 
+    // Branches API accepts sort=name_asc|updated_asc|updated_desc only;
+    // order_by is not a valid param and "desc" alone 400s on GitLab 17+.
     let mut params: Vec<(&str, &str)> = vec![
         ("per_page", &per_page_str),
-        ("order_by", "updated"),
-        ("sort", "desc"),
+        ("sort", "updated_desc"),
     ];
     if !search.is_empty() {
         params.push(("search", search));

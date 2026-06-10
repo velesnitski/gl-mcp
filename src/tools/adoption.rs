@@ -397,11 +397,13 @@ async fn scan_repo(
     }
 
     // 7. Branch radar: AI-named feature branches = in-flight work, even before any
-    // config lands on the default branch.
+    // config lands on the default branch. sort=updated_desc so recently active
+    // branches land in the first page — alphabetical default buried real hits
+    // below the per_page cutoff on branch-heavy repos.
     let branches: Vec<Value> = client
         .get(
             &format!("/projects/{project_id}/repository/branches"),
-            &[("per_page", "100")],
+            &[("per_page", "100"), ("sort", "updated_desc")],
         )
         .await
         .unwrap_or_default();
