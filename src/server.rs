@@ -1074,6 +1074,13 @@ impl GlMcpServer {
             tools::adoption::get_ai_adoption(client, &p.group_path, p.days.unwrap_or(30), p.summary_only.unwrap_or(false)).await
         )
     }
+
+    #[tool(description = "Generate an HTML AI adoption report for a GitLab group: level funnel, per-team scorecard, trajectories, in-flight pipeline, quality flags, recommendations. Dark theme with Export PDF. Save to file and open in browser.")]
+    async fn generate_ai_adoption_report(&self, Parameters(p): Parameters<GenerateAiAdoptionReportParams>) -> Result<CallToolResult, McpError> {
+        simple_tool!(self, p, "generate_ai_adoption_report", &p.group_path, |client|
+            tools::adoption::generate_ai_adoption_report(client, &p.group_path, p.days.unwrap_or(30)).await
+        )
+    }
 }
 
 // ─── ServerHandler ───
