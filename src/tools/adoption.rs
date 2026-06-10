@@ -189,21 +189,21 @@ fn has_flag(flags: &[String], flag: &str) -> bool {
 }
 
 /// Scan result for one repository.
-struct RepoResult {
-    path: String,
-    team: String,
+pub(crate) struct RepoResult {
+    pub path: String,
+    pub team: String,
     /// ISO date of last project activity (for the In-flight section).
-    last_activity: String,
-    markers: RepoMarkers,
+    pub last_activity: String,
+    pub markers: RepoMarkers,
 }
 
 impl RepoResult {
-    fn level(&self) -> u8 {
+    pub(crate) fn level(&self) -> u8 {
         adoption_level(&self.markers)
     }
 
     /// Compact marker list for the table, e.g. "CLAUDE.md, agents(6), skills(9), tasks".
-    fn marker_list(&self) -> String {
+    pub(crate) fn marker_list(&self) -> String {
         let m = &self.markers;
         let mut parts: Vec<String> = Vec::new();
         if m.claude_md {
@@ -514,14 +514,23 @@ fn team_of(path_with_namespace: &str) -> String {
     }
 }
 
-/// Scan a GitLab group for AI-assisted development adoption markers and
-/// return a per-team scorecard.
-pub async fn get_ai_adoption(
+/// Result of a full group adoption scan — shared by the markdown scorecard
+/// (`get_ai_adoption`) and the HTML report (`generate_ai_adoption_report`).
+pub(crate) struct AdoptionScan {
+    pub group: String,
+    pub days: u32,
+    /// Scanned repos with markers populated (preserves last_activity_at desc order).
+    pub active: Vec<RepoResult>,
+    pub dormant_count: usize,
+}
+
+/// Scan a GitLab group: list projects, skip dormant repos, detect AI adoption
+/// markers per repo (10× concurrent). Pure data — no formatting.
+pub(crate) async fn scan_group(
     client: &GitLabClient,
     group_path: &str,
     days: u32,
-    summary_only: bool,
-) -> Result<String> {
+) -> Result<AdoptionScan> {
     let encoded = urlencoding::encode(group_path);
 
     // Step 1: list group projects (max 3 pages = 300 repos)
@@ -539,7 +548,12 @@ pub async fn get_ai_adoption(
         .await?;
 
     if projects.is_empty() {
-        return Ok(format!("No projects found in group '{group_path}'."));
+        return Ok(AdoptionScan {
+            group: group_path.to_string(),
+            days,
+            active: Vec::new(),
+            dormant_count: 0,
+        });
     }
 
     let dormant_cutoff = chrono::Utc::now() - chrono::Duration::days(DORMANT_DAYS);
@@ -585,13 +599,7 @@ pub async fn get_ai_adoption(
         });
     }
 
-    if active.is_empty() {
-        return Ok(format!(
-            "Group '{group_path}': all {dormant} repos dormant (no activity in {DORMANT_DAYS}d). Nothing to scan."
-        ));
-    }
-
-    // Step 3: per-repo marker detection, batched 10× concurrent
+    // Step 2: per-repo marker detection, batched 10× concurrent
     let mut results: Vec<RepoResult> = Vec::new();
     for chunk in active.chunks(10) {
         let futs: Vec<_> = chunk
@@ -617,6 +625,36 @@ pub async fn get_ai_adoption(
         results.extend(join_all(futs).await);
     }
 
+    Ok(AdoptionScan {
+        group: group_path.to_string(),
+        days,
+        active: results,
+        dormant_count: dormant,
+    })
+}
+
+/// Scan a GitLab group for AI-assisted development adoption markers and
+/// return a per-team scorecard.
+pub async fn get_ai_adoption(
+    client: &GitLabClient,
+    group_path: &str,
+    days: u32,
+    summary_only: bool,
+) -> Result<String> {
+    let scan = scan_group(client, group_path, days).await?;
+
+    if scan.active.is_empty() {
+        if scan.dormant_count == 0 {
+            return Ok(format!("No projects found in group '{group_path}'."));
+        }
+        return Ok(format!(
+            "Group '{group_path}': all {} repos dormant (no activity in {DORMANT_DAYS}d). Nothing to scan.",
+            scan.dormant_count
+        ));
+    }
+
+    let results = scan.active;
+    let dormant = scan.dormant_count;
     let active_count = results.len();
 
     // In-flight = ONLY signal is AI-named branches (no config markers yet)
@@ -887,6 +925,451 @@ pub async fn get_ai_adoption(
     }
 
     Ok(out.join("\n"))
+}
+
+/// Attribution rate: among adopting repos that show active usage, the share
+/// whose usage is trailer-visible (`ai_commits > 0`). `None` when no adopting
+/// repo has usage evidence at all — there is nothing to attribute.
+pub(crate) fn attribution_rate(adopting: &[&RepoMarkers]) -> Option<f64> {
+    let with_usage: Vec<&&RepoMarkers> =
+        adopting.iter().filter(|m| has_active_usage(m)).collect();
+    if with_usage.is_empty() {
+        return None;
+    }
+    let visible = with_usage.iter().filter(|m| m.ai_commits > 0).count();
+    Some(visible as f64 / with_usage.len() as f64 * 100.0)
+}
+
+/// Generate a townhall-ready HTML AI adoption report for a GitLab group:
+/// level funnel, per-team scorecard, trajectories, in-flight pipeline,
+/// quality flags, and recommendations. Dark theme, print/PDF-friendly.
+pub async fn generate_ai_adoption_report(
+    client: &GitLabClient,
+    group_path: &str,
+    days: u32,
+) -> Result<String> {
+    use crate::tools::reports::{htmlescape as esc, EXPORT_BUTTON, PRINT_CSS};
+
+    let scan = scan_group(client, group_path, days).await?;
+
+    if scan.active.is_empty() {
+        if scan.dormant_count == 0 {
+            return Ok(format!("No projects found in group '{group_path}'."));
+        }
+        return Ok(format!(
+            "Group '{group_path}': all {} repos dormant (no activity in {DORMANT_DAYS}d). Nothing to scan.",
+            scan.dormant_count
+        ));
+    }
+
+    // The scan carries its own identity — single source of truth from here on.
+    let group_path = scan.group.as_str();
+    let days = scan.days;
+    let results = &scan.active;
+    let active_count = results.len();
+    let dormant = scan.dormant_count;
+    let date_str = chrono::Utc::now().format("%A, %d %B %Y").to_string();
+
+    // ── Aggregates ──
+
+    let mut level_counts = [0usize; 4];
+    for r in results {
+        level_counts[r.level() as usize] += 1;
+    }
+    let in_flight: Vec<&RepoResult> = results
+        .iter()
+        .filter(|r| !r.markers.has_any_marker() && !r.markers.branch_hits.is_empty())
+        .collect();
+    // In-flight repos are L0 by level — split them out of the L0 bucket so the
+    // funnel rows are disjoint.
+    let l0_plain = level_counts[0] - in_flight.len();
+    let adopting_count = level_counts[1] + level_counts[2] + level_counts[3];
+
+    let adopting_markers: Vec<&RepoMarkers> = results
+        .iter()
+        .filter(|r| r.level() >= 1)
+        .map(|r| &r.markers)
+        .collect();
+    let attr_rate = attribution_rate(&adopting_markers);
+    let attr_str = attr_rate
+        .map(|p| format!("{p:.0}%"))
+        .unwrap_or_else(|| "&ndash;".to_string());
+
+    // Per-team aggregation
+    struct TeamStats {
+        repos: usize,
+        adopting: usize,
+        best_level: u8,
+        up: usize,
+        steady: usize,
+        down: usize,
+        adopting_ai_pcts: Vec<f64>,
+    }
+    let mut teams: BTreeMap<String, TeamStats> = BTreeMap::new();
+    for r in results {
+        let stats = teams.entry(r.team.clone()).or_insert(TeamStats {
+            repos: 0,
+            adopting: 0,
+            best_level: 0,
+            up: 0,
+            steady: 0,
+            down: 0,
+            adopting_ai_pcts: Vec::new(),
+        });
+        stats.repos += 1;
+        let level = r.level();
+        if level >= 1 {
+            stats.adopting += 1;
+            stats.adopting_ai_pcts.push(r.markers.ai_pct());
+        }
+        if level > stats.best_level {
+            stats.best_level = level;
+        }
+        match trajectory(&r.markers) {
+            "↑" => stats.up += 1,
+            "→" => stats.steady += 1,
+            "↓" => stats.down += 1,
+            _ => {}
+        }
+    }
+
+    // ── HTML head + summary cards ──
+
+    let group_esc = esc(group_path);
+    let adopting_pct = adopting_count as f64 / active_count as f64 * 100.0;
+
+    let mut html = format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Adoption Report — {group_esc} — {date_str}</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0d1117;color:#c9d1d9;padding:32px;line-height:1.6}}
+h1{{color:#58a6ff;margin-bottom:8px;font-size:24px}}
+h2{{color:#58a6ff;margin:36px 0 16px;font-size:18px;border-bottom:1px solid #21262d;padding-bottom:8px}}
+.sub{{color:#8b949e;margin-bottom:24px;font-size:14px}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:16px 0}}
+.card{{background:#161b22;border:1px solid #21262d;border-radius:8px;padding:18px}}
+.card-t{{color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}}
+.card-v{{font-size:28px;font-weight:700}}
+.card-s{{color:#8b949e;font-size:12px;margin-top:4px}}
+.g{{color:#3fb950}}.r{{color:#f85149}}.y{{color:#d29922}}.b{{color:#58a6ff}}.gr{{color:#8b949e}}
+table{{width:100%;border-collapse:collapse;margin:12px 0}}
+th{{background:#161b22;color:#8b949e;text-align:left;padding:10px 14px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid #21262d}}
+td{{padding:10px 14px;border-bottom:1px solid #21262d;font-size:14px}}
+.issue{{background:#161b22;border:1px solid #21262d;border-radius:6px;padding:14px 18px;margin:8px 0}}
+.issue b{{font-weight:600}}.issue .m{{color:#8b949e;font-size:13px;margin-top:4px}}
+.risk{{border-left:3px solid #f85149}}.warn{{border-left:3px solid #d29922}}.ok{{border-left:3px solid #3fb950}}
+.bar{{height:10px;border-radius:4px;display:inline-block;vertical-align:middle;min-width:4px}}
+code{{background:#21262d;padding:1px 6px;border-radius:4px;font-size:13px}}
+details{{margin:24px 0;color:#8b949e;font-size:13px}}
+details summary{{cursor:pointer;color:#58a6ff}}
+details p{{margin-top:8px;max-width:900px}}
+footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484f58;font-size:12px}}
+{PRINT_CSS}
+</style>
+</head>
+<body>
+{EXPORT_BUTTON}
+
+<h1>AI Adoption Report — {group_esc}</h1>
+<div class="sub">Last {days} days &middot; {date_str} &middot; {active_count} active repos scanned, {dormant} dormant skipped</div>
+
+<!-- Summary Cards -->
+<div class="grid">
+  <div class="card"><div class="card-t">Active Repos</div><div class="card-v b">{active_count}</div><div class="card-s">{dormant} dormant skipped</div></div>
+  <div class="card"><div class="card-t">Adopting (L1+)</div><div class="card-v g">{adopting_count}</div><div class="card-s">{adopting_pct:.0}% of active</div></div>
+  <div class="card"><div class="card-t">In-flight</div><div class="card-v y">{in_flight_count}</div><div class="card-s">branch signals only</div></div>
+  <div class="card"><div class="card-t">Scaling (L3)</div><div class="card-v g">{l3}</div><div class="card-s">agents + active usage</div></div>
+  <div class="card"><div class="card-t">Attribution Rate</div><div class="card-v{attr_class}">{attr_str}</div><div class="card-s">usage visible via commit trailers</div></div>
+</div>
+"#,
+        in_flight_count = in_flight.len(),
+        l3 = level_counts[3],
+        attr_class = match attr_rate {
+            Some(p) if p < 50.0 => " y",
+            Some(_) => " g",
+            None => "",
+        },
+    );
+
+    // ── Level Funnel ──
+
+    html.push_str("<h2>Adoption Levels</h2>\n");
+    let funnel = [
+        ("L3 Scaling", level_counts[3], "#3fb950"),
+        ("L2 Practicing", level_counts[2], "#58a6ff"),
+        ("L1 Exploring", level_counts[1], "#d29922"),
+        ("In-flight", in_flight.len(), "#8b949e"),
+        ("L0 None", l0_plain, "#f85149"),
+    ];
+    let max_count = funnel.iter().map(|(_, c, _)| *c).max().unwrap_or(1).max(1);
+    let bar_max = 300usize;
+    for (label, count, color) in funnel {
+        let width = count * bar_max / max_count;
+        let pct = count as f64 / active_count as f64 * 100.0;
+        html.push_str(&format!(
+            "<div style=\"margin:6px 0;display:flex;align-items:center;gap:10px\"><span style=\"width:110px;font-weight:700;color:{color}\">{label}</span><span class=\"bar\" style=\"width:{width}px;background:{color}\"></span><span style=\"color:#8b949e;font-size:13px\">{count} ({pct:.0}%)</span></div>\n"
+        ));
+    }
+
+    // ── By Team ──
+
+    html.push_str("<h2>By Team</h2>\n<table>\n<tr><th>Team</th><th>Repos</th><th>Adopting</th><th>Best Level</th><th>Trajectory</th><th>AI-visible Usage</th></tr>\n");
+    for (name, s) in &teams {
+        let level_class = match s.best_level {
+            3 => "g",
+            2 => "b",
+            1 => "y",
+            _ => "r",
+        };
+        let mut traj_parts: Vec<String> = Vec::new();
+        if s.up > 0 {
+            traj_parts.push(format!("<span class=\"g\">{}&uarr;</span>", s.up));
+        }
+        if s.steady > 0 {
+            traj_parts.push(format!("<span class=\"gr\">{}&rarr;</span>", s.steady));
+        }
+        if s.down > 0 {
+            traj_parts.push(format!("<span class=\"r\">{}&darr;</span>", s.down));
+        }
+        let traj_str = if traj_parts.is_empty() {
+            "&ndash;".to_string()
+        } else {
+            traj_parts.join(" ")
+        };
+        let avg_pct = if s.adopting_ai_pcts.is_empty() {
+            "&ndash;".to_string()
+        } else {
+            format!(
+                "{:.0}%",
+                s.adopting_ai_pcts.iter().sum::<f64>() / s.adopting_ai_pcts.len() as f64
+            )
+        };
+        html.push_str(&format!(
+            "<tr><td><b>{}</b></td><td>{}</td><td>{}</td><td class=\"{level_class}\"><b>L{}</b></td><td>{traj_str}</td><td>{avg_pct}</td></tr>\n",
+            esc(name),
+            s.repos,
+            s.adopting,
+            s.best_level,
+        ));
+    }
+    html.push_str("</table>\n");
+
+    // ── Adopting Repos ──
+
+    let mut adopting: Vec<&RepoResult> = results.iter().filter(|r| r.level() >= 1).collect();
+    adopting.sort_by(|a, b| {
+        b.level().cmp(&a.level()).then(
+            b.markers
+                .ai_pct()
+                .partial_cmp(&a.markers.ai_pct())
+                .unwrap_or(std::cmp::Ordering::Equal),
+        )
+    });
+
+    html.push_str("<h2>Adopting Repos</h2>\n");
+    if adopting.is_empty() {
+        html.push_str("<p class=\"sub\">No repos with AI adoption markers found.</p>\n");
+    } else {
+        html.push_str("<table>\n<tr><th>Repo</th><th>Level</th><th>Traj</th><th>Markers</th><th>Usage</th><th>Flags</th></tr>\n");
+        for r in &adopting {
+            let m = &r.markers;
+            let level = r.level();
+            let level_class = match level {
+                3 => "g",
+                2 => "b",
+                _ => "y",
+            };
+            let traj_cell = match trajectory(m) {
+                "↑" => "<span class=\"g\">&uarr;</span>",
+                "↓" => "<span class=\"r\">&darr;</span>",
+                "→" => "<span class=\"gr\">&rarr;</span>",
+                _ => "",
+            };
+            let mut usage = if m.total_commits == 0 {
+                "0%".to_string()
+            } else {
+                format!("{:.0}% ({}/{})", m.ai_pct(), m.ai_commits, m.total_commits)
+            };
+            if m.ai_mr_count > 0 {
+                usage.push_str(&format!(" +{} MRs", m.ai_mr_count));
+            }
+            if m.tasks_recent_commits > 0 {
+                usage.push_str(&format!(" +{} task commits", m.tasks_recent_commits));
+            }
+            let flags = quality_flags(m);
+            let flags_str = if flags.is_empty() {
+                "&ndash;".to_string()
+            } else {
+                esc(&flags.join(", "))
+            };
+            let short_path = r
+                .path
+                .strip_prefix(&format!("{group_path}/"))
+                .unwrap_or(&r.path);
+            html.push_str(&format!(
+                "<tr><td><b>{}</b></td><td class=\"{level_class}\"><b>L{level}</b></td><td>{traj_cell}</td><td>{}</td><td>{usage}</td><td>{flags_str}</td></tr>\n",
+                esc(short_path),
+                esc(&r.marker_list()),
+            ));
+        }
+        html.push_str("</table>\n");
+    }
+
+    // ── In-flight pipeline ──
+
+    if !in_flight.is_empty() {
+        html.push_str("<h2>In-flight (adoption pipeline)</h2>\n");
+        html.push_str("<p class=\"sub\">AI work happening on feature branches — no config on the default branch yet.</p>\n");
+        for r in &in_flight {
+            let short_path = r
+                .path
+                .strip_prefix(&format!("{group_path}/"))
+                .unwrap_or(&r.path);
+            let branch = r
+                .markers
+                .branch_hits
+                .first()
+                .map(String::as_str)
+                .unwrap_or("?");
+            let last = if r.last_activity.is_empty() {
+                "&ndash;".to_string()
+            } else {
+                esc(&r.last_activity)
+            };
+            html.push_str(&format!(
+                "<div class=\"issue warn\"><b>{}</b> &mdash; branch <code>{}</code><div class=\"m\">Last activity {last} &middot; adoption pipeline: AI work in flight, expect config to land on default.</div></div>\n",
+                esc(short_path),
+                esc(branch),
+            ));
+        }
+    }
+
+    // ── Quality Flags ──
+
+    let mut flag_boxes: Vec<String> = Vec::new();
+    for r in results.iter() {
+        let m = &r.markers;
+        let repo = esc(&r.path);
+        for flag in quality_flags(m) {
+            match flag.as_str() {
+                "stale config (30+ commits behind)" => flag_boxes.push(format!(
+                    "<div class=\"issue risk\"><b>{repo} &mdash; stale config</b><div class=\"m\">CLAUDE.md last touched {} but {}+ commits since &mdash; refresh it.</div></div>\n",
+                    esc(m.claude_md_last_touch.as_deref().map(|t| &t[..t.len().min(10)]).unwrap_or("?")),
+                    m.total_commits,
+                )),
+                "setup unused" => flag_boxes.push(format!(
+                    "<div class=\"issue risk\"><b>{repo} &mdash; setup unused</b><div class=\"m\">.claude/agents present, 0 AI commits in {days}d.</div></div>\n"
+                )),
+                "no attribution" => flag_boxes.push(format!(
+                    "<div class=\"issue warn\"><b>{repo} &mdash; no attribution</b><div class=\"m\">{} .tasks / {} .claude commits in {days}d but 0 AI-trailed commits &mdash; enable Co-Authored-By attribution for measurable adoption.</div></div>\n",
+                    m.tasks_recent_commits, m.claude_recent_commits,
+                )),
+                "squash-hidden usage" => flag_boxes.push(format!(
+                    "<div class=\"issue warn\"><b>{repo} &mdash; squash-hidden usage</b><div class=\"m\">{} AI-trailed commits on feature branches, 0 on default &mdash; squash strips attribution at merge.</div></div>\n",
+                    m.ai_commits,
+                )),
+                "stub CLAUDE.md" => flag_boxes.push(format!(
+                    "<div class=\"issue warn\"><b>{repo} &mdash; stub CLAUDE.md</b><div class=\"m\">{}B &mdash; add real project context.</div></div>\n",
+                    m.claude_md_size,
+                )),
+                "bloated CLAUDE.md" => flag_boxes.push(format!(
+                    "<div class=\"issue warn\"><b>{repo} &mdash; bloated CLAUDE.md</b><div class=\"m\">{}KB &mdash; trim to essentials.</div></div>\n",
+                    m.claude_md_size / 1024,
+                )),
+                "usage w/o config" => flag_boxes.push(format!(
+                    "<div class=\"issue warn\"><b>{repo} &mdash; usage without config</b><div class=\"m\">{:.0}% AI commits but no CLAUDE.md &mdash; add one.</div></div>\n",
+                    m.ai_pct(),
+                )),
+                // in-flight flags have their own section above
+                _ => {}
+            }
+        }
+    }
+    if !flag_boxes.is_empty() {
+        html.push_str("<h2>Quality Flags</h2>\n");
+        for b in &flag_boxes {
+            html.push_str(b);
+        }
+    }
+
+    // ── Recommendations (same logic as the markdown scorecard) ──
+
+    let mut recs: Vec<String> = Vec::new();
+    for (name, s) in &teams {
+        if s.adopting == 0 && s.repos > 0 {
+            // Pilot candidate: most recently active repo of this team
+            // (results preserve the API's last_activity_at desc ordering)
+            let pilot = results
+                .iter()
+                .find(|r| &r.team == name)
+                .map(|r| r.path.as_str())
+                .unwrap_or("?");
+            recs.push(format!(
+                "<div class=\"issue warn\"><b>{} team: 0 adoption</b><div class=\"m\">No markers across {} active repos &mdash; pilot candidate: <code>{}</code>.</div></div>\n",
+                esc(name),
+                s.repos,
+                esc(pilot),
+            ));
+        }
+    }
+    let count_flag = |flag: &str| {
+        results
+            .iter()
+            .filter(|r| has_flag(&quality_flags(&r.markers), flag))
+            .count()
+    };
+    let no_config_count = count_flag("usage w/o config");
+    if no_config_count > 0 {
+        recs.push(format!(
+            "<div class=\"issue warn\"><b>{no_config_count} repo(s) with AI commits but no CLAUDE.md</b><div class=\"m\">Quick win: add one.</div></div>\n"
+        ));
+    }
+    let no_attribution_count = count_flag("no attribution");
+    if no_attribution_count > 0 {
+        recs.push(format!(
+            "<div class=\"issue warn\"><b>{no_attribution_count} repo(s) with agent activity but no commit attribution</b><div class=\"m\">Standardize Co-Authored-By trailers to measure adoption.</div></div>\n"
+        ));
+    }
+    let squash_hidden_count = count_flag("squash-hidden usage");
+    if squash_hidden_count > 0 {
+        recs.push(format!(
+            "<div class=\"issue warn\"><b>{squash_hidden_count} repo(s) lose attribution at merge</b><div class=\"m\">Check squash settings or rely on MR descriptions.</div></div>\n"
+        ));
+    }
+    if !in_flight.is_empty() {
+        recs.push(format!(
+            "<div class=\"issue warn\"><b>{} repo(s) with AI work on feature branches</b><div class=\"m\">Adoption pipeline &mdash; support these teams so config lands on default.</div></div>\n",
+            in_flight.len(),
+        ));
+    }
+    html.push_str("<h2>Recommendations</h2>\n");
+    if recs.is_empty() {
+        html.push_str("<div class=\"issue ok\"><b>No recommendations</b><div class=\"m\">Adoption practices look healthy for this period.</div></div>\n");
+    } else {
+        for r in &recs {
+            html.push_str(r);
+        }
+    }
+
+    // ── Methodology footnote ──
+
+    html.push_str(&format!(
+        "<details><summary>Methodology</summary><p>Levels: <b>L0</b> no AI tooling markers; <b>L1 Exploring</b> any config marker (CLAUDE.md, AGENTS.md, .cursorrules, .mcp.json); <b>L2 Practicing</b> CLAUDE.md plus shared workflow assets (commands, settings, MCP config, hooks, or an ADR log) &mdash; or agents configured but not yet used; <b>L3 Scaling</b> agents plus measurable usage (&ge;10% AI-trailed commits, recent <code>.tasks</code> activity, or AI-marked MR descriptions). Usage is measured across <i>all</i> branches over the last {days} days because squash-merge strips commit trailers from the default branch; MR descriptions and <code>.tasks</code>/<code>.claude</code> path activity count as first-class evidence. <b>In-flight</b> repos have AI-named feature branches but no config merged yet. Trajectory: &uarr; actively building (live AI branches or recent config/ADR maintenance), &rarr; steady use, &darr; markers present but unused and unmaintained. Attribution rate = share of adopting repos with usage evidence whose usage is visible via Co-Authored-By trailers. Repos with no activity in {DORMANT_DAYS} days are skipped as dormant.</p></details>\n"
+    ));
+
+    // ── Footer ──
+
+    html.push_str(&format!(
+        "\n<footer>gl-mcp v{} &middot; {date_str}</footer>\n\n</body>\n</html>",
+        env!("CARGO_PKG_VERSION"),
+    ));
+
+    Ok(html)
 }
 
 #[cfg(test)]
@@ -1285,5 +1768,43 @@ mod tests {
         assert!(!is_ai_branch("marketing/agency-page"));
         // But a genuine agent branch alongside the word still matches
         assert!(is_ai_branch("user-agent-and-claude-agents"));
+    }
+
+    // ── HTML report helpers ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_attribution_rate() {
+        // Trailer-visible usage
+        let visible = RepoMarkers {
+            claude_md: true,
+            total_commits: 50,
+            ai_commits: 10, // 20% — active usage AND trailer-visible
+            ..empty()
+        };
+        // Active usage via .tasks, but zero trailers — invisible to attribution
+        let hidden = RepoMarkers {
+            agents_count: 2,
+            tasks_dir: true,
+            tasks_recent_commits: 3,
+            total_commits: 40,
+            ai_commits: 0,
+            ..empty()
+        };
+        // Adopting (markers) but no usage at all — excluded from the denominator
+        let no_usage = RepoMarkers {
+            claude_md: true,
+            claude_md_size: 1_000,
+            total_commits: 30,
+            ..empty()
+        };
+
+        let rate = attribution_rate(&[&visible, &hidden, &no_usage]).unwrap();
+        assert!((rate - 50.0).abs() < 0.01); // 1 of 2 usage repos is trailer-visible
+
+        // All visible → 100%
+        assert!((attribution_rate(&[&visible]).unwrap() - 100.0).abs() < 0.01);
+        // No usage evidence anywhere → None (nothing to attribute)
+        assert!(attribution_rate(&[&no_usage]).is_none());
+        assert!(attribution_rate(&[]).is_none());
     }
 }
