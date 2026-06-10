@@ -1065,6 +1065,15 @@ impl GlMcpServer {
             tools::lint::validate_project_commits(client, &p.project_id, p.days.unwrap_or(14), p.branch.as_deref().unwrap_or("")).await
         )
     }
+
+    // ─── AI Adoption ───
+
+    #[tool(description = "Scan a GitLab group for AI-assisted development adoption: CLAUDE.md, .claude/agents, skills, MCP configs, ADR practice, and Co-Authored-By AI commits. Returns per-team scorecard with adoption levels (L0-L3) and quality flags.")]
+    async fn get_ai_adoption(&self, Parameters(p): Parameters<GetAiAdoptionParams>) -> Result<CallToolResult, McpError> {
+        simple_tool!(self, p, "get_ai_adoption", &p.group_path, |client|
+            tools::adoption::get_ai_adoption(client, &p.group_path, p.days.unwrap_or(30), p.summary_only.unwrap_or(false)).await
+        )
+    }
 }
 
 // ─── ServerHandler ───
