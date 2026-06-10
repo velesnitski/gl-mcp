@@ -9,9 +9,19 @@ use crate::error::Result;
 use futures::future::join_all;
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
 
 /// Repos with no activity in this many days are skipped as dormant.
 const DORMANT_DAYS: i64 = 180;
+
+/// Branch names that signal in-flight AI work (feature branches created by/for agents).
+static AI_BRANCH_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"(?i)(claude|copilot|llm|agentic|agent|ai[-_])").unwrap());
+
+/// True when a branch name looks AI-related.
+pub(crate) fn is_ai_branch(name: &str) -> bool {
+    AI_BRANCH_RE.is_match(name)
+}
 
 /// Markers detected for a single repository.
 #[derive(Debug, Default)]
@@ -28,12 +38,27 @@ pub(crate) struct RepoMarkers {
     pub cursor: bool,
     pub tasks_dir: bool,
     pub adr_count: usize,
+    /// AI-trailed commits across ALL branches in the scan window.
     pub ai_commits: usize,
+    /// All commits across ALL branches in the scan window.
     pub total_commits: usize,
+    /// AI-trailed commits on the default branch only (squash/merge can strip trailers).
+    pub ai_commits_default: usize,
     /// Commits touching `.tasks/` in the scan window — agent activity even without attribution.
     pub tasks_recent_commits: usize,
     /// Commits touching `.claude/` in the scan window.
     pub claude_recent_commits: usize,
+    /// AI-related branch names found (capped at 3).
+    pub branch_hits: Vec<String>,
+    /// MRs in the window whose description carries AI markers (survives squash).
+    pub ai_mr_count: usize,
+    pub total_mr_count: usize,
+    /// Commits touching `docs/adr` in the scan window.
+    pub adr_recent_commits: usize,
+    /// ISO date of the last commit touching CLAUDE.md (any time, not window-bound).
+    pub claude_md_last_touch: Option<String>,
+    /// CLAUDE.md last touched before the scan window started AND >= 30 commits since (lower bound).
+    pub claude_md_stale: bool,
 }
 
 impl RepoMarkers {
@@ -59,11 +84,38 @@ impl RepoMarkers {
     }
 }
 
-/// Active usage = measurable AI commit share OR recent commits touching `.tasks/`.
-/// Teams often disable Co-Authored-By attribution (or squash strips it), so live
-/// task-state files are first-class usage evidence.
+/// Active usage = measurable AI commit share OR recent commits touching `.tasks/`
+/// OR MRs with AI markers in the description. Teams often disable Co-Authored-By
+/// attribution (or squash strips it), so task-state files and MR descriptions are
+/// first-class usage evidence.
 pub(crate) fn has_active_usage(m: &RepoMarkers) -> bool {
-    m.ai_pct() >= 10.0 || m.tasks_recent_commits > 0
+    m.ai_pct() >= 10.0 || m.tasks_recent_commits > 0 || m.ai_mr_count > 0
+}
+
+/// Adoption trajectory for a repo:
+/// - "↑" actively building: AI feature branches in flight, or markers with recent
+///   `.claude/` or `docs/adr` maintenance
+/// - "↓" decaying: markers present but no usage and no maintenance
+/// - "→" steady: markers present, in use
+/// - ""  no signals at all
+pub(crate) fn trajectory(m: &RepoMarkers) -> &'static str {
+    let has_markers = m.has_any_marker();
+    if !has_markers && m.branch_hits.is_empty() {
+        return "";
+    }
+    if !m.branch_hits.is_empty()
+        || (has_markers && (m.claude_recent_commits > 0 || m.adr_recent_commits > 0))
+    {
+        return "↑";
+    }
+    if has_markers
+        && !has_active_usage(m)
+        && m.claude_recent_commits == 0
+        && m.tasks_recent_commits == 0
+    {
+        return "↓";
+    }
+    "→"
 }
 
 /// Compute the adoption level (0-3) for a repo from its markers.
@@ -88,35 +140,54 @@ pub(crate) fn adoption_level(m: &RepoMarkers) -> u8 {
 }
 
 /// Quality flags for a repo: anti-patterns and easy wins.
-pub(crate) fn quality_flags(m: &RepoMarkers) -> Vec<&'static str> {
-    let mut flags = Vec::new();
+pub(crate) fn quality_flags(m: &RepoMarkers) -> Vec<String> {
+    let mut flags: Vec<String> = Vec::new();
     if m.claude_md && m.claude_md_size < 200 {
-        flags.push("stub CLAUDE.md");
+        flags.push("stub CLAUDE.md".into());
     }
     if m.claude_md && m.claude_md_size > 15000 {
-        flags.push("bloated CLAUDE.md");
+        flags.push("bloated CLAUDE.md".into());
     }
     if m.agents_count > 0
         && m.ai_commits == 0
         && m.tasks_recent_commits == 0
         && m.claude_recent_commits == 0
+        && m.ai_mr_count == 0
     {
-        flags.push("setup unused");
+        flags.push("setup unused".into());
     }
     if (m.tasks_recent_commits > 0 || m.claude_recent_commits > 0) && m.ai_commits == 0 {
         // Workflow is active but commits carry no Co-Authored-By trailer.
-        flags.push("no attribution");
+        flags.push("no attribution".into());
     }
     if m.ai_pct() > 10.0 && !m.claude_md {
-        flags.push("usage w/o config");
+        flags.push("usage w/o config".into());
+    }
+    if m.ai_commits > 0 && m.ai_commits_default == 0 {
+        // Trailers exist on feature branches but merge/squash strips them from default.
+        flags.push("squash-hidden usage".into());
+    }
+    if !m.has_any_marker() && !m.branch_hits.is_empty() {
+        // No config landed yet, but AI work is happening on feature branches.
+        flags.push(format!("in-flight (branch: {})", m.branch_hits[0]));
+    }
+    if m.claude_md && m.claude_md_stale {
+        flags.push("stale config (30+ commits behind)".into());
     }
     flags
+}
+
+/// True if `flags` contains `flag` (exact match).
+fn has_flag(flags: &[String], flag: &str) -> bool {
+    flags.iter().any(|f| f == flag)
 }
 
 /// Scan result for one repository.
 struct RepoResult {
     path: String,
     team: String,
+    /// ISO date of last project activity (for the In-flight section).
+    last_activity: String,
     markers: RepoMarkers,
 }
 
@@ -160,7 +231,11 @@ impl RepoResult {
             parts.push("tasks".into());
         }
         if m.adr_count > 0 {
-            parts.push(format!("adr({})", m.adr_count));
+            if m.adr_recent_commits > 0 {
+                parts.push(format!("ADR active({})", m.adr_recent_commits));
+            } else {
+                parts.push("ADR stale".into());
+            }
         }
         if parts.is_empty() {
             "–".into()
@@ -280,28 +355,31 @@ async fn scan_repo(
             .unwrap_or(0);
     }
 
-    // 5. AI commit usage (one page is enough)
+    // 5. AI commit usage across ALL branches (one page is enough). Feature branches
+    // carry trailers that squash-merge strips from the default branch.
     let commits: Vec<Value> = client
         .get(
             &format!("/projects/{project_id}/repository/commits"),
-            &[("since", since), ("per_page", "100")],
+            &[("since", since), ("per_page", "100"), ("all", "true")],
         )
         .await
         .unwrap_or_default();
 
     m.total_commits = commits.len();
-    m.ai_commits = commits
-        .iter()
-        .filter(|c| {
-            let msg = c["message"].as_str().unwrap_or("");
-            let lower = msg.to_lowercase();
-            lower.contains("co-authored-by:")
-                && (lower.contains("claude")
-                    || lower.contains("copilot")
-                    || lower.contains("cursor")
-                    || msg.contains("AI"))
-        })
-        .count();
+    m.ai_commits = count_ai_commits(&commits);
+
+    // 5b. Default-branch-only recount — detects squash-hidden usage. Only worth a
+    // call when all-branch trailers exist at all.
+    if m.ai_commits > 0 {
+        let default_commits: Vec<Value> = client
+            .get(
+                &format!("/projects/{project_id}/repository/commits"),
+                &[("since", since), ("per_page", "100")],
+            )
+            .await
+            .unwrap_or_default();
+        m.ai_commits_default = count_ai_commits(&default_commits);
+    }
 
     // 6. Agent activity without attribution: recent commits touching .tasks / .claude.
     // Only queried for repos that have the marker — no extra calls for unmarked repos.
@@ -312,7 +390,93 @@ async fn scan_repo(
         m.claude_recent_commits = count_path_commits(client, project_id, ".claude", since).await;
     }
 
+    // 7. Branch radar: AI-named feature branches = in-flight work, even before any
+    // config lands on the default branch.
+    let branches: Vec<Value> = client
+        .get(
+            &format!("/projects/{project_id}/repository/branches"),
+            &[("per_page", "100")],
+        )
+        .await
+        .unwrap_or_default();
+    m.branch_hits = branches
+        .iter()
+        .filter_map(|b| b["name"].as_str())
+        .filter(|n| is_ai_branch(n))
+        .take(3)
+        .map(String::from)
+        .collect();
+
+    // 8. MR description scan — the most reliable usage signal: GitLab squash drops
+    // commit trailers, but MR descriptions survive. Only for repos with any signal.
+    if m.has_any_marker() || !m.branch_hits.is_empty() {
+        let mrs: Vec<Value> = client
+            .get(
+                &format!("/projects/{project_id}/merge_requests"),
+                &[("updated_after", since), ("state", "all"), ("per_page", "50")],
+            )
+            .await
+            .unwrap_or_default();
+        m.total_mr_count = mrs.len();
+        m.ai_mr_count = mrs
+            .iter()
+            .filter(|mr| {
+                let desc = mr["description"].as_str().unwrap_or("");
+                let lower = desc.to_lowercase();
+                lower.contains("generated with claude")
+                    || lower.contains("co-authored-by")
+                    || desc.contains("🤖")
+            })
+            .count();
+    }
+
+    // 9. ADR cadence — is the decision log alive or a one-time import?
+    if m.adr_count > 0 {
+        m.adr_recent_commits = count_path_commits(client, project_id, "docs/adr", since).await;
+    }
+
+    // 10. Config staleness — last commit ever touching CLAUDE.md (no since filter).
+    if m.claude_md {
+        let touches: Vec<Value> = client
+            .get(
+                &format!("/projects/{project_id}/repository/commits"),
+                &[("path", "CLAUDE.md"), ("per_page", "1")],
+            )
+            .await
+            .unwrap_or_default();
+        m.claude_md_last_touch = touches
+            .first()
+            .and_then(|c| c["created_at"].as_str())
+            .map(String::from);
+        // Stale = last touch predates the scan window AND >= 30 commits in the window
+        // (window count is only a lower bound on commits since the touch, hence "30+").
+        let touched_before_window = m
+            .claude_md_last_touch
+            .as_deref()
+            .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+            .zip(chrono::DateTime::parse_from_rfc3339(since).ok())
+            .map(|(touch, start)| touch < start)
+            .unwrap_or(false);
+        m.claude_md_stale = touched_before_window && m.total_commits >= 30;
+    }
+
     m
+}
+
+/// Count commits whose message carries an AI co-author trailer.
+fn count_ai_commits(commits: &[Value]) -> usize {
+    commits
+        .iter()
+        .filter(|c| {
+            let msg = c["message"].as_str().unwrap_or("");
+            let lower = msg.to_lowercase();
+            lower.contains("co-authored-by:")
+                && (lower.contains("claude")
+                    || lower.contains("copilot")
+                    || lower.contains("cursor")
+                    || msg.contains("AI"))
+        })
+        .count()
 }
 
 /// Count commits touching `path` since the window start. Returns 0 on any error.
@@ -380,6 +544,7 @@ pub async fn get_ai_adoption(
         id: u64,
         path: String,
         default_branch: String,
+        last_activity: String,
     }
 
     let mut active: Vec<ProjectMeta> = Vec::new();
@@ -405,6 +570,10 @@ pub async fn get_ai_adoption(
             id,
             path,
             default_branch: p["default_branch"].as_str().unwrap_or("").to_string(),
+            last_activity: p["last_activity_at"]
+                .as_str()
+                .map(|s| s.chars().take(10).collect())
+                .unwrap_or_default(),
         });
     }
 
@@ -424,12 +593,14 @@ pub async fn get_ai_adoption(
                 let id = meta.id;
                 let path = meta.path.clone();
                 let default_branch = meta.default_branch.clone();
+                let last_activity = meta.last_activity.clone();
                 let since = since.clone();
                 async move {
                     let markers = scan_repo(&client, id, &default_branch, &since).await;
                     RepoResult {
                         team: team_of(&path),
                         path,
+                        last_activity,
                         markers,
                     }
                 }
@@ -439,6 +610,12 @@ pub async fn get_ai_adoption(
     }
 
     let active_count = results.len();
+
+    // In-flight = ONLY signal is AI-named branches (no config markers yet)
+    let in_flight: Vec<&RepoResult> = results
+        .iter()
+        .filter(|r| !r.markers.has_any_marker() && !r.markers.branch_hits.is_empty())
+        .collect();
 
     // Step 4: aggregate per team
     struct TeamStats {
@@ -475,8 +652,13 @@ pub async fn get_ai_adoption(
                 format!("{name}: {}/{} adopting (best L{})", s.with_markers, s.repos, s.best_level)
             })
             .collect();
+        let in_flight_part = if in_flight.is_empty() {
+            String::new()
+        } else {
+            format!(" | {} in-flight", in_flight.len())
+        };
         return Ok(format!(
-            "{group_path}: {active_count} repos scanned, {dormant} dormant. {}",
+            "{group_path}: {active_count} repos scanned, {dormant} dormant. {}{in_flight_part}",
             team_parts.join(" | ")
         ));
     }
@@ -522,8 +704,8 @@ pub async fn get_ai_adoption(
     if adopting.is_empty() {
         out.push("No repos with AI adoption markers found.".to_string());
     } else {
-        out.push("| Repo | Level | Markers | AI commits | Flags |".to_string());
-        out.push("|------|-------|---------|-----------|-------|".to_string());
+        out.push("| Repo | Level | Traj | Markers | AI commits | Flags |".to_string());
+        out.push("|------|-------|------|---------|-----------|-------|".to_string());
 
         let shown = adopting.len().min(25);
         for r in adopting.iter().take(25) {
@@ -533,6 +715,10 @@ pub async fn get_ai_adoption(
             } else {
                 format!("{:.0}% ({}/{})", m.ai_pct(), m.ai_commits, m.total_commits)
             };
+            if m.ai_mr_count > 0 {
+                // Squash-proof signal: AI markers in MR descriptions
+                ai_str.push_str(&format!(" +{} MRs", m.ai_mr_count));
+            }
             if m.tasks_recent_commits > 0 {
                 // Agent activity visible even when attribution is missing
                 ai_str.push_str(&format!(" +{} task commits", m.tasks_recent_commits));
@@ -549,8 +735,9 @@ pub async fn get_ai_adoption(
                 .strip_prefix(&format!("{group_path}/"))
                 .unwrap_or(&r.path);
             out.push(format!(
-                "| {short_path} | L{} | {} | {ai_str} | {flags_str} |",
+                "| {short_path} | L{} | {} | {} | {ai_str} | {flags_str} |",
                 r.level(),
+                trajectory(m),
                 r.marker_list()
             ));
         }
@@ -562,12 +749,30 @@ pub async fn get_ai_adoption(
         }
     }
 
+    // In-flight section: AI work on feature branches before any config lands
+    if !in_flight.is_empty() {
+        out.push(String::new());
+        out.push("### In-flight (branch signals only)".to_string());
+        out.push(String::new());
+        out.push("| Repo | Branch | Last activity |".to_string());
+        out.push("|------|--------|---------------|".to_string());
+        for r in &in_flight {
+            let short_path = r
+                .path
+                .strip_prefix(&format!("{group_path}/"))
+                .unwrap_or(&r.path);
+            let branch = r.markers.branch_hits.first().map(String::as_str).unwrap_or("?");
+            let last = if r.last_activity.is_empty() { "–" } else { &r.last_activity };
+            out.push(format!("| {short_path} | {branch} | {last} |"));
+        }
+    }
+
     // Quality flags section
     let mut flag_lines: Vec<String> = Vec::new();
     for r in &results {
         let m = &r.markers;
         for flag in quality_flags(m) {
-            match flag {
+            match flag.as_str() {
                 "bloated CLAUDE.md" => flag_lines.push(format!(
                     "- {}: bloated CLAUDE.md ({}KB) — trim to essentials",
                     r.path,
@@ -589,6 +794,23 @@ pub async fn get_ai_adoption(
                     "- {}: usage w/o config — {:.0}% AI commits but no CLAUDE.md (add one)",
                     r.path,
                     m.ai_pct()
+                )),
+                "squash-hidden usage" => flag_lines.push(format!(
+                    "- {}: squash-hidden usage — {} AI-trailed commits on feature branches, 0 on default — squash strips attribution at merge",
+                    r.path, m.ai_commits
+                )),
+                "stale config (30+ commits behind)" => flag_lines.push(format!(
+                    "- {}: stale config — CLAUDE.md last touched {} but {}+ commits since — refresh it",
+                    r.path,
+                    m.claude_md_last_touch
+                        .as_deref()
+                        .map(|t| &t[..t.len().min(10)])
+                        .unwrap_or("?"),
+                    m.total_commits
+                )),
+                f if f.starts_with("in-flight") => flag_lines.push(format!(
+                    "- {}: {f} — AI work on feature branches, no config on default yet",
+                    r.path
                 )),
                 _ => {}
             }
@@ -619,7 +841,7 @@ pub async fn get_ai_adoption(
     }
     let no_config_count = results
         .iter()
-        .filter(|r| quality_flags(&r.markers).contains(&"usage w/o config"))
+        .filter(|r| has_flag(&quality_flags(&r.markers), "usage w/o config"))
         .count();
     if no_config_count > 0 {
         recs.push(format!(
@@ -628,11 +850,26 @@ pub async fn get_ai_adoption(
     }
     let no_attribution_count = results
         .iter()
-        .filter(|r| quality_flags(&r.markers).contains(&"no attribution"))
+        .filter(|r| has_flag(&quality_flags(&r.markers), "no attribution"))
         .count();
     if no_attribution_count > 0 {
         recs.push(format!(
             "- {no_attribution_count} repos show agent activity without commit attribution — standardize Co-Authored-By trailers to measure adoption"
+        ));
+    }
+    let squash_hidden_count = results
+        .iter()
+        .filter(|r| has_flag(&quality_flags(&r.markers), "squash-hidden usage"))
+        .count();
+    if squash_hidden_count > 0 {
+        recs.push(format!(
+            "- {squash_hidden_count} repos lose attribution at merge — check squash settings or rely on MR descriptions"
+        ));
+    }
+    if !in_flight.is_empty() {
+        recs.push(format!(
+            "- {} repos have AI work on feature branches — adoption pipeline",
+            in_flight.len()
         ));
     }
     if !recs.is_empty() {
@@ -650,6 +887,11 @@ mod tests {
 
     fn empty() -> RepoMarkers {
         RepoMarkers::default()
+    }
+
+    /// Exact-match flag lookup (quality_flags returns owned Strings).
+    fn fl(m: &RepoMarkers, flag: &str) -> bool {
+        quality_flags(m).iter().any(|f| f == flag)
     }
 
     #[test]
@@ -738,9 +980,8 @@ mod tests {
             ..empty()
         };
         assert_eq!(adoption_level(&m), 3);
-        let flags = quality_flags(&m);
-        assert!(!flags.contains(&"setup unused"));
-        assert!(flags.contains(&"no attribution"));
+        assert!(!fl(&m, "setup unused"));
+        assert!(fl(&m, "no attribution"));
     }
 
     #[test]
@@ -756,7 +997,7 @@ mod tests {
             ..empty()
         };
         assert_eq!(adoption_level(&m), 2);
-        assert!(quality_flags(&m).contains(&"setup unused"));
+        assert!(fl(&m, "setup unused"));
     }
 
     #[test]
@@ -769,6 +1010,7 @@ mod tests {
             skills_count: 0,
             total_commits: 50,
             ai_commits: 10, // 20% >= 10%
+            ai_commits_default: 10,
             ..empty()
         };
         assert_eq!(adoption_level(&m), 3);
@@ -786,7 +1028,7 @@ mod tests {
             ..empty()
         };
         assert_eq!(adoption_level(&m), 2);
-        assert!(quality_flags(&m).contains(&"setup unused"));
+        assert!(fl(&m, "setup unused"));
     }
 
     #[test]
@@ -799,9 +1041,8 @@ mod tests {
             claude_recent_commits: 4,
             ..empty()
         };
-        let flags = quality_flags(&m);
-        assert!(!flags.contains(&"setup unused"));
-        assert!(flags.contains(&"no attribution"));
+        assert!(!fl(&m, "setup unused"));
+        assert!(fl(&m, "no attribution"));
         // .claude activity alone is not usage evidence — stays L2
         assert_eq!(adoption_level(&m), 2);
     }
@@ -813,9 +1054,10 @@ mod tests {
             tasks_recent_commits: 5,
             total_commits: 40,
             ai_commits: 8, // 20%
+            ai_commits_default: 8,
             ..empty()
         };
-        assert!(!quality_flags(&m).contains(&"no attribution"));
+        assert!(!fl(&m, "no attribution"));
         assert_eq!(adoption_level(&m), 3);
     }
 
@@ -827,7 +1069,7 @@ mod tests {
             ai_commits: 15, // 15% > 10%
             ..empty()
         };
-        assert!(quality_flags(&m).contains(&"usage w/o config"));
+        assert!(fl(&m, "usage w/o config"));
         // Has AI commits but no config markers — still L0 by marker rules
         assert_eq!(adoption_level(&m), 0);
     }
@@ -835,13 +1077,13 @@ mod tests {
     #[test]
     fn test_flag_stub_claude_md() {
         let m = RepoMarkers { claude_md: true, claude_md_size: 50, ..empty() };
-        assert!(quality_flags(&m).contains(&"stub CLAUDE.md"));
+        assert!(fl(&m, "stub CLAUDE.md"));
     }
 
     #[test]
     fn test_flag_bloated_claude_md() {
         let m = RepoMarkers { claude_md: true, claude_md_size: 22_000, ..empty() };
-        assert!(quality_flags(&m).contains(&"bloated CLAUDE.md"));
+        assert!(fl(&m, "bloated CLAUDE.md"));
     }
 
     #[test]
@@ -851,6 +1093,7 @@ mod tests {
             claude_md_size: 3_000,
             total_commits: 20,
             ai_commits: 5,
+            ai_commits_default: 5,
             ..empty()
         };
         assert!(quality_flags(&m).is_empty());
@@ -868,5 +1111,164 @@ mod tests {
         assert_eq!(team_of("my-org/wordpress/site-repo"), "wordpress");
         assert_eq!(team_of("group/repo"), "(root)");
         assert_eq!(team_of("a/b/c/d"), "b");
+    }
+
+    // ── v2 signals ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_flag_squash_hidden_usage() {
+        // Trailers on feature branches but none on default = squash strips them
+        let m = RepoMarkers {
+            claude_md: true,
+            claude_md_size: 1_000,
+            total_commits: 50,
+            ai_commits: 5,
+            ai_commits_default: 0,
+            ..empty()
+        };
+        assert!(fl(&m, "squash-hidden usage"));
+
+        let ok = RepoMarkers { ai_commits_default: 5, ..m };
+        assert!(!fl(&ok, "squash-hidden usage"));
+    }
+
+    #[test]
+    fn test_in_flight_branch_only() {
+        // No markers at all — only an AI-named feature branch
+        let m = RepoMarkers {
+            branch_hits: vec!["feature/claude-import".into()],
+            total_commits: 12,
+            ..empty()
+        };
+        assert_eq!(adoption_level(&m), 0);
+        assert_eq!(trajectory(&m), "↑");
+        assert!(fl(&m, "in-flight (branch: feature/claude-import)"));
+
+        // With a marker present, the repo is no longer "in-flight only"
+        let with_marker = RepoMarkers {
+            claude_md: true,
+            claude_md_size: 1_000,
+            branch_hits: vec!["feature/claude-import".into()],
+            ..empty()
+        };
+        assert!(!quality_flags(&with_marker).iter().any(|f| f.starts_with("in-flight")));
+    }
+
+    #[test]
+    fn test_level_3_via_ai_mr_descriptions() {
+        // Squash drops trailers, but MR descriptions survive — usage evidence
+        let m = RepoMarkers {
+            agents_count: 2,
+            total_commits: 40,
+            ai_commits: 0,
+            ai_mr_count: 2,
+            total_mr_count: 10,
+            ..empty()
+        };
+        assert!(has_active_usage(&m));
+        assert_eq!(adoption_level(&m), 3);
+        assert!(!fl(&m, "setup unused"));
+    }
+
+    #[test]
+    fn test_flag_stale_config() {
+        // Precomputed during scan: last touch before window AND >= 30 commits
+        let stale = RepoMarkers {
+            claude_md: true,
+            claude_md_size: 1_000,
+            claude_md_last_touch: Some("2025-01-15T10:00:00Z".into()),
+            claude_md_stale: true,
+            total_commits: 45,
+            ..empty()
+        };
+        assert!(fl(&stale, "stale config (30+ commits behind)"));
+
+        let fresh = RepoMarkers { claude_md_stale: false, ..stale };
+        assert!(!fl(&fresh, "stale config (30+ commits behind)"));
+    }
+
+    #[test]
+    fn test_trajectory_up_via_maintenance() {
+        // Markers + recent .claude or docs/adr commits = actively building
+        let m = RepoMarkers {
+            claude_md: true,
+            claude_md_size: 1_000,
+            claude_recent_commits: 3,
+            ..empty()
+        };
+        assert_eq!(trajectory(&m), "↑");
+
+        let adr = RepoMarkers {
+            claude_md: true,
+            claude_md_size: 1_000,
+            adr_count: 4,
+            adr_recent_commits: 2,
+            claude_recent_commits: 0,
+            ..empty()
+        };
+        assert_eq!(trajectory(&adr), "↑");
+    }
+
+    #[test]
+    fn test_trajectory_up_wins_over_down() {
+        // Decaying usage but a live AI branch → still "↑" (building beats decaying)
+        let m = RepoMarkers {
+            claude_md: true,
+            claude_md_size: 1_000,
+            branch_hits: vec!["agentic-refactor".into()],
+            total_commits: 30,
+            ai_commits: 0,
+            ..empty()
+        };
+        assert_eq!(trajectory(&m), "↑");
+    }
+
+    #[test]
+    fn test_trajectory_steady() {
+        // Markers + active usage, no config churn = steady
+        let m = RepoMarkers {
+            claude_md: true,
+            claude_md_size: 1_000,
+            total_commits: 50,
+            ai_commits: 20,
+            ai_commits_default: 20,
+            ..empty()
+        };
+        assert_eq!(trajectory(&m), "→");
+    }
+
+    #[test]
+    fn test_trajectory_decaying() {
+        // Markers but no usage and no maintenance = decaying
+        let m = RepoMarkers {
+            claude_md: true,
+            claude_md_size: 1_000,
+            total_commits: 30,
+            ai_commits: 0,
+            ..empty()
+        };
+        assert_eq!(trajectory(&m), "↓");
+    }
+
+    #[test]
+    fn test_trajectory_empty_for_no_signals() {
+        assert_eq!(trajectory(&empty()), "");
+        // Commits alone are not a signal
+        let m = RepoMarkers { total_commits: 80, ..empty() };
+        assert_eq!(trajectory(&m), "");
+    }
+
+    #[test]
+    fn test_ai_branch_regex() {
+        assert!(is_ai_branch("feature/claude-import"));
+        assert!(is_ai_branch("COPILOT-fixes"));
+        assert!(is_ai_branch("llm-experiments"));
+        assert!(is_ai_branch("agentic-refactor"));
+        assert!(is_ai_branch("agent/task-42"));
+        assert!(is_ai_branch("ai-assist"));
+        assert!(is_ai_branch("ai_review"));
+        assert!(!is_ai_branch("main"));
+        assert!(!is_ai_branch("fix/email-validation")); // "ai" inside a word, no -/_
+        assert!(!is_ai_branch("release/2.0"));
     }
 }
