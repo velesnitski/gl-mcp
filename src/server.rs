@@ -1071,14 +1071,14 @@ impl GlMcpServer {
     #[tool(description = "Scan a GitLab group for AI-assisted development adoption: CLAUDE.md, .claude/agents, skills, MCP configs, ADR practice, and Co-Authored-By AI commits. Returns per-team scorecard with adoption levels (L0-L3) and quality flags.")]
     async fn get_ai_adoption(&self, Parameters(p): Parameters<GetAiAdoptionParams>) -> Result<CallToolResult, McpError> {
         simple_tool!(self, p, "get_ai_adoption", &p.group_path, |client|
-            tools::adoption::get_ai_adoption(client, &p.group_path, p.days.unwrap_or(30), p.summary_only.unwrap_or(false)).await
+            tools::adoption::get_ai_adoption(client, &p.group_path, p.days.unwrap_or(30), p.dormant_days.unwrap_or(tools::adoption::DORMANT_DAYS), p.summary_only.unwrap_or(false)).await
         )
     }
 
     #[tool(description = "Generate an HTML AI adoption report for a GitLab group: level funnel, per-team scorecard, trajectories, in-flight pipeline, quality flags, recommendations. Dark theme with Export PDF. Save to file and open in browser.")]
     async fn generate_ai_adoption_report(&self, Parameters(p): Parameters<GenerateAiAdoptionReportParams>) -> Result<CallToolResult, McpError> {
         simple_tool!(self, p, "generate_ai_adoption_report", &p.group_path, |client|
-            tools::adoption::generate_ai_adoption_report(client, &p.group_path, p.days.unwrap_or(30)).await
+            tools::adoption::generate_ai_adoption_report(client, &p.group_path, p.days.unwrap_or(30), p.dormant_days.unwrap_or(tools::adoption::DORMANT_DAYS)).await
         )
     }
 }
