@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-06-11
+
+### Added
+- `generate_ai_adoption_report` — HTML adoption scorecard: summary cards, level funnel, per-team trajectories, in-flight pipeline, quality flags, collapsible methodology, Export PDF
+- "Invisible usage" section in both report formats — repos with AI-trailed commits but zero config, sorted heaviest first with squash-hidden attribution status
+- Dormant repo visibility: per-team Dormant column, collapsible archive-candidates list (oldest first), `dormant_days` parameter (default 180)
+
+### Fixed
+- Skills in the directory format (`skills/<name>/SKILL.md`) were counted as 0 — each subdirectory now counts as one skill
+
+94 tools total.
+
 ## [0.17.0] - 2026-06-10
 
 ### Added
