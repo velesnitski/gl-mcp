@@ -1233,6 +1233,9 @@ pub struct GenerateAiAdoptionReportParams {
     #[schemars(description = "Days of commit history to scan for AI co-authorship (default: 30)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub days: Option<u32>,
+    #[schemars(description = "Days of inactivity before a repo is skipped as dormant (default: 180)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    pub dormant_days: Option<u32>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }
@@ -1244,6 +1247,9 @@ pub struct GetAiAdoptionParams {
     #[schemars(description = "Days of commit history to scan for AI co-authorship (default: 30)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub days: Option<u32>,
+    #[schemars(description = "Days of inactivity before a repo is skipped as dormant (default: 180)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    pub dormant_days: Option<u32>,
     #[schemars(description = "Return compact one-line summary (~5x smaller). Use first to scan.")]
     pub summary_only: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
