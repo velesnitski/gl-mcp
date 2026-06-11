@@ -11,8 +11,9 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
-/// Repos with no activity in this many days are skipped as dormant.
-const DORMANT_DAYS: i64 = 180;
+/// Default for `dormant_days`: repos with no activity in this many days are
+/// skipped as dormant.
+pub(crate) const DORMANT_DAYS: u32 = 180;
 
 /// Branch names that signal in-flight AI work (feature branches created by/for agents).
 static AI_BRANCH_RE: LazyLock<regex::Regex> =
@@ -534,14 +535,54 @@ fn team_of(path_with_namespace: &str) -> String {
     }
 }
 
+/// A repo skipped as dormant — kept for archive-candidate visibility.
+/// All fields come from the project listing; zero extra API calls.
+#[derive(Debug, Clone)]
+pub(crate) struct DormantRepo {
+    /// path_with_namespace
+    pub path: String,
+    /// Same `team_of()` mapping as active repos.
+    pub team: String,
+    /// ISO date of last project activity (truncated to 10 chars for display).
+    pub last_activity: String,
+}
+
+/// Dormant repos sorted oldest-first by last activity (unknown dates last).
+pub(crate) fn sorted_dormant(dormant: &[DormantRepo]) -> Vec<&DormantRepo> {
+    let mut sorted: Vec<&DormantRepo> = dormant.iter().collect();
+    sorted.sort_by(|a, b| {
+        (a.last_activity.is_empty(), &a.last_activity)
+            .cmp(&(b.last_activity.is_empty(), &b.last_activity))
+    });
+    sorted
+}
+
+/// Per-team dormant repo counts.
+pub(crate) fn dormant_by_team(dormant: &[DormantRepo]) -> BTreeMap<String, usize> {
+    let mut map: BTreeMap<String, usize> = BTreeMap::new();
+    for d in dormant {
+        *map.entry(d.team.clone()).or_insert(0) += 1;
+    }
+    map
+}
+
 /// Result of a full group adoption scan — shared by the markdown scorecard
 /// (`get_ai_adoption`) and the HTML report (`generate_ai_adoption_report`).
 pub(crate) struct AdoptionScan {
     pub group: String,
     pub days: u32,
+    /// Inactivity threshold (days) used for this scan.
+    pub dormant_days: u32,
     /// Scanned repos with markers populated (preserves last_activity_at desc order).
     pub active: Vec<RepoResult>,
-    pub dormant_count: usize,
+    /// Repos skipped as dormant (archive candidates).
+    pub dormant: Vec<DormantRepo>,
+}
+
+impl AdoptionScan {
+    pub(crate) fn dormant_count(&self) -> usize {
+        self.dormant.len()
+    }
 }
 
 /// Scan a GitLab group: list projects, skip dormant repos, detect AI adoption
@@ -550,6 +591,7 @@ pub(crate) async fn scan_group(
     client: &GitLabClient,
     group_path: &str,
     days: u32,
+    dormant_days: u32,
 ) -> Result<AdoptionScan> {
     let encoded = urlencoding::encode(group_path);
 
@@ -571,12 +613,13 @@ pub(crate) async fn scan_group(
         return Ok(AdoptionScan {
             group: group_path.to_string(),
             days,
+            dormant_days,
             active: Vec::new(),
-            dormant_count: 0,
+            dormant: Vec::new(),
         });
     }
 
-    let dormant_cutoff = chrono::Utc::now() - chrono::Duration::days(DORMANT_DAYS);
+    let dormant_cutoff = chrono::Utc::now() - chrono::Duration::days(dormant_days as i64);
     let since = (chrono::Utc::now() - chrono::Duration::days(days as i64))
         .format("%Y-%m-%dT00:00:00Z")
         .to_string();
@@ -590,7 +633,7 @@ pub(crate) async fn scan_group(
     }
 
     let mut active: Vec<ProjectMeta> = Vec::new();
-    let mut dormant = 0usize;
+    let mut dormant: Vec<DormantRepo> = Vec::new();
 
     for p in &projects {
         let id = match p["id"].as_u64() {
@@ -604,18 +647,23 @@ pub(crate) async fn scan_group(
         let is_dormant = last_activity
             .map(|dt| dt < dormant_cutoff)
             .unwrap_or(false);
+        let last_activity_date: String = p["last_activity_at"]
+            .as_str()
+            .map(|s| s.chars().take(10).collect())
+            .unwrap_or_default();
         if is_dormant {
-            dormant += 1;
+            dormant.push(DormantRepo {
+                team: team_of(&path),
+                path,
+                last_activity: last_activity_date,
+            });
             continue;
         }
         active.push(ProjectMeta {
             id,
             path,
             default_branch: p["default_branch"].as_str().unwrap_or("").to_string(),
-            last_activity: p["last_activity_at"]
-                .as_str()
-                .map(|s| s.chars().take(10).collect())
-                .unwrap_or_default(),
+            last_activity: last_activity_date,
         });
     }
 
@@ -648,8 +696,9 @@ pub(crate) async fn scan_group(
     Ok(AdoptionScan {
         group: group_path.to_string(),
         days,
+        dormant_days,
         active: results,
-        dormant_count: dormant,
+        dormant,
     })
 }
 
@@ -659,22 +708,24 @@ pub async fn get_ai_adoption(
     client: &GitLabClient,
     group_path: &str,
     days: u32,
+    dormant_days: u32,
     summary_only: bool,
 ) -> Result<String> {
-    let scan = scan_group(client, group_path, days).await?;
+    let scan = scan_group(client, group_path, days, dormant_days).await?;
 
     if scan.active.is_empty() {
-        if scan.dormant_count == 0 {
+        if scan.dormant_count() == 0 {
             return Ok(format!("No projects found in group '{group_path}'."));
         }
         return Ok(format!(
-            "Group '{group_path}': all {} repos dormant (no activity in {DORMANT_DAYS}d). Nothing to scan.",
-            scan.dormant_count
+            "Group '{group_path}': all {} repos dormant (no activity in {dormant_days}d). Nothing to scan.",
+            scan.dormant_count()
         ));
     }
 
+    let dormant_repos = scan.dormant;
     let results = scan.active;
-    let dormant = scan.dormant_count;
+    let dormant = dormant_repos.len();
     let active_count = results.len();
 
     // In-flight = ONLY signal is AI-named branches (no config markers yet)
@@ -702,6 +753,7 @@ pub async fn get_ai_adoption(
         with_markers: usize,
         best_level: u8,
         adopting_ai_pcts: Vec<f64>,
+        dormant: usize,
     }
 
     let mut teams: BTreeMap<String, TeamStats> = BTreeMap::new();
@@ -712,6 +764,7 @@ pub async fn get_ai_adoption(
             with_markers: 0,
             best_level: 0,
             adopting_ai_pcts: Vec::new(),
+            dormant: 0,
         });
         stats.repos += 1;
         if level >= 1 {
@@ -742,6 +795,21 @@ pub async fn get_ai_adoption(
         ));
     }
 
+    // Fold dormant repos into the team table (after summary_only, which only
+    // reports active teams). Teams with ONLY dormant repos still get a row.
+    for (team, count) in dormant_by_team(&dormant_repos) {
+        teams
+            .entry(team)
+            .or_insert(TeamStats {
+                repos: 0,
+                with_markers: 0,
+                best_level: 0,
+                adopting_ai_pcts: Vec::new(),
+                dormant: 0,
+            })
+            .dormant = count;
+    }
+
     let mut out = vec![
         format!(
             "## AI Adoption: {group_path} (last {days}d, {active_count} active repos, {dormant} dormant skipped)"
@@ -749,8 +817,8 @@ pub async fn get_ai_adoption(
         String::new(),
         "### By Team".to_string(),
         String::new(),
-        "| Team | Repos | With markers | Best level | AI commits % (avg of adopting) |".to_string(),
-        "|------|-------|--------------|-----------|--------------------------------|".to_string(),
+        "| Team | Repos | With markers | Best level | AI commits % (avg of adopting) | Dormant |".to_string(),
+        "|------|-------|--------------|-----------|--------------------------------|---------|".to_string(),
     ];
 
     for (name, s) in &teams {
@@ -763,8 +831,8 @@ pub async fn get_ai_adoption(
             )
         };
         out.push(format!(
-            "| {name} | {} | {} | L{} | {avg_pct} |",
-            s.repos, s.with_markers, s.best_level
+            "| {name} | {} | {} | L{} | {avg_pct} | {} |",
+            s.repos, s.with_markers, s.best_level, s.dormant
         ));
     }
 
@@ -986,6 +1054,32 @@ pub async fn get_ai_adoption(
         out.extend(recs);
     }
 
+    // Dormant repos: archive candidates, oldest first
+    if !dormant_repos.is_empty() {
+        let sorted = sorted_dormant(&dormant_repos);
+        out.push(String::new());
+        out.push("### Dormant repos (archive candidates)".to_string());
+        out.push(String::new());
+        out.push(format!(
+            "Inactive {dormant_days}+ days and not archived — consider archiving to reduce noise."
+        ));
+        out.push(String::new());
+        out.push("| Repo | Team | Last activity |".to_string());
+        out.push("|------|------|---------------|".to_string());
+        let shown = sorted.len().min(20);
+        for d in sorted.iter().take(20) {
+            let short_path = d
+                .path
+                .strip_prefix(&format!("{group_path}/"))
+                .unwrap_or(&d.path);
+            let last = if d.last_activity.is_empty() { "–" } else { &d.last_activity };
+            out.push(format!("| {short_path} | {} | {last} |", d.team));
+        }
+        if sorted.len() > shown {
+            out.push(format!("\n*+{} more dormant repos.*", sorted.len() - shown));
+        }
+    }
+
     Ok(out.join("\n"))
 }
 
@@ -1009,27 +1103,29 @@ pub async fn generate_ai_adoption_report(
     client: &GitLabClient,
     group_path: &str,
     days: u32,
+    dormant_days: u32,
 ) -> Result<String> {
     use crate::tools::reports::{htmlescape as esc, EXPORT_BUTTON, PRINT_CSS};
 
-    let scan = scan_group(client, group_path, days).await?;
+    let scan = scan_group(client, group_path, days, dormant_days).await?;
 
     if scan.active.is_empty() {
-        if scan.dormant_count == 0 {
+        if scan.dormant_count() == 0 {
             return Ok(format!("No projects found in group '{group_path}'."));
         }
         return Ok(format!(
-            "Group '{group_path}': all {} repos dormant (no activity in {DORMANT_DAYS}d). Nothing to scan.",
-            scan.dormant_count
+            "Group '{group_path}': all {} repos dormant (no activity in {dormant_days}d). Nothing to scan.",
+            scan.dormant_count()
         ));
     }
 
     // The scan carries its own identity — single source of truth from here on.
     let group_path = scan.group.as_str();
     let days = scan.days;
+    let dormant_days = scan.dormant_days;
     let results = &scan.active;
     let active_count = results.len();
-    let dormant = scan.dormant_count;
+    let dormant = scan.dormant_count();
     let date_str = chrono::Utc::now().format("%A, %d %B %Y").to_string();
 
     // ── Aggregates ──
@@ -1070,6 +1166,7 @@ pub async fn generate_ai_adoption_report(
         .unwrap_or_else(|| "&ndash;".to_string());
 
     // Per-team aggregation
+    #[derive(Default)]
     struct TeamStats {
         repos: usize,
         adopting: usize,
@@ -1078,18 +1175,11 @@ pub async fn generate_ai_adoption_report(
         steady: usize,
         down: usize,
         adopting_ai_pcts: Vec<f64>,
+        dormant: usize,
     }
     let mut teams: BTreeMap<String, TeamStats> = BTreeMap::new();
     for r in results {
-        let stats = teams.entry(r.team.clone()).or_insert(TeamStats {
-            repos: 0,
-            adopting: 0,
-            best_level: 0,
-            up: 0,
-            steady: 0,
-            down: 0,
-            adopting_ai_pcts: Vec::new(),
-        });
+        let stats = teams.entry(r.team.clone()).or_default();
         stats.repos += 1;
         let level = r.level();
         if level >= 1 {
@@ -1105,6 +1195,10 @@ pub async fn generate_ai_adoption_report(
             "↓" => stats.down += 1,
             _ => {}
         }
+    }
+    // Teams with ONLY dormant repos still get a row (0 active, N dormant).
+    for (team, count) in dormant_by_team(&scan.dormant) {
+        teams.entry(team).or_default().dormant = count;
     }
 
     // ── HTML head + summary cards ──
@@ -1192,7 +1286,7 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
 
     // ── By Team ──
 
-    html.push_str("<h2>By Team</h2>\n<table>\n<tr><th>Team</th><th>Repos</th><th>Adopting</th><th>Best Level</th><th>Trajectory</th><th>AI-visible Usage</th></tr>\n");
+    html.push_str("<h2>By Team</h2>\n<table>\n<tr><th>Team</th><th>Repos</th><th>Adopting</th><th>Best Level</th><th>Trajectory</th><th>AI-visible Usage</th><th>Dormant</th></tr>\n");
     for (name, s) in &teams {
         let level_class = match s.best_level {
             3 => "g",
@@ -1224,11 +1318,12 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
             )
         };
         html.push_str(&format!(
-            "<tr><td><b>{}</b></td><td>{}</td><td>{}</td><td class=\"{level_class}\"><b>L{}</b></td><td>{traj_str}</td><td>{avg_pct}</td></tr>\n",
+            "<tr><td><b>{}</b></td><td>{}</td><td>{}</td><td class=\"{level_class}\"><b>L{}</b></td><td>{traj_str}</td><td>{avg_pct}</td><td>{}</td></tr>\n",
             esc(name),
             s.repos,
             s.adopting,
             s.best_level,
+            s.dormant,
         ));
     }
     html.push_str("</table>\n");
@@ -1458,10 +1553,37 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
         }
     }
 
+    // ── Dormant repos (collapsed — keeps the leadership view uncluttered) ──
+
+    if !scan.dormant.is_empty() {
+        let sorted = sorted_dormant(&scan.dormant);
+        html.push_str(&format!(
+            "<details><summary>Dormant repos ({}) &mdash; archive candidates</summary>\n<p>Inactive {dormant_days}+ days and not archived &mdash; consider archiving to reduce noise.</p>\n<table>\n<tr><th>Repo</th><th>Team</th><th>Last Activity</th></tr>\n",
+            sorted.len(),
+        ));
+        for d in &sorted {
+            let short_path = d
+                .path
+                .strip_prefix(&format!("{group_path}/"))
+                .unwrap_or(&d.path);
+            let last = if d.last_activity.is_empty() {
+                "&ndash;".to_string()
+            } else {
+                esc(&d.last_activity)
+            };
+            html.push_str(&format!(
+                "<tr><td><b>{}</b></td><td>{}</td><td>{last}</td></tr>\n",
+                esc(short_path),
+                esc(&d.team),
+            ));
+        }
+        html.push_str("</table>\n</details>\n");
+    }
+
     // ── Methodology footnote ──
 
     html.push_str(&format!(
-        "<details><summary>Methodology</summary><p>Levels: <b>L0</b> no AI tooling markers; <b>L1 Exploring</b> any config marker (CLAUDE.md, AGENTS.md, .cursorrules, .mcp.json); <b>L2 Practicing</b> CLAUDE.md plus shared workflow assets (commands, settings, MCP config, hooks, or an ADR log) &mdash; or agents configured but not yet used; <b>L3 Scaling</b> agents plus measurable usage (&ge;10% AI-trailed commits, recent <code>.tasks</code> activity, or AI-marked MR descriptions). Usage is measured across <i>all</i> branches over the last {days} days because squash-merge strips commit trailers from the default branch; MR descriptions and <code>.tasks</code>/<code>.claude</code> path activity count as first-class evidence. <b>In-flight</b> repos have AI-named feature branches but no config merged yet. Trajectory: &uarr; actively building (live AI branches or recent config/ADR maintenance), &rarr; steady use, &darr; markers present but unused and unmaintained. Attribution rate = share of adopting repos with usage evidence whose usage is visible via Co-Authored-By trailers. Repos with no activity in {DORMANT_DAYS} days are skipped as dormant.</p></details>\n"
+        "<details><summary>Methodology</summary><p>Levels: <b>L0</b> no AI tooling markers; <b>L1 Exploring</b> any config marker (CLAUDE.md, AGENTS.md, .cursorrules, .mcp.json); <b>L2 Practicing</b> CLAUDE.md plus shared workflow assets (commands, settings, MCP config, hooks, or an ADR log) &mdash; or agents configured but not yet used; <b>L3 Scaling</b> agents plus measurable usage (&ge;10% AI-trailed commits, recent <code>.tasks</code> activity, or AI-marked MR descriptions). Usage is measured across <i>all</i> branches over the last {days} days because squash-merge strips commit trailers from the default branch; MR descriptions and <code>.tasks</code>/<code>.claude</code> path activity count as first-class evidence. <b>In-flight</b> repos have AI-named feature branches but no config merged yet. Trajectory: &uarr; actively building (live AI branches or recent config/ADR maintenance), &rarr; steady use, &darr; markers present but unused and unmaintained. Attribution rate = share of adopting repos with usage evidence whose usage is visible via Co-Authored-By trailers. Repos with no activity in {dormant_days} days are skipped as dormant and listed as archive candidates.</p></details>\n"
     ));
 
     // ── Footer ──
@@ -1908,5 +2030,57 @@ mod tests {
         // No usage evidence anywhere → None (nothing to attribute)
         assert!(attribution_rate(&[&no_usage]).is_none());
         assert!(attribution_rate(&[]).is_none());
+    }
+
+    // ── Dormant repo visibility ──────────────────────────────────────────────
+
+    fn dr(path: &str, last: &str) -> DormantRepo {
+        DormantRepo {
+            path: path.into(),
+            team: team_of(path),
+            last_activity: last.into(),
+        }
+    }
+
+    #[test]
+    fn test_dormant_team_mapping() {
+        // Same team_of() mapping as active repos
+        assert_eq!(dr("my-org/backend/old-api", "2025-06-01").team, "backend");
+        assert_eq!(dr("my-org/legacy-site", "2024-11-20").team, "(root)");
+
+        let dormant = vec![
+            dr("my-org/backend/old-api", "2025-06-01"),
+            dr("my-org/legacy-site", "2024-11-20"),
+            dr("my-org/mobile/abandoned-app", "2025-01-03"),
+            dr("my-org/backend/dead-cron", "2025-02-10"),
+        ];
+        let by_team = dormant_by_team(&dormant);
+        assert_eq!(by_team.get("backend"), Some(&2));
+        assert_eq!(by_team.get("mobile"), Some(&1));
+        assert_eq!(by_team.get("(root)"), Some(&1));
+        assert!(dormant_by_team(&[]).is_empty());
+    }
+
+    #[test]
+    fn test_sorted_dormant_oldest_first() {
+        let dormant = vec![
+            dr("my-org/backend/old-api", "2025-06-01"),
+            dr("my-org/legacy-site", "2024-11-20"),
+            dr("my-org/backend/dead-cron", ""), // unknown date sorts last
+            dr("my-org/mobile/abandoned-app", "2025-01-03"),
+        ];
+        let order: Vec<&str> = sorted_dormant(&dormant)
+            .iter()
+            .map(|d| d.path.as_str())
+            .collect();
+        assert_eq!(
+            order,
+            vec![
+                "my-org/legacy-site",
+                "my-org/mobile/abandoned-app",
+                "my-org/backend/old-api",
+                "my-org/backend/dead-cron",
+            ]
+        );
     }
 }
