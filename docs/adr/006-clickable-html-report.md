@@ -41,3 +41,25 @@ discarded.
 - Report entities are one click from their GitLab source; no API cost added.
 - Markdown output and scan logic are byte-identical to before.
 - Missing `web_url` (or unknown host) degrades to today's plain text.
+
+## Addendum (2026-06-11): aggregate numbers link to their evidence
+
+Aggregates were still dead text — a "12 adopting" card gave no path to the
+twelve repos behind it. Extension, HTML formatter only:
+
+- Section anchors: `#by-team`, `#adopting`, `#in-flight`, `#invisible`,
+  `#flags`, plus `#dormant` / `#methodology` on their `<details>` elements.
+  Anchors are only emitted for sections that render.
+- `anchor(href, text)` helper (thin wrapper over `link`) for in-document
+  fragment links.
+- Summary card values link to their section (Active Repos → `#by-team`,
+  Adopting/Scaling → `#adopting`, In-flight → `#in-flight`, Attribution Rate
+  → `#methodology`); "N dormant skipped" (header sub-line and card note) →
+  `#dormant`. Funnel row counts and By Team Adopting/Dormant cells link the
+  same way; zero counts stay plain text.
+- A tiny inline script auto-opens a `<details>` ancestor when the hash targets
+  it (jump to `#dormant`/`#methodology` expands the collapsible).
+- "+N task commits" in the usage cell links to the path-scoped commit history
+  `{web_url}/-/commits/{default_branch}/.tasks`.
+- Not linked: per-team AI-visible %, "N repo(s)" counts in recommendation
+  prose — those summarize rather than point at a single section.
