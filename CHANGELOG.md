@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-06-11
+
+### Added
+- Fully clickable HTML adoption report — every repo, branch, and config marker links to its GitLab page (CLAUDE.md blob, `.claude` trees, ADR directory, branch trees, commit history, merged-MR filter)
+- Aggregate numbers link to their evidence: summary cards, funnel counts, and By-Team cells jump to section anchors; `+N task commits` links to path-scoped commit history; anchors auto-expand collapsed sections via hashchange handler
+
+94 tools total.
+
 ## [0.18.0] - 2026-06-11
 
 ### Added
