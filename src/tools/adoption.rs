@@ -1122,6 +1122,12 @@ fn link(url: &str, text: &str) -> String {
     )
 }
 
+/// In-document anchor link (`#fragment` targets). Same contract as `link`:
+/// `text` is pre-escaped by callers. HTML report only.
+fn anchor(href: &str, text: &str) -> String {
+    link(href, text)
+}
+
 /// `{web_url}{suffix}`, or empty when the project has no web_url (→ no link).
 fn sub_url(web_url: &str, suffix: &str) -> String {
     if web_url.is_empty() {
@@ -1294,8 +1300,24 @@ pub async fn generate_ai_adoption_report(
     let group_esc = esc(group_path);
     let adopting_pct = adopting_count as f64 / active_count as f64 * 100.0;
 
+    // "N dormant skipped" links to the dormant details only when that section
+    // renders (non-empty); same string is reused in the Active Repos card.
+    let dormant_skipped = if dormant > 0 {
+        anchor("#dormant", &format!("{dormant} dormant skipped"))
+    } else {
+        format!("{dormant} dormant skipped")
+    };
+    // The In-flight section only renders when non-empty — don't link to a
+    // missing anchor. The other card targets (by-team, adopting, methodology)
+    // always render.
+    let in_flight_card = if in_flight.is_empty() {
+        in_flight.len().to_string()
+    } else {
+        anchor("#in-flight", &in_flight.len().to_string())
+    };
+
     let mut html = format!(
-        r#"<!DOCTYPE html>
+        r##"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -1333,20 +1355,23 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
 </head>
 <body>
 {EXPORT_BUTTON}
+<script>
+function openTarget(){{var el=document.getElementById(location.hash.slice(1));while(el){{if(el.tagName==='DETAILS'){{el.open=true;break}}el=el.parentElement}}}}
+window.addEventListener('hashchange',openTarget);openTarget();
+</script>
 
 <h1>AI Adoption Report — {group_esc}</h1>
-<div class="sub">Last {days} days &middot; {date_str} &middot; {active_count} active repos scanned, {dormant} dormant skipped</div>
+<div class="sub">Last {days} days &middot; {date_str} &middot; {active_count} active repos scanned, {dormant_skipped}</div>
 
 <!-- Summary Cards -->
 <div class="grid">
-  <div class="card"><div class="card-t">Active Repos</div><div class="card-v b">{active_count}</div><div class="card-s">{dormant} dormant skipped</div></div>
-  <div class="card"><div class="card-t">Adopting (L1+)</div><div class="card-v g">{adopting_count}</div><div class="card-s">{adopting_pct:.0}% of active</div></div>
-  <div class="card"><div class="card-t">In-flight</div><div class="card-v y">{in_flight_count}</div><div class="card-s">branch signals only</div></div>
-  <div class="card"><div class="card-t">Scaling (L3)</div><div class="card-v g">{l3}</div><div class="card-s">agents + active usage</div></div>
-  <div class="card"><div class="card-t">Attribution Rate</div><div class="card-v{attr_class}">{attr_str}</div><div class="card-s">usage visible via commit trailers</div></div>
+  <div class="card"><div class="card-t">Active Repos</div><div class="card-v b"><a href="#by-team">{active_count}</a></div><div class="card-s">{dormant_skipped}</div></div>
+  <div class="card"><div class="card-t">Adopting (L1+)</div><div class="card-v g"><a href="#adopting">{adopting_count}</a></div><div class="card-s">{adopting_pct:.0}% of active</div></div>
+  <div class="card"><div class="card-t">In-flight</div><div class="card-v y">{in_flight_card}</div><div class="card-s">branch signals only</div></div>
+  <div class="card"><div class="card-t">Scaling (L3)</div><div class="card-v g"><a href="#adopting">{l3}</a></div><div class="card-s">agents + active usage</div></div>
+  <div class="card"><div class="card-t">Attribution Rate</div><div class="card-v{attr_class}"><a href="#methodology">{attr_str}</a></div><div class="card-s">usage visible via commit trailers</div></div>
 </div>
-"#,
-        in_flight_count = in_flight.len(),
+"##,
         l3 = level_counts[3],
         attr_class = match attr_rate {
             Some(p) if p < 50.0 => " y",
@@ -1359,19 +1384,26 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
 
     html.push_str("<h2>Adoption Levels</h2>\n");
     let funnel = [
-        ("L3 Scaling", level_counts[3], "#3fb950"),
-        ("L2 Practicing", level_counts[2], "#58a6ff"),
-        ("L1 Exploring", level_counts[1], "#d29922"),
-        ("In-flight", in_flight.len(), "#8b949e"),
-        ("L0 None", l0_plain, "#f85149"),
+        ("L3 Scaling", level_counts[3], "#3fb950", "#adopting"),
+        ("L2 Practicing", level_counts[2], "#58a6ff", "#adopting"),
+        ("L1 Exploring", level_counts[1], "#d29922", "#adopting"),
+        ("In-flight", in_flight.len(), "#8b949e", "#in-flight"),
+        ("L0 None", l0_plain, "#f85149", "#by-team"),
     ];
-    let max_count = funnel.iter().map(|(_, c, _)| *c).max().unwrap_or(1).max(1);
+    let max_count = funnel.iter().map(|(_, c, _, _)| *c).max().unwrap_or(1).max(1);
     let bar_max = 300usize;
-    for (label, count, color) in funnel {
+    for (label, count, color, target) in funnel {
         let width = count * bar_max / max_count;
         let pct = count as f64 / active_count as f64 * 100.0;
+        let count_text = format!("{count} ({pct:.0}%)");
+        // Empty rows have no evidence to jump to — leave them unlinked.
+        let count_html = if count > 0 {
+            anchor(target, &count_text)
+        } else {
+            count_text
+        };
         html.push_str(&format!(
-            "<div style=\"margin:6px 0;display:flex;align-items:center;gap:10px\"><span style=\"width:110px;font-weight:700;color:{color}\">{label}</span><span class=\"bar\" style=\"width:{width}px;background:{color}\"></span><span style=\"color:#8b949e;font-size:13px\">{count} ({pct:.0}%)</span></div>\n"
+            "<div style=\"margin:6px 0;display:flex;align-items:center;gap:10px\"><span style=\"width:110px;font-weight:700;color:{color}\">{label}</span><span class=\"bar\" style=\"width:{width}px;background:{color}\"></span><span style=\"color:#8b949e;font-size:13px\">{count_html}</span></div>\n"
         ));
     }
 
@@ -1390,7 +1422,7 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
             Some(format!("{}://{host}", parsed.scheme()))
         });
 
-    html.push_str("<h2>By Team</h2>\n<table>\n<tr><th>Team</th><th>Repos</th><th>Adopting</th><th>Best Level</th><th>Trajectory</th><th>AI-visible Usage</th><th>Dormant</th></tr>\n");
+    html.push_str("<h2 id=\"by-team\">By Team</h2>\n<table>\n<tr><th>Team</th><th>Repos</th><th>Adopting</th><th>Best Level</th><th>Trajectory</th><th>AI-visible Usage</th><th>Dormant</th></tr>\n");
     for (name, s) in &teams {
         let team_url = match &origin {
             Some(o) if name != "(root)" => format!("{o}/{group_path}/{name}"),
@@ -1425,13 +1457,22 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
                 s.adopting_ai_pcts.iter().sum::<f64>() / s.adopting_ai_pcts.len() as f64
             )
         };
+        // Non-zero counts jump to their evidence section; zeros stay plain.
+        let adopting_cell = if s.adopting > 0 {
+            anchor("#adopting", &s.adopting.to_string())
+        } else {
+            s.adopting.to_string()
+        };
+        let dormant_cell = if s.dormant > 0 {
+            anchor("#dormant", &s.dormant.to_string())
+        } else {
+            s.dormant.to_string()
+        };
         html.push_str(&format!(
-            "<tr><td><b>{}</b></td><td>{}</td><td>{}</td><td class=\"{level_class}\"><b>L{}</b></td><td>{traj_str}</td><td>{avg_pct}</td><td>{}</td></tr>\n",
+            "<tr><td><b>{}</b></td><td>{}</td><td>{adopting_cell}</td><td class=\"{level_class}\"><b>L{}</b></td><td>{traj_str}</td><td>{avg_pct}</td><td>{dormant_cell}</td></tr>\n",
             link(&team_url, &esc(name)),
             s.repos,
-            s.adopting,
             s.best_level,
-            s.dormant,
         ));
     }
     html.push_str("</table>\n");
@@ -1448,7 +1489,7 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
         )
     });
 
-    html.push_str("<h2>Adopting Repos</h2>\n");
+    html.push_str("<h2 id=\"adopting\">Adopting Repos</h2>\n");
     if adopting.is_empty() {
         html.push_str("<p class=\"sub\">No repos with AI adoption markers found.</p>\n");
     } else {
@@ -1481,7 +1522,16 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
                 usage.push_str(&link(&mr_url, &format!("+{} MRs", m.ai_mr_count)));
             }
             if m.tasks_recent_commits > 0 {
-                usage.push_str(&format!(" +{} task commits", m.tasks_recent_commits));
+                // Path-scoped commit history: only commits touching .tasks.
+                let tasks_url = sub_url(
+                    &r.web_url,
+                    &format!("/-/commits/{}/.tasks", r.default_branch),
+                );
+                usage.push(' ');
+                usage.push_str(&link(
+                    &tasks_url,
+                    &format!("+{} task commits", m.tasks_recent_commits),
+                ));
             }
             let flags = quality_flags(m);
             let flags_str = if flags.is_empty() {
@@ -1505,7 +1555,7 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
     // ── In-flight pipeline ──
 
     if !in_flight.is_empty() {
-        html.push_str("<h2>In-flight (adoption pipeline)</h2>\n");
+        html.push_str("<h2 id=\"in-flight\">In-flight (adoption pipeline)</h2>\n");
         html.push_str("<p class=\"sub\">AI work happening on feature branches — no config on the default branch yet.</p>\n");
         for r in &in_flight {
             let short_path = r
@@ -1538,7 +1588,7 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
     // ── Invisible usage: heavy AI users with zero config ──
 
     if !invisible.is_empty() {
-        html.push_str("<h2>Invisible usage (no config)</h2>\n");
+        html.push_str("<h2 id=\"invisible\">Invisible usage (no config)</h2>\n");
         html.push_str("<p class=\"sub\">Devs adopted Claude on their own &mdash; the repo gives it no context. Cheapest win: add a CLAUDE.md.</p>\n");
         html.push_str("<table>\n<tr><th>Repo</th><th>AI Commits</th><th>Attribution</th></tr>\n");
         for r in &invisible {
@@ -1605,7 +1655,7 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
         }
     }
     if !flag_boxes.is_empty() {
-        html.push_str("<h2>Quality Flags</h2>\n");
+        html.push_str("<h2 id=\"flags\">Quality Flags</h2>\n");
         for b in &flag_boxes {
             html.push_str(b);
         }
@@ -1675,7 +1725,7 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
     if !scan.dormant.is_empty() {
         let sorted = sorted_dormant(&scan.dormant);
         html.push_str(&format!(
-            "<details><summary>Dormant repos ({}) &mdash; archive candidates</summary>\n<p>Inactive {dormant_days}+ days and not archived &mdash; consider archiving to reduce noise.</p>\n<table>\n<tr><th>Repo</th><th>Team</th><th>Last Activity</th></tr>\n",
+            "<details id=\"dormant\"><summary>Dormant repos ({}) &mdash; archive candidates</summary>\n<p>Inactive {dormant_days}+ days and not archived &mdash; consider archiving to reduce noise.</p>\n<table>\n<tr><th>Repo</th><th>Team</th><th>Last Activity</th></tr>\n",
             sorted.len(),
         ));
         for d in &sorted {
@@ -1700,7 +1750,7 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
     // ── Methodology footnote ──
 
     html.push_str(&format!(
-        "<details><summary>Methodology</summary><p>Levels: <b>L0</b> no AI tooling markers; <b>L1 Exploring</b> any config marker (CLAUDE.md, AGENTS.md, .cursorrules, .mcp.json); <b>L2 Practicing</b> CLAUDE.md plus shared workflow assets (commands, settings, MCP config, hooks, or an ADR log) &mdash; or agents configured but not yet used; <b>L3 Scaling</b> agents plus measurable usage (&ge;10% AI-trailed commits, recent <code>.tasks</code> activity, or AI-marked MR descriptions). Usage is measured across <i>all</i> branches over the last {days} days because squash-merge strips commit trailers from the default branch; MR descriptions and <code>.tasks</code>/<code>.claude</code> path activity count as first-class evidence. <b>In-flight</b> repos have AI-named feature branches but no config merged yet. Trajectory: &uarr; actively building (live AI branches or recent config/ADR maintenance), &rarr; steady use, &darr; markers present but unused and unmaintained. Attribution rate = share of adopting repos with usage evidence whose usage is visible via Co-Authored-By trailers. Repos with no activity in {dormant_days} days are skipped as dormant and listed as archive candidates.</p></details>\n"
+        "<details id=\"methodology\"><summary>Methodology</summary><p>Levels: <b>L0</b> no AI tooling markers; <b>L1 Exploring</b> any config marker (CLAUDE.md, AGENTS.md, .cursorrules, .mcp.json); <b>L2 Practicing</b> CLAUDE.md plus shared workflow assets (commands, settings, MCP config, hooks, or an ADR log) &mdash; or agents configured but not yet used; <b>L3 Scaling</b> agents plus measurable usage (&ge;10% AI-trailed commits, recent <code>.tasks</code> activity, or AI-marked MR descriptions). Usage is measured across <i>all</i> branches over the last {days} days because squash-merge strips commit trailers from the default branch; MR descriptions and <code>.tasks</code>/<code>.claude</code> path activity count as first-class evidence. <b>In-flight</b> repos have AI-named feature branches but no config merged yet. Trajectory: &uarr; actively building (live AI branches or recent config/ADR maintenance), &rarr; steady use, &darr; markers present but unused and unmaintained. Attribution rate = share of adopting repos with usage evidence whose usage is visible via Co-Authored-By trailers. Repos with no activity in {dormant_days} days are skipped as dormant and listed as archive candidates.</p></details>\n"
     ));
 
     // ── Footer ──
