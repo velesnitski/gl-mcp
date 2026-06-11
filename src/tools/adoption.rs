@@ -195,6 +195,10 @@ pub(crate) struct RepoResult {
     pub team: String,
     /// ISO date of last project activity (for the In-flight section).
     pub last_activity: String,
+    /// Browser URL of the project (from the listing; empty when missing).
+    pub web_url: String,
+    /// Default branch (from the listing; "main" fallback).
+    pub default_branch: String,
     pub markers: RepoMarkers,
 }
 
@@ -545,6 +549,8 @@ pub(crate) struct DormantRepo {
     pub team: String,
     /// ISO date of last project activity (truncated to 10 chars for display).
     pub last_activity: String,
+    /// Browser URL of the project (from the listing; empty when missing).
+    pub web_url: String,
 }
 
 /// Dormant repos sorted oldest-first by last activity (unknown dates last).
@@ -630,6 +636,7 @@ pub(crate) async fn scan_group(
         path: String,
         default_branch: String,
         last_activity: String,
+        web_url: String,
     }
 
     let mut active: Vec<ProjectMeta> = Vec::new();
@@ -651,19 +658,22 @@ pub(crate) async fn scan_group(
             .as_str()
             .map(|s| s.chars().take(10).collect())
             .unwrap_or_default();
+        let web_url = p["web_url"].as_str().unwrap_or("").to_string();
         if is_dormant {
             dormant.push(DormantRepo {
                 team: team_of(&path),
                 path,
                 last_activity: last_activity_date,
+                web_url,
             });
             continue;
         }
         active.push(ProjectMeta {
             id,
             path,
-            default_branch: p["default_branch"].as_str().unwrap_or("").to_string(),
+            default_branch: p["default_branch"].as_str().unwrap_or("main").to_string(),
             last_activity: last_activity_date,
+            web_url,
         });
     }
 
@@ -678,6 +688,7 @@ pub(crate) async fn scan_group(
                 let path = meta.path.clone();
                 let default_branch = meta.default_branch.clone();
                 let last_activity = meta.last_activity.clone();
+                let web_url = meta.web_url.clone();
                 let since = since.clone();
                 async move {
                     let markers = scan_repo(&client, id, &default_branch, &since).await;
@@ -685,6 +696,8 @@ pub(crate) async fn scan_group(
                         team: team_of(&path),
                         path,
                         last_activity,
+                        web_url,
+                        default_branch,
                         markers,
                     }
                 }
@@ -1096,6 +1109,81 @@ pub(crate) fn attribution_rate(adopting: &[&RepoMarkers]) -> Option<f64> {
     Some(visible as f64 / with_usage.len() as f64 * 100.0)
 }
 
+/// Wrap `text` in an anchor when `url` is non-empty. `text` is pre-escaped by
+/// callers; the URL is escaped here. HTML report only — markdown stays link-free.
+fn link(url: &str, text: &str) -> String {
+    if url.is_empty() {
+        return text.to_string();
+    }
+    format!(
+        "<a href=\"{}\">{}</a>",
+        crate::tools::reports::htmlescape(url),
+        text
+    )
+}
+
+/// `{web_url}{suffix}`, or empty when the project has no web_url (→ no link).
+fn sub_url(web_url: &str, suffix: &str) -> String {
+    if web_url.is_empty() {
+        String::new()
+    } else {
+        format!("{web_url}{suffix}")
+    }
+}
+
+/// Linked HTML version of `RepoResult::marker_list()` — each marker points at
+/// the file/directory it was detected from. Same order and labels as the
+/// plain-text list used by the markdown scorecard.
+fn markers_html(m: &RepoMarkers, web_url: &str, default_branch: &str) -> String {
+    let blob = |path: &str| sub_url(web_url, &format!("/-/blob/{default_branch}/{path}"));
+    let tree = |path: &str| sub_url(web_url, &format!("/-/tree/{default_branch}/{path}"));
+    let mut parts: Vec<String> = Vec::new();
+    if m.claude_md {
+        parts.push(link(&blob("CLAUDE.md"), "CLAUDE.md"));
+    }
+    if m.agents_md {
+        parts.push(link(&blob("AGENTS.md"), "AGENTS.md"));
+    }
+    if m.agents_count > 0 {
+        parts.push(link(&tree(".claude/agents"), &format!("agents({})", m.agents_count)));
+    }
+    if m.skills_count > 0 {
+        parts.push(link(&tree(".claude/skills"), &format!("skills({})", m.skills_count)));
+    }
+    if m.commands {
+        parts.push(link(&tree(".claude/commands"), "commands"));
+    }
+    if m.shared_settings {
+        parts.push(link(&blob(".claude/settings.json"), "settings"));
+    }
+    if m.hooks {
+        parts.push(link(&tree(".claude/hooks"), "hooks"));
+    }
+    if m.mcp_json {
+        parts.push(link(&blob(".mcp.json"), ".mcp.json"));
+    }
+    if m.cursor {
+        // .cursorrules / .cursor / .windsurfrules — source ambiguous, no link
+        parts.push("cursor".to_string());
+    }
+    if m.tasks_dir {
+        parts.push(link(&tree(".tasks"), "tasks"));
+    }
+    if m.adr_count > 0 {
+        let label = if m.adr_recent_commits > 0 {
+            format!("ADR active({})", m.adr_recent_commits)
+        } else {
+            "ADR stale".to_string()
+        };
+        parts.push(link(&tree("docs/adr"), &label));
+    }
+    if parts.is_empty() {
+        "&ndash;".to_string()
+    } else {
+        parts.join(", ")
+    }
+}
+
 /// Generate a townhall-ready HTML AI adoption report for a GitLab group:
 /// level funnel, per-team scorecard, trajectories, in-flight pipeline,
 /// quality flags, and recommendations. Dark theme, print/PDF-friendly.
@@ -1233,11 +1321,14 @@ td{{padding:10px 14px;border-bottom:1px solid #21262d;font-size:14px}}
 .risk{{border-left:3px solid #f85149}}.warn{{border-left:3px solid #d29922}}.ok{{border-left:3px solid #3fb950}}
 .bar{{height:10px;border-radius:4px;display:inline-block;vertical-align:middle;min-width:4px}}
 code{{background:#21262d;padding:1px 6px;border-radius:4px;font-size:13px}}
+a{{color:inherit;text-decoration:none;border-bottom:1px dotted #58a6ff}}
+a:hover{{color:#58a6ff}}
 details{{margin:24px 0;color:#8b949e;font-size:13px}}
 details summary{{cursor:pointer;color:#58a6ff}}
 details p{{margin-top:8px;max-width:900px}}
 footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484f58;font-size:12px}}
 {PRINT_CSS}
+@media print{{a{{border-bottom:none !important;color:inherit !important}}}}
 </style>
 </head>
 <body>
@@ -1286,8 +1377,25 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
 
     // ── By Team ──
 
+    // Instance origin (scheme://host) for team group links — derived from any
+    // project's web_url; teams stay unlinked when no host is known.
+    let origin: Option<String> = results
+        .iter()
+        .map(|r| r.web_url.as_str())
+        .chain(scan.dormant.iter().map(|d| d.web_url.as_str()))
+        .filter(|u| !u.is_empty())
+        .find_map(|u| {
+            let parsed = url::Url::parse(u).ok()?;
+            let host = parsed.host_str()?.to_string();
+            Some(format!("{}://{host}", parsed.scheme()))
+        });
+
     html.push_str("<h2>By Team</h2>\n<table>\n<tr><th>Team</th><th>Repos</th><th>Adopting</th><th>Best Level</th><th>Trajectory</th><th>AI-visible Usage</th><th>Dormant</th></tr>\n");
     for (name, s) in &teams {
+        let team_url = match &origin {
+            Some(o) if name != "(root)" => format!("{o}/{group_path}/{name}"),
+            _ => String::new(),
+        };
         let level_class = match s.best_level {
             3 => "g",
             2 => "b",
@@ -1319,7 +1427,7 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
         };
         html.push_str(&format!(
             "<tr><td><b>{}</b></td><td>{}</td><td>{}</td><td class=\"{level_class}\"><b>L{}</b></td><td>{traj_str}</td><td>{avg_pct}</td><td>{}</td></tr>\n",
-            esc(name),
+            link(&team_url, &esc(name)),
             s.repos,
             s.adopting,
             s.best_level,
@@ -1359,13 +1467,18 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
                 "→" => "<span class=\"gr\">&rarr;</span>",
                 _ => "",
             };
-            let mut usage = if m.total_commits == 0 {
+            let usage_base = if m.total_commits == 0 {
                 "0%".to_string()
             } else {
                 format!("{:.0}% ({}/{})", m.ai_pct(), m.ai_commits, m.total_commits)
             };
+            let commits_url =
+                sub_url(&r.web_url, &format!("/-/commits/{}", r.default_branch));
+            let mut usage = link(&commits_url, &usage_base);
             if m.ai_mr_count > 0 {
-                usage.push_str(&format!(" +{} MRs", m.ai_mr_count));
+                let mr_url = sub_url(&r.web_url, "/-/merge_requests?scope=all&state=merged");
+                usage.push(' ');
+                usage.push_str(&link(&mr_url, &format!("+{} MRs", m.ai_mr_count)));
             }
             if m.tasks_recent_commits > 0 {
                 usage.push_str(&format!(" +{} task commits", m.tasks_recent_commits));
@@ -1382,8 +1495,8 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
                 .unwrap_or(&r.path);
             html.push_str(&format!(
                 "<tr><td><b>{}</b></td><td class=\"{level_class}\"><b>L{level}</b></td><td>{traj_cell}</td><td>{}</td><td>{usage}</td><td>{flags_str}</td></tr>\n",
-                esc(short_path),
-                esc(&r.marker_list()),
+                link(&r.web_url, &esc(short_path)),
+                markers_html(m, &r.web_url, &r.default_branch),
             ));
         }
         html.push_str("</table>\n");
@@ -1410,10 +1523,14 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
             } else {
                 esc(&r.last_activity)
             };
+            let branch_url = sub_url(
+                &r.web_url,
+                &format!("/-/tree/{}", urlencoding::encode(branch)),
+            );
             html.push_str(&format!(
                 "<div class=\"issue warn\"><b>{}</b> &mdash; branch <code>{}</code><div class=\"m\">Last activity {last} &middot; adoption pipeline: AI work in flight, expect config to land on default.</div></div>\n",
-                esc(short_path),
-                esc(branch),
+                link(&r.web_url, &esc(short_path)),
+                link(&branch_url, &esc(branch)),
             ));
         }
     }
@@ -1437,7 +1554,7 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
             };
             html.push_str(&format!(
                 "<tr><td><b>{}</b></td><td>{:.0}% ({}/{})</td><td>{attribution}</td></tr>\n",
-                esc(short_path),
+                link(&r.web_url, &esc(short_path)),
                 m.ai_pct(),
                 m.ai_commits,
                 m.total_commits
@@ -1451,7 +1568,7 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
     let mut flag_boxes: Vec<String> = Vec::new();
     for r in results.iter() {
         let m = &r.markers;
-        let repo = esc(&r.path);
+        let repo = link(&r.web_url, &esc(&r.path));
         for flag in quality_flags(m) {
             match flag.as_str() {
                 "stale config (30+ commits behind)" => flag_boxes.push(format!(
@@ -1501,16 +1618,16 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
         if s.adopting == 0 && s.repos > 0 {
             // Pilot candidate: most recently active repo of this team
             // (results preserve the API's last_activity_at desc ordering)
-            let pilot = results
+            let (pilot, pilot_url) = results
                 .iter()
                 .find(|r| &r.team == name)
-                .map(|r| r.path.as_str())
-                .unwrap_or("?");
+                .map(|r| (r.path.as_str(), r.web_url.as_str()))
+                .unwrap_or(("?", ""));
             recs.push(format!(
                 "<div class=\"issue warn\"><b>{} team: 0 adoption</b><div class=\"m\">No markers across {} active repos &mdash; pilot candidate: <code>{}</code>.</div></div>\n",
                 esc(name),
                 s.repos,
-                esc(pilot),
+                link(pilot_url, &esc(pilot)),
             ));
         }
     }
@@ -1573,7 +1690,7 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
             };
             html.push_str(&format!(
                 "<tr><td><b>{}</b></td><td>{}</td><td>{last}</td></tr>\n",
-                esc(short_path),
+                link(&d.web_url, &esc(short_path)),
                 esc(&d.team),
             ));
         }
@@ -2039,7 +2156,19 @@ mod tests {
             path: path.into(),
             team: team_of(path),
             last_activity: last.into(),
+            web_url: String::new(),
         }
+    }
+
+    #[test]
+    fn test_link_helper() {
+        // Empty URL → plain text passthrough (no anchor)
+        assert_eq!(link("", "my-org/repo"), "my-org/repo");
+        // URL is escaped; text is passed through as-is (pre-escaped by callers)
+        assert_eq!(
+            link("https://gitlab.example.com/my-org/repo?a=1&b=2", "repo"),
+            "<a href=\"https://gitlab.example.com/my-org/repo?a=1&amp;b=2\">repo</a>"
+        );
     }
 
     #[test]
