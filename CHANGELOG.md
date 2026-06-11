@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- AI adoption reports name the people behind the usage — "Who" column (commit authors + AI tool parsed from the Co-Authored-By trailer) in Invisible usage, linked sample commit as evidence, top author named in usage-w/o-config and squash-hidden flags, author subline in the Adopting table. Zero extra API calls: extracted from commit data the scan already fetches.
+
 ## [0.19.0] - 2026-06-11
 
 ### Added
