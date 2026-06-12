@@ -66,9 +66,34 @@ pub(crate) struct RepoMarkers {
     pub claude_md_last_touch: Option<String>,
     /// CLAUDE.md last touched before the scan window started AND >= 30 commits since (lower bound).
     pub claude_md_stale: bool,
+    /// Top authors of AI-trailed commits: (name, count) sorted by count desc, cap 3.
+    pub ai_authors: Vec<(String, usize)>,
+    /// Distinct AI tool names parsed from Co-Authored-By trailers, cap 3.
+    pub ai_tools: Vec<String>,
+    /// Most recent AI-trailed commit as (short_sha, subject) — linkable evidence.
+    pub ai_sample: Option<(String, String)>,
 }
 
 impl RepoMarkers {
+    /// "Name (n), Name2 (n) · Tool" — who drives the AI usage and with what.
+    /// Empty string when no trailed commits.
+    pub(crate) fn ai_who(&self) -> String {
+        if self.ai_authors.is_empty() {
+            return String::new();
+        }
+        let authors = self
+            .ai_authors
+            .iter()
+            .map(|(name, n)| format!("{name} ({n})"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        if self.ai_tools.is_empty() {
+            authors
+        } else {
+            format!("{authors} · {}", self.ai_tools.join(", "))
+        }
+    }
+
     pub(crate) fn ai_pct(&self) -> f64 {
         if self.total_commits == 0 {
             0.0
@@ -187,6 +212,14 @@ pub(crate) fn quality_flags(m: &RepoMarkers) -> Vec<String> {
 /// True if `flags` contains `flag` (exact match).
 fn has_flag(flags: &[String], flag: &str) -> bool {
     flags.iter().any(|f| f == flag)
+}
+
+/// " (Top Author)" for flag detail lines, or "" when authors are unknown.
+fn top_author_suffix(m: &RepoMarkers) -> String {
+    m.ai_authors
+        .first()
+        .map(|(name, _)| format!(" ({name})"))
+        .unwrap_or_default()
 }
 
 /// Scan result for one repository.
@@ -398,6 +431,12 @@ async fn scan_repo(
 
     m.total_commits = commits.len();
     m.ai_commits = count_ai_commits(&commits);
+    if m.ai_commits > 0 {
+        let (authors, tools, sample) = ai_usage_details(&commits);
+        m.ai_authors = authors;
+        m.ai_tools = tools;
+        m.ai_sample = sample;
+    }
 
     // 5b. Default-branch-only recount — detects squash-hidden usage. Only worth a
     // call when all-branch trailers exist at all.
@@ -496,20 +535,95 @@ async fn scan_repo(
     m
 }
 
+/// True if the commit message carries an AI co-author trailer.
+fn is_ai_commit(msg: &str) -> bool {
+    let lower = msg.to_lowercase();
+    lower.contains("co-authored-by:")
+        && (lower.contains("claude")
+            || lower.contains("copilot")
+            || lower.contains("cursor")
+            || msg.contains("AI"))
+}
+
 /// Count commits whose message carries an AI co-author trailer.
 fn count_ai_commits(commits: &[Value]) -> usize {
     commits
         .iter()
-        .filter(|c| {
-            let msg = c["message"].as_str().unwrap_or("");
-            let lower = msg.to_lowercase();
-            lower.contains("co-authored-by:")
-                && (lower.contains("claude")
-                    || lower.contains("copilot")
-                    || lower.contains("cursor")
-                    || msg.contains("AI"))
-        })
+        .filter(|c| is_ai_commit(c["message"].as_str().unwrap_or("")))
         .count()
+}
+
+/// AI tool name from a Co-Authored-By trailer, e.g.
+/// "Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
+/// → "Claude Opus 4.7". Human co-authors return None.
+fn trailer_tool(msg: &str) -> Option<String> {
+    for line in msg.lines() {
+        let trimmed = line.trim_start();
+        if !trimmed.to_lowercase().starts_with("co-authored-by:") {
+            continue;
+        }
+        let name = trimmed
+            .splitn(2, ':')
+            .nth(1)
+            .unwrap_or("")
+            .split('<')
+            .next()
+            .unwrap_or("")
+            .trim();
+        // Drop the parenthetical suffix: "Claude Opus 4.7 (1M context)" → "Claude Opus 4.7"
+        let name = name.split(" (").next().unwrap_or(name).trim();
+        let lower = name.to_lowercase();
+        if lower.contains("claude")
+            || lower.contains("copilot")
+            || lower.contains("cursor")
+            || name.contains("AI")
+        {
+            return Some(name.to_string());
+        }
+    }
+    None
+}
+
+/// Who/what/sample behind the trailed commits, from data already fetched:
+/// top authors (cap 3, count desc), distinct tool names from trailers (cap 3),
+/// and the most recent trailed commit as (short_sha, subject) for an evidence link.
+/// Commits arrive newest-first from the API, so the first match is the sample.
+fn ai_usage_details(
+    commits: &[Value],
+) -> (Vec<(String, usize)>, Vec<String>, Option<(String, String)>) {
+    let mut authors: BTreeMap<String, usize> = BTreeMap::new();
+    let mut tools: Vec<String> = Vec::new();
+    let mut sample: Option<(String, String)> = None;
+    for c in commits {
+        let msg = c["message"].as_str().unwrap_or("");
+        if !is_ai_commit(msg) {
+            continue;
+        }
+        if let Some(name) = c["author_name"].as_str() {
+            *authors.entry(name.to_string()).or_insert(0) += 1;
+        }
+        if let Some(tool) = trailer_tool(msg) {
+            if !tools.contains(&tool) && tools.len() < 3 {
+                tools.push(tool);
+            }
+        }
+        if sample.is_none() {
+            let sha = c["short_id"]
+                .as_str()
+                .or_else(|| c["id"].as_str())
+                .unwrap_or("");
+            let subject = c["title"]
+                .as_str()
+                .unwrap_or_else(|| msg.lines().next().unwrap_or(""));
+            if !sha.is_empty() {
+                sample = Some((sha.chars().take(8).collect(), subject.to_string()));
+            }
+        }
+    }
+    let mut sorted: Vec<(String, usize)> = authors.into_iter().collect();
+    sorted.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    sorted.truncate(3);
+    (sorted, tools, sample)
 }
 
 /// Count commits touching `path` since the window start. Returns 0 on any error.
@@ -934,8 +1048,8 @@ pub async fn get_ai_adoption(
         out.push(String::new());
         out.push("Devs adopted Claude on their own — the repo gives it no context. Cheapest win: add a CLAUDE.md.".to_string());
         out.push(String::new());
-        out.push("| Repo | AI commits | Attribution |".to_string());
-        out.push("|------|-----------|-------------|".to_string());
+        out.push("| Repo | AI commits | Who | Attribution |".to_string());
+        out.push("|------|-----------|-----|-------------|".to_string());
         for r in &invisible {
             let short_path = r
                 .path
@@ -947,8 +1061,10 @@ pub async fn get_ai_adoption(
             } else {
                 "visible on default"
             };
+            let who = m.ai_who();
+            let who = if who.is_empty() { "–" } else { &who };
             out.push(format!(
-                "| {short_path} | {:.0}% ({}/{}) | {attribution} |",
+                "| {short_path} | {:.0}% ({}/{}) | {who} | {attribution} |",
                 m.ai_pct(),
                 m.ai_commits,
                 m.total_commits
@@ -980,13 +1096,14 @@ pub async fn get_ai_adoption(
                     r.path, m.tasks_recent_commits, m.claude_recent_commits
                 )),
                 "usage w/o config" => flag_lines.push(format!(
-                    "- {}: usage w/o config — {:.0}% AI commits but no CLAUDE.md (add one)",
+                    "- {}: usage w/o config — {:.0}% AI commits{} but no CLAUDE.md (add one)",
                     r.path,
-                    m.ai_pct()
+                    m.ai_pct(),
+                    top_author_suffix(m)
                 )),
                 "squash-hidden usage" => flag_lines.push(format!(
-                    "- {}: squash-hidden usage — {} AI-trailed commits on feature branches, 0 on default — squash strips attribution at merge",
-                    r.path, m.ai_commits
+                    "- {}: squash-hidden usage — {} AI-trailed commits{} on feature branches, 0 on default — squash strips attribution at merge",
+                    r.path, m.ai_commits, top_author_suffix(m)
                 )),
                 "stale config (30+ commits behind)" => flag_lines.push(format!(
                     "- {}: stale config — CLAUDE.md last touched {} but {}+ commits since — refresh it",
@@ -1134,6 +1251,36 @@ fn sub_url(web_url: &str, suffix: &str) -> String {
         String::new()
     } else {
         format!("{web_url}{suffix}")
+    }
+}
+
+/// First `max` chars of `s`, with an ellipsis when truncated.
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        format!("{}…", s.chars().take(max).collect::<String>())
+    }
+}
+
+/// HTML "Who" cell: "Name (n), Name2 (n)" plus the tool name(s) in muted gray.
+fn who_html(m: &RepoMarkers) -> String {
+    if m.ai_authors.is_empty() {
+        return "&ndash;".to_string();
+    }
+    let authors = m
+        .ai_authors
+        .iter()
+        .map(|(name, n)| format!("{} ({n})", crate::tools::reports::htmlescape(name)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if m.ai_tools.is_empty() {
+        authors
+    } else {
+        format!(
+            "{authors} <span class=\"gr\">&middot; {}</span>",
+            crate::tools::reports::htmlescape(&m.ai_tools.join(", "))
+        )
     }
 }
 
@@ -1533,6 +1680,10 @@ window.addEventListener('hashchange',openTarget);openTarget();
                     &format!("+{} task commits", m.tasks_recent_commits),
                 ));
             }
+            if !m.ai_authors.is_empty() {
+                // Who drives the usage — muted subline, same data as Invisible's Who column.
+                usage.push_str(&format!("<div class=\"m\">{}</div>", who_html(m)));
+            }
             let flags = quality_flags(m);
             let flags_str = if flags.is_empty() {
                 "&ndash;".to_string()
@@ -1590,7 +1741,7 @@ window.addEventListener('hashchange',openTarget);openTarget();
     if !invisible.is_empty() {
         html.push_str("<h2 id=\"invisible\">Invisible usage (no config)</h2>\n");
         html.push_str("<p class=\"sub\">Devs adopted Claude on their own &mdash; the repo gives it no context. Cheapest win: add a CLAUDE.md.</p>\n");
-        html.push_str("<table>\n<tr><th>Repo</th><th>AI Commits</th><th>Attribution</th></tr>\n");
+        html.push_str("<table>\n<tr><th>Repo</th><th>AI Commits</th><th>Who</th><th>Attribution</th></tr>\n");
         for r in &invisible {
             let short_path = r
                 .path
@@ -1602,12 +1753,25 @@ window.addEventListener('hashchange',openTarget);openTarget();
             } else {
                 "<span class=\"g\">visible on default</span>"
             };
+            // Sample commit = clickable evidence under the repo name
+            let sample = m
+                .ai_sample
+                .as_ref()
+                .map(|(sha, subject)| {
+                    let commit_url = sub_url(&r.web_url, &format!("/-/commit/{sha}"));
+                    format!(
+                        "<div class=\"m\">e.g. {}</div>",
+                        link(&commit_url, &esc(&truncate_chars(subject, 64)))
+                    )
+                })
+                .unwrap_or_default();
             html.push_str(&format!(
-                "<tr><td><b>{}</b></td><td>{:.0}% ({}/{})</td><td>{attribution}</td></tr>\n",
+                "<tr><td><b>{}</b>{sample}</td><td>{:.0}% ({}/{})</td><td>{}</td><td>{attribution}</td></tr>\n",
                 link(&r.web_url, &esc(short_path)),
                 m.ai_pct(),
                 m.ai_commits,
-                m.total_commits
+                m.total_commits,
+                who_html(m),
             ));
         }
         html.push_str("</table>\n");
@@ -1634,8 +1798,9 @@ window.addEventListener('hashchange',openTarget);openTarget();
                     m.tasks_recent_commits, m.claude_recent_commits,
                 )),
                 "squash-hidden usage" => flag_boxes.push(format!(
-                    "<div class=\"issue warn\"><b>{repo} &mdash; squash-hidden usage</b><div class=\"m\">{} AI-trailed commits on feature branches, 0 on default &mdash; squash strips attribution at merge.</div></div>\n",
+                    "<div class=\"issue warn\"><b>{repo} &mdash; squash-hidden usage</b><div class=\"m\">{} AI-trailed commits{} on feature branches, 0 on default &mdash; squash strips attribution at merge.</div></div>\n",
                     m.ai_commits,
+                    esc(&top_author_suffix(m)),
                 )),
                 "stub CLAUDE.md" => flag_boxes.push(format!(
                     "<div class=\"issue warn\"><b>{repo} &mdash; stub CLAUDE.md</b><div class=\"m\">{}B &mdash; add real project context.</div></div>\n",
@@ -1646,8 +1811,9 @@ window.addEventListener('hashchange',openTarget);openTarget();
                     m.claude_md_size / 1024,
                 )),
                 "usage w/o config" => flag_boxes.push(format!(
-                    "<div class=\"issue warn\"><b>{repo} &mdash; usage without config</b><div class=\"m\">{:.0}% AI commits but no CLAUDE.md &mdash; add one.</div></div>\n",
+                    "<div class=\"issue warn\"><b>{repo} &mdash; usage without config</b><div class=\"m\">{:.0}% AI commits{} but no CLAUDE.md &mdash; add one.</div></div>\n",
                     m.ai_pct(),
+                    esc(&top_author_suffix(m)),
                 )),
                 // in-flight flags have their own section above
                 _ => {}
@@ -1750,7 +1916,7 @@ window.addEventListener('hashchange',openTarget);openTarget();
     // ── Methodology footnote ──
 
     html.push_str(&format!(
-        "<details id=\"methodology\"><summary>Methodology</summary><p>Levels: <b>L0</b> no AI tooling markers; <b>L1 Exploring</b> any config marker (CLAUDE.md, AGENTS.md, .cursorrules, .mcp.json); <b>L2 Practicing</b> CLAUDE.md plus shared workflow assets (commands, settings, MCP config, hooks, or an ADR log) &mdash; or agents configured but not yet used; <b>L3 Scaling</b> agents plus measurable usage (&ge;10% AI-trailed commits, recent <code>.tasks</code> activity, or AI-marked MR descriptions). Usage is measured across <i>all</i> branches over the last {days} days because squash-merge strips commit trailers from the default branch; MR descriptions and <code>.tasks</code>/<code>.claude</code> path activity count as first-class evidence. <b>In-flight</b> repos have AI-named feature branches but no config merged yet. Trajectory: &uarr; actively building (live AI branches or recent config/ADR maintenance), &rarr; steady use, &darr; markers present but unused and unmaintained. Attribution rate = share of adopting repos with usage evidence whose usage is visible via Co-Authored-By trailers. Repos with no activity in {dormant_days} days are skipped as dormant and listed as archive candidates.</p></details>\n"
+        "<details id=\"methodology\"><summary>Methodology</summary><p>Levels: <b>L0</b> no AI tooling markers; <b>L1 Exploring</b> any config marker (CLAUDE.md, AGENTS.md, .cursorrules, .mcp.json); <b>L2 Practicing</b> CLAUDE.md plus shared workflow assets (commands, settings, MCP config, hooks, or an ADR log) &mdash; or agents configured but not yet used; <b>L3 Scaling</b> agents plus measurable usage (&ge;10% AI-trailed commits, recent <code>.tasks</code> activity, or AI-marked MR descriptions). Usage is measured across <i>all</i> branches over the last {days} days because squash-merge strips commit trailers from the default branch; MR descriptions and <code>.tasks</code>/<code>.claude</code> path activity count as first-class evidence. <b>In-flight</b> repos have AI-named feature branches but no config merged yet. Trajectory: &uarr; actively building (live AI branches or recent config/ADR maintenance), &rarr; steady use, &darr; markers present but unused and unmaintained. Attribution rate = share of adopting repos with usage evidence whose usage is visible via Co-Authored-By trailers. &ldquo;Who&rdquo; names the commit authors of trailed commits (top 3) and the AI tool parsed from the trailer itself; sample commits link to the evidence. Repos with no activity in {dormant_days} days are skipped as dormant and listed as archive candidates.</p></details>\n"
     ));
 
     // ── Footer ──
@@ -1781,6 +1947,80 @@ mod tests {
         let m = empty();
         assert_eq!(adoption_level(&m), 0);
         assert!(quality_flags(&m).is_empty());
+    }
+
+    #[test]
+    fn test_trailer_tool_parses_name() {
+        let msg = "feat: add widget\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>";
+        assert_eq!(trailer_tool(msg), Some("Claude Opus 4.7".to_string()));
+        let plain = "fix: typo\n\nCo-authored-by: GitHub Copilot <copilot@github.com>";
+        assert_eq!(trailer_tool(plain), Some("GitHub Copilot".to_string()));
+    }
+
+    #[test]
+    fn test_trailer_tool_ignores_humans() {
+        let msg = "pair work\n\nCo-Authored-By: Jane Doe <jane@my-org.example>";
+        assert_eq!(trailer_tool(msg), None);
+        assert_eq!(trailer_tool("no trailer at all"), None);
+    }
+
+    #[test]
+    fn test_ai_usage_details_authors_tools_sample() {
+        let commits = vec![
+            serde_json::json!({
+                "short_id": "aaaa1111",
+                "title": "newest trailed commit",
+                "author_name": "Dev One",
+                "message": "newest trailed commit\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
+            }),
+            serde_json::json!({
+                "short_id": "bbbb2222",
+                "title": "untrailed commit",
+                "author_name": "Dev Two",
+                "message": "untrailed commit"
+            }),
+            serde_json::json!({
+                "short_id": "cccc3333",
+                "title": "older trailed commit",
+                "author_name": "Dev One",
+                "message": "older trailed commit\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
+            }),
+        ];
+        let (authors, tools, sample) = ai_usage_details(&commits);
+        assert_eq!(authors, vec![("Dev One".to_string(), 2)]);
+        assert_eq!(tools, vec!["Claude Opus 4.7".to_string()]);
+        // Commits arrive newest-first, so the sample is the first trailed one
+        assert_eq!(
+            sample,
+            Some(("aaaa1111".to_string(), "newest trailed commit".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_ai_who_format() {
+        let m = RepoMarkers {
+            ai_authors: vec![("Dev One".to_string(), 15), ("Dev Two".to_string(), 2)],
+            ai_tools: vec!["Claude Opus 4.7".to_string()],
+            ..empty()
+        };
+        assert_eq!(m.ai_who(), "Dev One (15), Dev Two (2) · Claude Opus 4.7");
+        assert_eq!(empty().ai_who(), "");
+    }
+
+    #[test]
+    fn test_top_author_suffix() {
+        let m = RepoMarkers {
+            ai_authors: vec![("Dev One".to_string(), 15)],
+            ..empty()
+        };
+        assert_eq!(top_author_suffix(&m), " (Dev One)");
+        assert_eq!(top_author_suffix(&empty()), "");
+    }
+
+    #[test]
+    fn test_truncate_chars() {
+        assert_eq!(truncate_chars("short", 10), "short");
+        assert_eq!(truncate_chars("abcdefghij", 5), "abcde…");
     }
 
     #[test]
