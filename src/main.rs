@@ -3,6 +3,11 @@
 //! Usage:
 //!   gl-mcp                              # stdio transport (default)
 //!   gl-mcp --transport http --port 8000 # HTTP/SSE transport for n8n, etc.
+//!   gl-mcp --adoption-report GROUP [--days N] [--gl-instance NAME] > report.html
+//!                                       # one-shot: print the AI-adoption HTML
+//!                                       # report to stdout and exit. Same engine
+//!                                       # as the generate_ai_adoption_report MCP
+//!                                       # tool — built for cron/CI consumers.
 
 mod client;
 mod config;
@@ -37,6 +42,35 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let args: Vec<String> = std::env::args().collect();
+
+    // One-shot CLI mode: --adoption-report GROUP [--days N] [--gl-instance NAME].
+    // Prints the same HTML the generate_ai_adoption_report MCP tool returns,
+    // then exits. Lets cron/CI (e.g. a weekly email workflow) reuse the exact
+    // adoption engine without speaking MCP.
+    if let Some(group) = args.iter()
+        .position(|a| a == "--adoption-report")
+        .and_then(|i| args.get(i + 1))
+    {
+        let days: u32 = args.iter()
+            .position(|a| a == "--days")
+            .and_then(|i| args.get(i + 1))
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(30);
+        let instance = args.iter()
+            .position(|a| a == "--gl-instance")
+            .and_then(|i| args.get(i + 1))
+            .map(|s| s.as_str())
+            .unwrap_or("");
+
+        let resolver = crate::resolver::Resolver::new(&config);
+        let client = resolver.resolve(instance, "").map_err(|e| anyhow::anyhow!("{e}"))?;
+        let html = tools::adoption::generate_ai_adoption_report(
+            client, group, days, tools::adoption::DORMANT_DAYS,
+        ).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        println!("{html}");
+        return Ok(());
+    }
+
     let transport = args.iter()
         .position(|a| a == "--transport")
         .and_then(|i| args.get(i + 1))
