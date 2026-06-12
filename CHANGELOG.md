@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - AI adoption reports name the people behind the usage — "Who" column (commit authors + AI tool parsed from the Co-Authored-By trailer) in Invisible usage, linked sample commit as evidence, top author named in usage-w/o-config and squash-hidden flags, author subline in the Adopting table. Zero extra API calls: extracted from commit data the scan already fetches.
+- One-shot CLI mode: `gl-mcp --adoption-report GROUP [--days N] [--gl-instance NAME]` prints the AI-adoption HTML report to stdout and exits. Same engine as the `generate_ai_adoption_report` MCP tool — lets cron/CI consumers (e.g. a scheduled email-report workflow) reuse the exact scan without speaking MCP or duplicating the heuristics.
 
 ## [0.19.0] - 2026-06-11
 
