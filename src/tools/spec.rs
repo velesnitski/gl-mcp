@@ -975,6 +975,172 @@ pub async fn generate_spec_audit_report(
     Ok(render_html(&o))
 }
 
+/// One platform to audit in a sweep.
+pub struct SweepTarget {
+    pub label: String,
+    pub project_id: String,
+    pub spec: String,
+    pub ref_name: String,
+    pub routes_file: String,
+}
+
+/// Platforms run concurrently, but capped — each audit already fans out ~10
+/// sub-requests internally, so this bounds total in-flight load on the API.
+const SWEEP_CONCURRENCY: usize = 3;
+
+/// One row of the cross-platform rollup.
+struct SweepRow {
+    label: String,
+    error: Option<String>,
+    version: String,
+    cleanup: usize,
+    drift: usize,
+    stale: usize,
+    undoc: usize,
+    secrets: usize,
+    hardcoded: usize,
+    in_sync: usize,
+}
+
+fn version_cell(o: &AuditOutcome) -> String {
+    match o.version_verdict {
+        VersionVerdict::DocBehind => format!(
+            "STALE ({}<{})",
+            o.doc_version.as_deref().unwrap_or("?"),
+            o.latest_tag.as_deref().unwrap_or("?")
+        ),
+        VersionVerdict::InSync => "in-sync".to_string(),
+        VersionVerdict::DocAhead => "ahead".to_string(),
+        VersionVerdict::Unknown => "unknown".to_string(),
+    }
+}
+
+fn sweep_row(label: &str, o: &AuditOutcome) -> SweepRow {
+    let count = |v: Verdict| o.audits.iter().filter(|a| a.verdict == v).count();
+    SweepRow {
+        label: label.to_string(),
+        error: None,
+        version: version_cell(o),
+        cleanup: count(Verdict::CleanupDebt),
+        drift: count(Verdict::Drift),
+        stale: count(Verdict::StaleDoc),
+        undoc: o.undocumented.len(),
+        secrets: o.secrets.len(),
+        hardcoded: o.secrets.iter().filter(|s| !s.hardcoded_in.is_empty()).count(),
+        in_sync: count(Verdict::InSync),
+    }
+}
+
+/// Render the cross-platform rollup. Pure — unit-tested without the network.
+fn render_sweep(rows: &[SweepRow], summary_only: bool) -> String {
+    let mut out: Vec<String> = Vec::new();
+    out.push(format!("# Cross-platform spec-drift sweep — {} platforms", rows.len()));
+    out.push(String::new());
+    out.push("| Platform | Version | Cleanup | Drift | Stale | Undoc | Secrets | In-sync |".to_string());
+    out.push("|----------|---------|---------|-------|-------|-------|---------|---------|".to_string());
+    for r in rows {
+        if let Some(e) = &r.error {
+            out.push(format!("| {} | failed: {} | | | | | | |", r.label, e));
+        } else {
+            out.push(format!(
+                "| {} | {} | {} | {} | {} | {} | {} ({} hc) | {} |",
+                r.label, r.version, r.cleanup, r.drift, r.stale, r.undoc, r.secrets, r.hardcoded, r.in_sync
+            ));
+        }
+    }
+
+    if summary_only {
+        return out.join("\n");
+    }
+
+    // Needs-attention: platforms with actionable findings.
+    let flagged: Vec<&SweepRow> = rows
+        .iter()
+        .filter(|r| r.error.is_none() && (r.cleanup > 0 || r.drift > 0 || r.hardcoded > 0 || r.version.starts_with("STALE")))
+        .collect();
+    if !flagged.is_empty() {
+        out.push(String::new());
+        out.push("## Needs attention".to_string());
+        for r in flagged {
+            let mut notes: Vec<String> = Vec::new();
+            if r.version.starts_with("STALE") {
+                notes.push(format!("version {}", r.version));
+            }
+            if r.cleanup > 0 {
+                notes.push(format!("{} cleanup-debt", r.cleanup));
+            }
+            if r.drift > 0 {
+                notes.push(format!("{} drift", r.drift));
+            }
+            if r.hardcoded > 0 {
+                notes.push(format!("{} hardcoded secret(s)", r.hardcoded));
+            }
+            out.push(format!("- **{}**: {}", r.label, notes.join(", ")));
+        }
+    }
+
+    // Totals across platforms that audited successfully.
+    let ok: Vec<&SweepRow> = rows.iter().filter(|r| r.error.is_none()).collect();
+    let sum = |f: fn(&SweepRow) -> usize| ok.iter().map(|r| f(r)).sum::<usize>();
+    out.push(String::new());
+    out.push("## Totals".to_string());
+    out.push(format!(
+        "Across {} platforms: {} cleanup-debt, {} drift, {} stale-doc, {} undocumented, {} secrets ({} hardcoded).",
+        ok.len(),
+        sum(|r| r.cleanup),
+        sum(|r| r.drift),
+        sum(|r| r.stale),
+        sum(|r| r.undoc),
+        sum(|r| r.secrets),
+        sum(|r| r.hardcoded),
+    ));
+    let failed = rows.len() - ok.len();
+    if failed > 0 {
+        out.push(format!("{failed} platform(s) failed to audit — see the table."));
+    }
+
+    out.join("\n")
+}
+
+/// Audit several specs against their repos concurrently, rolled up into one
+/// cross-platform table. Each target audits independently (and persists its own
+/// metadata-map snapshot via compute_audit); a failure on one platform doesn't
+/// sink the others.
+pub async fn sweep_spec_audit(
+    client: &GitLabClient,
+    targets: &[SweepTarget],
+    summary_only: bool,
+) -> Result<String> {
+    let mut rows: Vec<SweepRow> = Vec::with_capacity(targets.len());
+    for chunk in targets.chunks(SWEEP_CONCURRENCY) {
+        let futs = chunk.iter().map(|t| {
+            let client = client.clone();
+            async move {
+                let r = compute_audit(&client, &t.project_id, &t.spec, &t.ref_name, &t.routes_file).await;
+                (t.label.clone(), r)
+            }
+        });
+        for (label, result) in join_all(futs).await {
+            match result {
+                Ok(o) => rows.push(sweep_row(&label, &o)),
+                Err(e) => rows.push(SweepRow {
+                    label,
+                    error: Some(e.short_message()),
+                    version: String::new(),
+                    cleanup: 0,
+                    drift: 0,
+                    stale: 0,
+                    undoc: 0,
+                    secrets: 0,
+                    hardcoded: 0,
+                    in_sync: 0,
+                }),
+            }
+        }
+    }
+    Ok(render_sweep(&rows, summary_only))
+}
+
 fn version_line(
     doc: Option<&str>,
     tag: Option<&str>,
@@ -1538,6 +1704,66 @@ short: abc123";
         // and one containing a '+' (base64-distinctive) is caught
         let key2 = "tok: AAAABBBBCCCC+DDDDEEEEFFFFGGGGHHHHIIII";
         assert_eq!(extract_secrets(key2).len(), 1);
+    }
+
+    #[test]
+    fn test_render_sweep() {
+        let rows = vec![
+            SweepRow {
+                label: "iOS".into(),
+                error: None,
+                version: "STALE (4.9.5<4.9.10)".into(),
+                cleanup: 0,
+                drift: 1,
+                stale: 2,
+                undoc: 19,
+                secrets: 1,
+                hardcoded: 0,
+                in_sync: 6,
+            },
+            SweepRow {
+                label: "Android".into(),
+                error: None,
+                version: "in-sync".into(),
+                cleanup: 0,
+                drift: 0,
+                stale: 0,
+                undoc: 0,
+                secrets: 0,
+                hardcoded: 0,
+                in_sync: 8,
+            },
+            SweepRow {
+                label: "Windows".into(),
+                error: Some("404 project not found".into()),
+                version: String::new(),
+                cleanup: 0,
+                drift: 0,
+                stale: 0,
+                undoc: 0,
+                secrets: 0,
+                hardcoded: 0,
+                in_sync: 0,
+            },
+        ];
+        let out = render_sweep(&rows, false);
+        // table has all three platforms
+        assert!(out.contains("| iOS | STALE (4.9.5<4.9.10) |"));
+        assert!(out.contains("| Android | in-sync |"));
+        assert!(out.contains("| Windows | failed: 404 project not found |"));
+        // iOS is flagged (stale + drift); Android (clean) is not
+        assert!(out.contains("## Needs attention"));
+        assert!(out.contains("**iOS**"));
+        assert!(!out.contains("**Android**"));
+        // totals exclude the failed platform (2 ok) and sum drift across them
+        assert!(out.contains("Across 2 platforms"));
+        assert!(out.contains("1 drift"));
+        assert!(out.contains("1 platform(s) failed"));
+        // summary_only drops the detail sections
+        let summary = render_sweep(&rows, true);
+        assert!(summary.contains("| iOS |"));
+        assert!(!summary.contains("## Needs attention"));
+        assert!(!summary.contains("## Totals"));
     }
 
     #[test]

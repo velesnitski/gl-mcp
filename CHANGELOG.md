@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `sweep_spec_audit` — audit several specs against their repos concurrently (e.g. iOS/Android/Windows/Mac app-spec articles) and roll up into one cross-platform table: per-platform version/cleanup-debt/drift/stale-doc/undocumented/secrets, a needs-attention list, and totals. Platforms run in parallel (capped); a per-platform failure yields an error row instead of sinking the sweep.
+
 ## [0.21.0] - 2026-06-15
 
 ### Added
