@@ -62,3 +62,12 @@ deferred.
   sufficient to detect appear/resolve/hardcoded-status transitions.
 - Persisting on every call means "since last audit" is relative to the previous
   invocation, which is the intended behaviour for tracking drift over time.
+
+## Correction (2026-06-15)
+
+A live run surfaced a false positive: the base64 character class includes `/`,
+so a long slash-delimited route path (`/v2/network/info/leading/primary`, 32
+chars) matched as a "secret." Fixed with a `looks_like_b64_secret` guard — a
+base64 candidate counts as a secret only if it carries padding (`=`) or a `+`,
+or has no `/` at all. Real keys/tokens (which have padding or `+`) are kept;
+slash-delimited paths with neither are rejected.

@@ -515,9 +515,19 @@ pub(crate) fn extract_secrets(spec: &str) -> Vec<SecretFinding> {
     }
     for m in SECRET_B64_RE.find_iter(spec) {
         let v = m.as_str();
-        push(SecretKind::Base64Secret, v, v.to_string(), &mut seen, &mut out);
+        if looks_like_b64_secret(v) {
+            push(SecretKind::Base64Secret, v, v.to_string(), &mut seen, &mut out);
+        }
     }
     out
+}
+
+/// Distinguish a real base64 key/token from a slash-delimited route path, which
+/// the base64 character class (`/` included) otherwise matches. Real keys/tokens
+/// carry base64 padding (`=`) or a `+`, or have no `/` at all; a long string
+/// that's all `word/word/word` with neither is a path, not a secret.
+fn looks_like_b64_secret(s: &str) -> bool {
+    s.contains('=') || s.contains('+') || !s.contains('/')
 }
 
 // ─── Local metadata map: persist each run, diff against the previous one ───
@@ -1514,6 +1524,20 @@ short: abc123";
         assert!(kinds.contains(&SecretKind::Email));
         // "short: abc123" is below the base64 threshold → not a secret.
         assert_eq!(secrets.len(), 3);
+    }
+
+    #[test]
+    fn test_extract_secrets_ignores_route_paths() {
+        // A long slash-delimited route path must NOT be mistaken for a base64
+        // secret (regression: the base64 class includes '/'). Synthetic paths.
+        let spec = "| Nodes | /api/v2/resource/group/segment/item |\n| Cfg | /aBcD1234eFgH5678iJkL/mNoP9012qRsT |";
+        assert!(extract_secrets(spec).is_empty());
+        // but a real key with padding is still caught
+        let key = "key: AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH0000=";
+        assert_eq!(extract_secrets(key).len(), 1);
+        // and one containing a '+' (base64-distinctive) is caught
+        let key2 = "tok: AAAABBBBCCCC+DDDDEEEEFFFFGGGGHHHHIIII";
+        assert_eq!(extract_secrets(key2).len(), 1);
     }
 
     #[test]
