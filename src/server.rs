@@ -1097,6 +1097,21 @@ impl GlMcpServer {
             tools::spec::generate_spec_audit_report(client, &p.project_id, &p.spec, p.ref_name.as_deref().unwrap_or(""), p.routes_file.as_deref().unwrap_or("")).await
         )
     }
+
+    #[tool(description = "Audit several specs against their repos concurrently (e.g. iOS/Android/Windows/Mac app-spec articles) and roll up into one cross-platform table: per-platform version/cleanup-debt/drift/stale-doc/undocumented/secrets, a needs-attention list, and totals. Each platform audits independently; one failure doesn't sink the rest.")]
+    async fn sweep_spec_audit(&self, Parameters(p): Parameters<SweepSpecAuditParams>) -> Result<CallToolResult, McpError> {
+        let id = p.targets.first().map(|t| t.project_id.clone()).unwrap_or_default();
+        simple_tool!(self, p, "sweep_spec_audit", &id, |client| {
+            let targets: Vec<tools::spec::SweepTarget> = p.targets.iter().map(|t| tools::spec::SweepTarget {
+                label: t.label.clone().unwrap_or_else(|| t.project_id.clone()),
+                project_id: t.project_id.clone(),
+                spec: t.spec.clone(),
+                ref_name: t.ref_name.clone().unwrap_or_default(),
+                routes_file: t.routes_file.clone().unwrap_or_default(),
+            }).collect();
+            tools::spec::sweep_spec_audit(client, &targets, p.summary_only.unwrap_or(false)).await
+        })
+    }
 }
 
 // ─── ServerHandler ───
