@@ -1594,6 +1594,169 @@ fn render_html(o: &AuditOutcome) -> String {
     h
 }
 
+/// HTML head (dark theme + print CSS + export button + auto-open script),
+/// shared by the spec-audit HTML reports. `title` is caller-escaped.
+fn html_head(title: &str) -> String {
+    use crate::tools::reports::{EXPORT_BUTTON, PRINT_CSS};
+    let mut h = String::new();
+    h.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n");
+    h.push_str(&format!("<title>{title}</title>\n<style>\n"));
+    h.push_str(SPEC_STYLE);
+    h.push_str(PRINT_CSS);
+    h.push_str("\n@media print{a{border-bottom:none !important;color:inherit !important}}\n</style>\n</head>\n<body>\n");
+    h.push_str(EXPORT_BUTTON);
+    h.push_str(AUTO_OPEN_SCRIPT);
+    h
+}
+
+/// Cross-team HTML rollup: summary cards, a clickable team table, needs-attention,
+/// and a collapsible per-team detail block (version, drift, stale, undocumented
+/// with GitLab links, secrets). `None` outcome = that team failed to audit.
+fn render_sweep_html(teams: &[(String, Option<AuditOutcome>)]) -> String {
+    use crate::tools::reports::htmlescape as esc;
+    let date_str = chrono::Utc::now().format("%A, %d %B %Y").to_string();
+    let version = env!("CARGO_PKG_VERSION");
+    let count = |o: &AuditOutcome, v: Verdict| o.audits.iter().filter(|a| a.verdict == v).count();
+    let hc = |o: &AuditOutcome| o.secrets.iter().filter(|s| !s.hardcoded_in.is_empty()).count();
+    let anchor_of = |label: &str| -> String {
+        label.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' }).collect()
+    };
+    let vshort = |v: VersionVerdict| match v {
+        VersionVerdict::DocBehind => "STALE",
+        VersionVerdict::InSync => "in-sync",
+        VersionVerdict::DocAhead => "ahead",
+        VersionVerdict::Unknown => "unknown",
+    };
+    let blob = |web_url: &str, search_ref: &str, file: &str, line: u64| -> String {
+        if web_url.is_empty() {
+            format!("<code>{}:{}</code>", esc(file), line)
+        } else {
+            format!("<a href=\"{}/-/blob/{}/{}#L{}\"><code>{}:{}</code></a>", esc(web_url), esc(search_ref), esc(file), line, esc(file), line)
+        }
+    };
+
+    let oks: Vec<(&String, &AuditOutcome)> = teams.iter().filter_map(|(l, o)| o.as_ref().map(|x| (l, x))).collect();
+    let tot_drift: usize = oks.iter().map(|(_, o)| count(o, Verdict::Drift)).sum();
+    let tot_stale: usize = oks.iter().map(|(_, o)| count(o, Verdict::StaleDoc)).sum();
+    let tot_undoc: usize = oks.iter().map(|(_, o)| o.undocumented.len()).sum();
+    let tot_secrets: usize = oks.iter().map(|(_, o)| o.secrets.len()).sum();
+    let tot_hc: usize = oks.iter().map(|(_, o)| hc(o)).sum();
+    let stale_ver = oks.iter().filter(|(_, o)| o.version_verdict == VersionVerdict::DocBehind).count();
+
+    let mut h = html_head(&format!("Cross-team spec-drift report — {date_str}"));
+    h.push_str(&format!(
+        "<h1>Cross-team spec-drift report</h1>\n<div class=\"sub\">{} teams &middot; {date_str}</div>\n",
+        teams.len()
+    ));
+
+    // Summary cards.
+    let card = |t: &str, v: String, cls: &str, sub: &str| {
+        format!("<div class=\"card\"><div class=\"card-t\">{t}</div><div class=\"card-v {cls}\">{v}</div><div class=\"card-s\">{sub}</div></div>\n")
+    };
+    h.push_str("<div class=\"grid\">\n");
+    h.push_str(&card("Teams", teams.len().to_string(), "b", "audited"));
+    h.push_str(&card("Stale versions", stale_ver.to_string(), if stale_ver > 0 { "r" } else { "g" }, "spec behind tag"));
+    h.push_str(&card("Drift", tot_drift.to_string(), if tot_drift > 0 { "y" } else { "g" }, "active, missing"));
+    h.push_str(&card("Stale doc", tot_stale.to_string(), "gr", "flagged & gone"));
+    h.push_str(&card("Undocumented", tot_undoc.to_string(), if tot_undoc > 0 { "y" } else { "g" }, "in code, not in spec"));
+    h.push_str(&card("Secrets", tot_secrets.to_string(), if tot_hc > 0 { "r" } else if tot_secrets > 0 { "y" } else { "g" }, &format!("{tot_hc} hardcoded")));
+    h.push_str("</div>\n");
+
+    // Cross-team table.
+    h.push_str("<h2>By team</h2>\n<table>\n<tr><th>Team</th><th>Version</th><th>Cleanup</th><th>Drift</th><th>Stale</th><th>Undoc</th><th>Secrets</th><th>In-sync</th></tr>\n");
+    let mut approx_seen = false;
+    for (label, o) in teams {
+        match o {
+            None => h.push_str(&format!("<tr><td><b>{}</b></td><td class=\"r\">failed to audit</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>\n", esc(label))),
+            Some(o) => {
+                if o.harvest_mode == "search" { approx_seen = true; }
+                let undoc = if o.harvest_mode == "search" { format!("{}~", o.undocumented.len()) } else { o.undocumented.len().to_string() };
+                let vcls = match o.version_verdict {
+                    VersionVerdict::DocBehind => "r",
+                    VersionVerdict::InSync => "g",
+                    VersionVerdict::DocAhead => "y",
+                    VersionVerdict::Unknown => "gr",
+                };
+                h.push_str(&format!(
+                    "<tr><td><b><a href=\"#{}\">{}</a></b></td><td class=\"{vcls}\">{}</td><td>{}</td><td>{}</td><td>{}</td><td>{undoc}</td><td>{} ({} hc)</td><td>{}</td></tr>\n",
+                    anchor_of(label), esc(label), vshort(o.version_verdict),
+                    count(o, Verdict::CleanupDebt), count(o, Verdict::Drift), count(o, Verdict::StaleDoc),
+                    o.secrets.len(), hc(o), count(o, Verdict::InSync)
+                ));
+            }
+        }
+    }
+    h.push_str("</table>\n");
+    if approx_seen {
+        h.push_str("<p class=\"sub\"><code>~</code> = reverse-drift search-harvested (namespace-gated lower bound); pass a routes file per team for a precise count.</p>\n");
+    }
+
+    // Needs attention.
+    let flagged: Vec<(&String, &AuditOutcome)> = oks.iter().copied()
+        .filter(|(_, o)| count(o, Verdict::CleanupDebt) > 0 || count(o, Verdict::Drift) > 0 || o.version_verdict == VersionVerdict::DocBehind || hc(o) > 0)
+        .collect();
+    if !flagged.is_empty() {
+        h.push_str("<h2>Needs attention</h2>\n");
+        for (label, o) in flagged {
+            let mut notes: Vec<String> = Vec::new();
+            if o.version_verdict == VersionVerdict::DocBehind { notes.push("version stale".to_string()); }
+            let d = count(o, Verdict::Drift); if d > 0 { notes.push(format!("{d} drift")); }
+            let c = count(o, Verdict::CleanupDebt); if c > 0 { notes.push(format!("{c} cleanup-debt")); }
+            if hc(o) > 0 { notes.push(format!("{} hardcoded secret(s)", hc(o))); }
+            h.push_str(&format!("<div class=\"issue warn\"><b><a href=\"#{}\">{}</a></b><div class=\"m\">{}</div></div>\n", anchor_of(label), esc(label), notes.join(", ")));
+        }
+    }
+
+    // Per-team detail.
+    for (label, o) in teams {
+        let Some(o) = o else { continue };
+        h.push_str(&format!("<details id=\"{}\"><summary>{} — {} routes, {} undocumented</summary>\n", anchor_of(label), esc(label), o.audits.len(), o.undocumented.len()));
+        h.push_str(&format!(
+            "<div class=\"m\">Version: spec <code>{}</code> vs tag <code>{}</code> ({})</div>\n",
+            esc(o.doc_version.as_deref().unwrap_or("?")), esc(o.latest_tag.as_deref().unwrap_or("none")), vshort(o.version_verdict)
+        ));
+        let routes_of = |v: Verdict| -> String {
+            o.audits.iter().filter(|x| x.verdict == v).map(|x| format!("<code>{}</code>", esc(&x.route.path))).collect::<Vec<_>>().join(", ")
+        };
+        let drift = routes_of(Verdict::Drift);
+        if !drift.is_empty() { h.push_str(&format!("<div class=\"m\"><b>Drift (active, missing):</b> {drift}</div>\n")); }
+        let stale = routes_of(Verdict::StaleDoc);
+        if !stale.is_empty() { h.push_str(&format!("<div class=\"m\"><b>Stale doc rows:</b> {stale}</div>\n")); }
+        if !o.undocumented.is_empty() {
+            h.push_str(&format!("<div class=\"m\"><b>Undocumented endpoints ({}):</b></div>\n", o.undocumented.len()));
+            for (p, line, file) in o.undocumented.iter().take(15) {
+                h.push_str(&format!("<div class=\"m\">&middot; <code>{}</code> &rarr; {}</div>\n", esc(p), blob(&o.web_url, &o.search_ref, file, *line)));
+            }
+            if o.undocumented.len() > 15 { h.push_str(&format!("<div class=\"m\">&hellip; and {} more</div>\n", o.undocumented.len() - 15)); }
+        }
+        if !o.secrets.is_empty() {
+            let secs = o.secrets.iter().map(|s| format!("<code>{}</code>{}", esc(&s.finding.masked), if s.hardcoded_in.is_empty() { "" } else { " (hardcoded)" })).collect::<Vec<_>>().join(", ");
+            h.push_str(&format!("<div class=\"m\"><b>Secrets ({}):</b> {secs}</div>\n", o.secrets.len()));
+        }
+        h.push_str("</details>\n");
+    }
+
+    h.push_str(&format!("\n<footer>gl-mcp v{version} &middot; {date_str}</footer>\n</body>\n</html>"));
+    h
+}
+
+/// Audit several teams' specs against their repos concurrently and render one
+/// clickable cross-team HTML report (summary cards, team table, per-team detail).
+pub async fn generate_sweep_report(client: &GitLabClient, targets: &[SweepTarget]) -> Result<String> {
+    let mut teams: Vec<(String, Option<AuditOutcome>)> = Vec::with_capacity(targets.len());
+    for chunk in targets.chunks(SWEEP_CONCURRENCY) {
+        let futs = chunk.iter().map(|t| {
+            let client = client.clone();
+            async move {
+                let r = compute_audit(&client, &t.project_id, &t.spec, &t.ref_name, &t.routes_file, &t.label).await.ok();
+                (t.label.clone(), r)
+            }
+        });
+        teams.extend(join_all(futs).await);
+    }
+    Ok(render_sweep_html(&teams))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1742,6 +1905,36 @@ short: abc123";
         assert!(win.to_string_lossy().ends_with("org_desktop__main__Windows.json"));
         assert!(mac.to_string_lossy().ends_with("org_desktop__main__macOS.json"));
         assert!(bare.to_string_lossy().ends_with("org_desktop__main.json"));
+    }
+
+    #[test]
+    fn test_render_sweep_html_smoke() {
+        let mk = |path: &str, v: Verdict| RouteAudit {
+            route: DocRoute { label: String::new(), path: path.to_string(), status: DocStatus::Active, query: None },
+            hits: Vec::new(),
+            verdict: v,
+        };
+        let ios = AuditOutcome {
+            project_id: "org/ios".into(), search_ref: "main".into(), web_url: "https://ex.com/org/ios".into(),
+            doc_version: Some("4.9.5".into()), latest_tag: Some("release-4.9.10".into()),
+            version_verdict: VersionVerdict::DocBehind,
+            audits: vec![mk("/v3/feedbacks", Verdict::Drift), mk("/v3/user", Verdict::InSync)],
+            secrets: Vec::new(),
+            undocumented: vec![("/v4/devices".into(), 91, "Net.swift".into())],
+            harvest_mode: "file".into(), changes: None,
+        };
+        let teams = vec![("iOS".to_string(), Some(ios)), ("Windows".to_string(), None)];
+        let html = render_sweep_html(&teams);
+        assert!(html.starts_with("<!DOCTYPE html>"));
+        assert!(html.contains("Cross-team spec-drift report"));
+        // team table links to per-team anchor; failed team marked
+        assert!(html.contains("href=\"#ios\""));
+        assert!(html.contains("id=\"ios\""));
+        assert!(html.contains("failed to audit"));
+        // per-team detail has the undocumented endpoint with a blob link
+        assert!(html.contains("/-/blob/main/Net.swift#L91"));
+        assert!(html.contains("STALE"));
+        assert!(html.ends_with("</html>"));
     }
 
     #[test]
