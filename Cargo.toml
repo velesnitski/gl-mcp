@@ -1,6 +1,6 @@
 [package]
 name = "gl-mcp"
-version = "0.25.0"
+version = "0.26.0"
 edition = "2024"
 description = "GitLab MCP server for Claude Code — 98 tools for projects, issues, MRs, CI/CD, code review, team analytics, and spec-drift auditing"
 license = "MIT"
@@ -47,5 +47,12 @@ sentry = { version = "0.37", default-features = false, features = ["reqwest", "r
 
 [profile.release]
 strip = true
-lto = true
+lto = "thin"        # thin LTO: ~full-LTO size, much faster link than lto=true
 codegen-units = 1
+
+# Trim debug info from dev/test builds: keeps file:line in backtraces (so test
+# failures stay readable) but drops local-variable info — cuts the `target/debug`
+# footprint sharply. The MCP server ships the release binary; dev/test rarely
+# need a step-debugger.
+[profile.dev]
+debug = "line-tables-only"
