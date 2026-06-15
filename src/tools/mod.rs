@@ -11,6 +11,7 @@ pub mod reports;
 pub mod repository;
 pub mod lint;
 pub mod adoption;
+pub mod spec;
 
 /// Tools that modify data — blocked in read-only mode.
 pub const WRITE_TOOLS: &[&str] = &[

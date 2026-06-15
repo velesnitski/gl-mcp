@@ -1081,6 +1081,15 @@ impl GlMcpServer {
             tools::adoption::generate_ai_adoption_report(client, &p.group_path, p.days.unwrap_or(30), p.dormant_days.unwrap_or(tools::adoption::DORMANT_DAYS)).await
         )
     }
+
+    // ─── Spec Drift Audit ───
+
+    #[tool(description = "Audit a documented spec (e.g. a knowledge-base app-spec article, passed as markdown via `spec`) against a project's code. Extracts documented API routes and version, then reports route drift (cleanup-debt: flagged for removal but still in code; stale-doc: flagged and already gone; drift: listed active but missing) and version drift (spec vs latest git tag). Routes too generic to match are surfaced for manual review.")]
+    async fn audit_spec_drift(&self, Parameters(p): Parameters<AuditSpecDriftParams>) -> Result<CallToolResult, McpError> {
+        simple_tool!(self, p, "audit_spec_drift", &p.project_id, |client|
+            tools::spec::audit_spec_drift(client, &p.project_id, &p.spec, p.ref_name.as_deref().unwrap_or(""), p.summary_only.unwrap_or(false)).await
+        )
+    }
 }
 
 // ─── ServerHandler ───

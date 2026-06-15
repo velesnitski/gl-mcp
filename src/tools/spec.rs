@@ -1,0 +1,613 @@
+//! Spec-drift audit: cross-reference a documented API/metadata spec (e.g. a
+//! per-platform app-spec article from a knowledge base) against the actual
+//! codebase.
+//!
+//! Three checks:
+//! - **Route drift** — each endpoint the spec documents is searched in the repo
+//!   and classified: cleanup-debt (spec flags it for removal but it's still
+//!   wired in), stale-doc (flagged for removal and already gone), drift (listed
+//!   as active but missing), or in-sync.
+//! - **Version** — the spec's documented version vs the repo's latest tag.
+//! - (needs-review) routes whose path is too generic to match reliably are
+//!   surfaced rather than silently guessed.
+//!
+//! gl-mcp stays GitLab-only: the spec text is supplied by the caller (fetch the
+//! article with whatever KB tool you use, pass its markdown in via `spec`).
+//! This module does only the GitLab-side analysis.
+//!
+//! The per-route audit set ([`RouteAudit`]) is the natural unit a future local
+//! "metadata map" would persist after the first run, so run-over-run diffs and
+//! reverse-drift (code endpoints absent from the spec) can be layered on top
+//! without re-deriving the heuristics here.
+
+use crate::client::GitLabClient;
+use crate::error::Result;
+use futures::future::join_all;
+use serde_json::Value;
+use std::sync::LazyLock;
+
+/// Inline HTML tags used for colour-coding in wiki tables.
+static HTML_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"<[^>]+>").unwrap());
+
+/// `{{api}}` / `{{cdn}}` style template tokens prefixed to documented routes.
+static TEMPLATE_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\{\{[^}]*\}\}").unwrap());
+
+/// Interpolation placeholders: `\(identifier)` or `(identifier)`.
+static INTERP_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\\?\([^)]*\)").unwrap());
+
+/// First path-like token in a cell: an absolute `/a/b` path, or a relative
+/// `a/b` path with at least one slash. Bare single words don't match.
+static PATH_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"/[A-Za-z0-9_][\w\-./]*|[A-Za-z0-9_]+(?:/[\w\-.]+)+").unwrap());
+
+/// Documented version, requiring at least one dot (so "version 4" alone is ignored).
+static VERSION_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"(?i)version[:\s]+v?([0-9]+(?:\.[0-9]+)+)").unwrap());
+
+/// Substrings (lowercased) that mark a documented route as deprecated / scheduled
+/// for removal. Mix of English and the Russian annotations used in the spec wiki.
+const DEPRECATION_MARKERS: &[&str] = &[
+    "неиспольз",   // covers "не используется" and the misspelling "неиспользуеться"
+    "не использ",
+    "убрать",
+    "почистить",
+    "заглушка",
+    "удалить",
+    "moccasin",    // background-color used to grey-out deprecated rows
+    "deprecated",
+    "obsolete",
+    "remove",
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DocStatus {
+    Active,
+    Deprecated,
+}
+
+/// One route extracted from the spec.
+#[derive(Debug, Clone)]
+pub(crate) struct DocRoute {
+    /// Human label from the left table cell, for report context.
+    pub label: String,
+    /// Normalized path: template token, query string and interpolation stripped.
+    pub path: String,
+    pub status: DocStatus,
+    /// Code-search query, or None when the path is too generic to match reliably.
+    pub query: Option<String>,
+}
+
+/// Parsed spec: documented version plus all routes (deduped by normalized path).
+#[derive(Debug, Default)]
+pub(crate) struct ParsedSpec {
+    pub version: Option<String>,
+    pub routes: Vec<DocRoute>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Verdict {
+    /// Spec flags it for removal, but it's still wired in — the actionable backlog.
+    CleanupDebt,
+    /// Listed as active but missing from code — investigate (renamed or dropped).
+    Drift,
+    /// Flagged for removal and already gone — safe to delete the spec row.
+    StaleDoc,
+    /// Active and present.
+    InSync,
+    /// Path too generic to match reliably — surfaced for a human.
+    NeedsReview,
+}
+
+/// Per-route audit result. This is the unit a local metadata map would persist.
+#[derive(Debug)]
+pub(crate) struct RouteAudit {
+    pub route: DocRoute,
+    /// (file, line) matches, capped.
+    pub hits: Vec<(String, u64)>,
+    pub verdict: Verdict,
+}
+
+/// Classify a route from its documented status and whether code search found it.
+pub(crate) fn classify(status: DocStatus, searchable: bool, in_code: bool) -> Verdict {
+    if !searchable {
+        return Verdict::NeedsReview;
+    }
+    match (status, in_code) {
+        (DocStatus::Deprecated, true) => Verdict::CleanupDebt,
+        (DocStatus::Deprecated, false) => Verdict::StaleDoc,
+        (DocStatus::Active, false) => Verdict::Drift,
+        (DocStatus::Active, true) => Verdict::InSync,
+    }
+}
+
+/// Strip HTML tags, template tokens and interpolation from a cell, then extract
+/// the first path-like token with its query string removed. Returns None when
+/// the cell has no path (e.g. an absolute URL or prose).
+pub(crate) fn normalize_path(cell: &str) -> Option<String> {
+    // Skip absolute URLs — those live in LINKS sections, not the route surface.
+    if cell.contains("://") {
+        return None;
+    }
+    let no_html = HTML_RE.replace_all(cell, " ");
+    let no_tpl = TEMPLATE_RE.replace_all(&no_html, " ");
+    let no_interp = INTERP_RE.replace_all(&no_tpl, " ");
+    let candidate = PATH_RE.find(&no_interp)?.as_str();
+    // Drop query string and trailing punctuation/whitespace.
+    let path = candidate.split('?').next().unwrap_or(candidate);
+    let path = path.trim().trim_end_matches(['.', ',', '/', '\\', ')']);
+    if path.is_empty() || path == "/" {
+        None
+    } else {
+        Some(path.to_string())
+    }
+}
+
+/// Build a code-search query for a normalized path, or None when it's too
+/// generic to match reliably (avoids false "in sync" from common words).
+/// Multi-segment paths use the last two segments — distinctive and robust to
+/// prefix differences between doc and code.
+pub(crate) fn route_search_query(path: &str) -> Option<String> {
+    let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    match segs.as_slice() {
+        [] => None,
+        [one] => {
+            // A single segment is reliable only when it's clearly distinctive.
+            let distinctive =
+                one.len() >= 6 && one.chars().any(|c| c == '-' || c == '_' || c.is_ascii_digit());
+            distinctive.then(|| one.to_string())
+        }
+        _ => {
+            let n = segs.len();
+            Some(format!("{}/{}", segs[n - 2], segs[n - 1]))
+        }
+    }
+}
+
+/// True if a row's text marks the route as deprecated.
+fn is_deprecated(row_lower: &str) -> bool {
+    DEPRECATION_MARKERS.iter().any(|m| row_lower.contains(m))
+}
+
+#[derive(PartialEq)]
+enum Section {
+    Other,
+    Routes,
+}
+
+/// Parse a spec's markdown into version + routes. Only rows under the ROUTES
+/// section become routes; the version is matched anywhere (it lives in META).
+pub(crate) fn parse_spec(spec: &str) -> ParsedSpec {
+    let version = VERSION_RE
+        .captures(spec)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().to_string());
+
+    let mut routes: Vec<DocRoute> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut section = Section::Other;
+
+    for line in spec.lines() {
+        // Section headers are bolded cells: **META**, **ROUTES**, **PREPROD**, **LINKS**.
+        let upper = line.to_uppercase();
+        if upper.contains("**ROUTES**") {
+            section = Section::Routes;
+            continue;
+        } else if upper.contains("**META**")
+            || upper.contains("**PREPROD**")
+            || upper.contains("**LINKS**")
+        {
+            section = Section::Other;
+            continue;
+        }
+        if section != Section::Routes {
+            continue;
+        }
+        if !line.contains('|') {
+            continue;
+        }
+
+        let cells: Vec<&str> = line.split('|').map(str::trim).filter(|c| !c.is_empty()).collect();
+        if cells.is_empty() {
+            continue;
+        }
+        let label = HTML_RE.replace_all(cells[0], "").trim().to_string();
+        let row_lower = line.to_lowercase();
+        let deprecated = is_deprecated(&row_lower);
+
+        // The route(s) live in the value cell(s). A cell can hold several paths
+        // split by <br> or newlines (e.g. v2/v3 variants of the same endpoint).
+        for cell in &cells[1..] {
+            for fragment in cell.split("<br").flat_map(|f| f.split('\n')) {
+                if let Some(path) = normalize_path(fragment) {
+                    if seen.insert(path.clone()) {
+                        routes.push(DocRoute {
+                            label: label.clone(),
+                            query: route_search_query(&path),
+                            path,
+                            status: if deprecated {
+                                DocStatus::Deprecated
+                            } else {
+                                DocStatus::Active
+                            },
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    ParsedSpec { version, routes }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VersionVerdict {
+    InSync,
+    DocBehind,
+    DocAhead,
+    Unknown,
+}
+
+/// Numeric components of a version like "v4.9.5" → [4, 9, 5].
+fn parse_semver(s: &str) -> Option<Vec<u64>> {
+    let trimmed = s.trim().trim_start_matches(['v', 'V']);
+    let nums: Vec<u64> = trimmed
+        .split('.')
+        .map(|p| p.trim().parse::<u64>())
+        .take_while(|r| r.is_ok())
+        .filter_map(|r| r.ok())
+        .collect();
+    if nums.is_empty() { None } else { Some(nums) }
+}
+
+/// Compare the documented version against the repo's latest tag.
+pub(crate) fn compare_versions(doc: Option<&str>, tag: Option<&str>) -> VersionVerdict {
+    let (Some(d), Some(t)) = (doc.and_then(parse_semver), tag.and_then(parse_semver)) else {
+        return VersionVerdict::Unknown;
+    };
+    let len = d.len().max(t.len());
+    for i in 0..len {
+        let dv = d.get(i).copied().unwrap_or(0);
+        let tv = t.get(i).copied().unwrap_or(0);
+        if dv < tv {
+            return VersionVerdict::DocBehind;
+        }
+        if dv > tv {
+            return VersionVerdict::DocAhead;
+        }
+    }
+    VersionVerdict::InSync
+}
+
+/// Search one route in the repo, returning capped (file, line) hits.
+async fn search_route(
+    client: &GitLabClient,
+    encoded: &str,
+    query: &str,
+    search_ref: &str,
+) -> Vec<(String, u64)> {
+    let mut params: Vec<(&str, &str)> = vec![
+        ("scope", "blobs"),
+        ("search", query),
+        ("per_page", "5"),
+    ];
+    if !search_ref.is_empty() {
+        params.push(("ref", search_ref));
+    }
+    let results: Vec<Value> = client
+        .get(&format!("/projects/{encoded}/search"), &params)
+        .await
+        .unwrap_or_default();
+    results
+        .iter()
+        .take(5)
+        .map(|r| {
+            (
+                r["path"].as_str().unwrap_or("?").to_string(),
+                r["startline"].as_u64().unwrap_or(0),
+            )
+        })
+        .collect()
+}
+
+/// Audit a documented spec against a project's code: route drift + version drift.
+pub async fn audit_spec_drift(
+    client: &GitLabClient,
+    project_id: &str,
+    spec: &str,
+    ref_name: &str,
+    summary_only: bool,
+) -> Result<String> {
+    let encoded = urlencoding::encode(project_id);
+
+    // Project metadata for links + default branch.
+    let project: Value = client.get(&format!("/projects/{encoded}"), &[]).await?;
+    let web_url = project["web_url"].as_str().unwrap_or("").to_string();
+    let default_branch = project["default_branch"].as_str().unwrap_or("main");
+    let search_ref = if ref_name.is_empty() { default_branch } else { ref_name };
+
+    let parsed = parse_spec(spec);
+
+    // Latest tag for the version check.
+    let tags: Vec<Value> = client
+        .get(
+            &format!("/projects/{encoded}/repository/tags"),
+            &[("per_page", "1"), ("order_by", "updated"), ("sort", "desc")],
+        )
+        .await
+        .unwrap_or_default();
+    let latest_tag = tags.first().and_then(|t| t["name"].as_str()).map(String::from);
+    let version_verdict = compare_versions(parsed.version.as_deref(), latest_tag.as_deref());
+
+    // Search searchable routes concurrently (chunks of 10); non-searchable routes
+    // go straight to NeedsReview with no API call.
+    let mut audits: Vec<RouteAudit> = Vec::with_capacity(parsed.routes.len());
+    let mut searchable: Vec<DocRoute> = Vec::new();
+    for route in parsed.routes {
+        if route.query.is_some() {
+            searchable.push(route);
+        } else {
+            audits.push(RouteAudit {
+                verdict: Verdict::NeedsReview,
+                route,
+                hits: Vec::new(),
+            });
+        }
+    }
+
+    for chunk in searchable.chunks(10) {
+        let futs = chunk.iter().map(|route| {
+            let client = client.clone();
+            let encoded = encoded.to_string();
+            let query = route.query.clone().unwrap_or_default();
+            let search_ref = search_ref.to_string();
+            let route = route.clone();
+            async move {
+                let hits = search_route(&client, &encoded, &query, &search_ref).await;
+                let verdict = classify(route.status, true, !hits.is_empty());
+                RouteAudit { route, hits, verdict }
+            }
+        });
+        audits.extend(join_all(futs).await);
+    }
+
+    Ok(render_report(
+        project_id,
+        search_ref,
+        &web_url,
+        parsed.version.as_deref(),
+        latest_tag.as_deref(),
+        version_verdict,
+        &audits,
+        summary_only,
+    ))
+}
+
+fn version_line(
+    doc: Option<&str>,
+    tag: Option<&str>,
+    verdict: VersionVerdict,
+) -> String {
+    let doc = doc.unwrap_or("?");
+    let tag = tag.unwrap_or("none");
+    match verdict {
+        VersionVerdict::InSync => format!("In sync — spec `{doc}` matches latest tag `{tag}`."),
+        VersionVerdict::DocBehind => {
+            format!("**Spec is stale** — spec says `{doc}`, latest tag is `{tag}`. Refresh the spec.")
+        }
+        VersionVerdict::DocAhead => {
+            format!("Spec `{doc}` is ahead of latest tag `{tag}` — unreleased, or tags lag.")
+        }
+        VersionVerdict::Unknown => {
+            format!("Could not compare — spec version `{doc}`, latest tag `{tag}`.")
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_report(
+    project_id: &str,
+    search_ref: &str,
+    web_url: &str,
+    doc_version: Option<&str>,
+    latest_tag: Option<&str>,
+    version_verdict: VersionVerdict,
+    audits: &[RouteAudit],
+    summary_only: bool,
+) -> String {
+    let count = |v: Verdict| audits.iter().filter(|a| a.verdict == v).count();
+    let cleanup = count(Verdict::CleanupDebt);
+    let drift = count(Verdict::Drift);
+    let stale = count(Verdict::StaleDoc);
+    let in_sync = count(Verdict::InSync);
+    let review = count(Verdict::NeedsReview);
+
+    if summary_only {
+        return format!(
+            "{project_id}: version {}; {cleanup} cleanup-debt, {drift} drift, {stale} stale-doc, {in_sync} in-sync, {review} need-review (of {} routes).",
+            match version_verdict {
+                VersionVerdict::InSync => "in-sync",
+                VersionVerdict::DocBehind => "STALE",
+                VersionVerdict::DocAhead => "ahead",
+                VersionVerdict::Unknown => "unknown",
+            },
+            audits.len(),
+        );
+    }
+
+    let hit_link = |file: &str, line: u64| -> String {
+        if web_url.is_empty() {
+            format!("`{file}:{line}`")
+        } else {
+            format!("[`{file}:{line}`]({web_url}/-/blob/{search_ref}/{file}#L{line})")
+        }
+    };
+
+    let mut out: Vec<String> = Vec::new();
+    out.push(format!("# Spec-drift audit — {project_id}"));
+    out.push(format!(
+        "Ref `{search_ref}` · {} routes parsed from spec",
+        audits.len()
+    ));
+    out.push(String::new());
+    out.push("## Version".to_string());
+    out.push(version_line(doc_version, latest_tag, version_verdict));
+
+    let section = |out: &mut Vec<String>, v: Verdict, title: &str, blurb: &str, show_hits: bool| {
+        let rows: Vec<&RouteAudit> = audits.iter().filter(|a| a.verdict == v).collect();
+        if rows.is_empty() {
+            return;
+        }
+        out.push(String::new());
+        out.push(format!("## {title} ({}) — {blurb}", rows.len()));
+        for a in rows {
+            let mut line = format!("- `{}`", a.route.path);
+            if !a.route.label.is_empty() && a.route.label != a.route.path {
+                line.push_str(&format!(" ({})", a.route.label));
+            }
+            if show_hits && !a.hits.is_empty() {
+                let links: Vec<String> =
+                    a.hits.iter().map(|(f, l)| hit_link(f, *l)).collect();
+                line.push_str(&format!(" → {}", links.join(", ")));
+            }
+            out.push(line);
+        }
+    };
+
+    section(
+        &mut out,
+        Verdict::CleanupDebt,
+        "Cleanup debt",
+        "spec flags for removal, still wired in code",
+        true,
+    );
+    section(
+        &mut out,
+        Verdict::Drift,
+        "Drift",
+        "spec lists as active, missing from code",
+        false,
+    );
+    section(
+        &mut out,
+        Verdict::StaleDoc,
+        "Stale doc rows",
+        "flagged for removal and already gone — safe to delete from the spec",
+        false,
+    );
+    section(
+        &mut out,
+        Verdict::NeedsReview,
+        "Needs review",
+        "path too generic to match reliably — check by hand",
+        false,
+    );
+
+    out.push(String::new());
+    out.push(format!("## In sync ({in_sync})"));
+    let synced: Vec<&RouteAudit> =
+        audits.iter().filter(|a| a.verdict == Verdict::InSync).collect();
+    for a in synced {
+        out.push(format!("- `{}`", a.route.path));
+    }
+
+    out.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_path_strips_template_and_query() {
+        assert_eq!(
+            normalize_path("<span>{{api}}</span>/v3/user"),
+            Some("/v3/user".to_string())
+        );
+        assert_eq!(
+            normalize_path("{{api}}/v3/feedbacks?type=1"),
+            Some("/v3/feedbacks".to_string())
+        );
+        assert_eq!(
+            normalize_path("/app/foo/version  (remove and clean up)"),
+            Some("/app/foo/version".to_string())
+        );
+        assert_eq!(normalize_path("token/refresh"), Some("token/refresh".to_string()));
+    }
+
+    #[test]
+    fn test_normalize_path_skips_urls_and_prose() {
+        assert_eq!(normalize_path("https://example.com/policy"), None);
+        assert_eq!(normalize_path("just some prose"), None);
+    }
+
+    #[test]
+    fn test_route_search_query_distinctiveness() {
+        // multi-segment → last two
+        assert_eq!(
+            route_search_query("/user/nodes-pools/favorites"),
+            Some("nodes-pools/favorites".to_string())
+        );
+        assert_eq!(route_search_query("/v3/user"), Some("v3/user".to_string()));
+        // single distinctive segment (has a hyphen)
+        assert_eq!(route_search_query("/nodes-list"), Some("nodes-list".to_string()));
+        // single common word → too generic
+        assert_eq!(route_search_query("/login"), None);
+        assert_eq!(route_search_query("/register"), None);
+    }
+
+    #[test]
+    fn test_classify_matrix() {
+        assert_eq!(classify(DocStatus::Deprecated, true, true), Verdict::CleanupDebt);
+        assert_eq!(classify(DocStatus::Deprecated, true, false), Verdict::StaleDoc);
+        assert_eq!(classify(DocStatus::Active, true, false), Verdict::Drift);
+        assert_eq!(classify(DocStatus::Active, true, true), Verdict::InSync);
+        assert_eq!(classify(DocStatus::Active, false, false), Verdict::NeedsReview);
+    }
+
+    #[test]
+    fn test_parse_spec_sections_and_status() {
+        // Routes are only parsed under the ROUTES section; LINKS URLs are ignored.
+        let spec = "\
+| **META** | Version: 4.9.5 |
+| **ROUTES** |  |
+| Login | {{api}}/login |
+| User | {{api}}/v3/user |
+| Update | /app/foo/version (убрать и почистить компоненты) |
+| **LINKS** |  |
+| Policy | https://example.com/policy |";
+        let parsed = parse_spec(spec);
+        assert_eq!(parsed.version.as_deref(), Some("4.9.5"));
+        // /login, /v3/user, /app/foo/version — policy URL excluded
+        assert_eq!(parsed.routes.len(), 3);
+        let update = parsed.routes.iter().find(|r| r.path == "/app/foo/version").unwrap();
+        assert_eq!(update.status, DocStatus::Deprecated);
+        let user = parsed.routes.iter().find(|r| r.path == "/v3/user").unwrap();
+        assert_eq!(user.status, DocStatus::Active);
+        // /login is active but too generic → no query
+        let login = parsed.routes.iter().find(|r| r.path == "/login").unwrap();
+        assert!(login.query.is_none());
+    }
+
+    #[test]
+    fn test_parse_spec_splits_multi_path_cell() {
+        let spec = "\
+| **ROUTES** |  |
+| Feedback reasons | /feedbacks/reasons<br />/v3/feedbacks/reasons |";
+        let parsed = parse_spec(spec);
+        let paths: Vec<&str> = parsed.routes.iter().map(|r| r.path.as_str()).collect();
+        assert!(paths.contains(&"/feedbacks/reasons"));
+        assert!(paths.contains(&"/v3/feedbacks/reasons"));
+    }
+
+    #[test]
+    fn test_compare_versions() {
+        assert_eq!(compare_versions(Some("4.9.5"), Some("4.9.5")), VersionVerdict::InSync);
+        assert_eq!(compare_versions(Some("4.9.5"), Some("v5.0.0")), VersionVerdict::DocBehind);
+        assert_eq!(compare_versions(Some("5.1.0"), Some("5.0.9")), VersionVerdict::DocAhead);
+        assert_eq!(compare_versions(Some("4.9"), Some("4.9.0")), VersionVerdict::InSync);
+        assert_eq!(compare_versions(None, Some("1.0.0")), VersionVerdict::Unknown);
+    }
+}
