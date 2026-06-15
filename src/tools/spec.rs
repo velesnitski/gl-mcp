@@ -762,15 +762,30 @@ async fn harvest_via_search(
     out
 }
 
-/// Audit a documented spec against a project's code: route drift + version drift.
-pub async fn audit_spec_drift(
+/// Everything an audit produces — shared by the markdown and HTML renderers.
+pub(crate) struct AuditOutcome {
+    project_id: String,
+    search_ref: String,
+    web_url: String,
+    doc_version: Option<String>,
+    latest_tag: Option<String>,
+    version_verdict: VersionVerdict,
+    audits: Vec<RouteAudit>,
+    secrets: Vec<SecretAudit>,
+    undocumented: Vec<(String, u64, String)>,
+    harvest_mode: String,
+    changes: Option<(String, Vec<String>)>,
+}
+
+/// Run the full audit (routes + version + security + reverse-drift) and persist
+/// the metadata-map snapshot. Pure computation — no presentation.
+pub(crate) async fn compute_audit(
     client: &GitLabClient,
     project_id: &str,
     spec: &str,
     ref_name: &str,
     routes_file: &str,
-    summary_only: bool,
-) -> Result<String> {
+) -> Result<AuditOutcome> {
     let encoded = urlencoding::encode(project_id);
 
     // Project metadata for links + default branch.
@@ -897,20 +912,57 @@ pub async fn audit_spec_drift(
         tracing::warn!("failed to persist spec map: {e}");
     }
 
-    Ok(render_report(
-        project_id,
-        search_ref,
-        &web_url,
-        parsed.version.as_deref(),
-        latest_tag.as_deref(),
+    Ok(AuditOutcome {
+        project_id: project_id.to_string(),
+        search_ref: search_ref.to_string(),
+        web_url,
+        doc_version: parsed.version,
+        latest_tag,
         version_verdict,
-        &audits,
-        &secret_audits,
-        &undocumented,
-        harvest_mode,
-        changes.as_ref(),
+        audits,
+        secrets: secret_audits,
+        undocumented,
+        harvest_mode: harvest_mode.to_string(),
+        changes,
+    })
+}
+
+/// Audit a documented spec against a project's code: markdown report.
+pub async fn audit_spec_drift(
+    client: &GitLabClient,
+    project_id: &str,
+    spec: &str,
+    ref_name: &str,
+    routes_file: &str,
+    summary_only: bool,
+) -> Result<String> {
+    let o = compute_audit(client, project_id, spec, ref_name, routes_file).await?;
+    Ok(render_report(
+        &o.project_id,
+        &o.search_ref,
+        &o.web_url,
+        o.doc_version.as_deref(),
+        o.latest_tag.as_deref(),
+        o.version_verdict,
+        &o.audits,
+        &o.secrets,
+        &o.undocumented,
+        &o.harvest_mode,
+        o.changes.as_ref(),
         summary_only,
     ))
+}
+
+/// Audit a documented spec against a project's code: HTML report.
+pub async fn generate_spec_audit_report(
+    client: &GitLabClient,
+    project_id: &str,
+    spec: &str,
+    ref_name: &str,
+    routes_file: &str,
+) -> Result<String> {
+    let o = compute_audit(client, project_id, spec, ref_name, routes_file).await?;
+    Ok(render_html(&o))
 }
 
 fn version_line(
@@ -1122,6 +1174,226 @@ fn render_report(
     out.join("\n")
 }
 
+/// Dark-theme styles shared with the other HTML reports (kept as a plain const
+/// so no format-brace escaping is needed).
+const SPEC_STYLE: &str = r#"*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0d1117;color:#c9d1d9;padding:32px;line-height:1.6}
+h1{color:#58a6ff;margin-bottom:8px;font-size:24px}
+h2{color:#58a6ff;margin:36px 0 16px;font-size:18px;border-bottom:1px solid #21262d;padding-bottom:8px}
+.sub{color:#8b949e;margin-bottom:24px;font-size:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:16px 0}
+.card{background:#161b22;border:1px solid #21262d;border-radius:8px;padding:18px}
+.card-t{color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+.card-v{font-size:28px;font-weight:700}
+.card-s{color:#8b949e;font-size:12px;margin-top:4px}
+.g{color:#3fb950}.r{color:#f85149}.y{color:#d29922}.b{color:#58a6ff}.gr{color:#8b949e}
+table{width:100%;border-collapse:collapse;margin:12px 0}
+th{background:#161b22;color:#8b949e;text-align:left;padding:10px 14px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid #21262d}
+td{padding:10px 14px;border-bottom:1px solid #21262d;font-size:14px}
+.issue{background:#161b22;border:1px solid #21262d;border-radius:6px;padding:14px 18px;margin:8px 0}
+.issue b{font-weight:600}.issue .m{color:#8b949e;font-size:13px;margin-top:4px}
+.risk{border-left:3px solid #f85149}.warn{border-left:3px solid #d29922}.ok{border-left:3px solid #3fb950}
+code{background:#21262d;padding:1px 6px;border-radius:4px;font-size:13px}
+a{color:inherit;text-decoration:none;border-bottom:1px dotted #58a6ff}
+a:hover{color:#58a6ff}
+details{margin:24px 0;color:#8b949e;font-size:13px}
+details summary{cursor:pointer;color:#58a6ff}
+details p{margin-top:8px;max-width:900px}
+footer{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484f58;font-size:12px}
+"#;
+
+/// Expands a collapsed <details> when an in-page anchor targets something inside it.
+const AUTO_OPEN_SCRIPT: &str = "<script>\nfunction openTarget(){var el=document.getElementById(location.hash.slice(1));while(el){if(el.tagName==='DETAILS'){el.open=true;break}el=el.parentElement}}\nwindow.addEventListener('hashchange',openTarget);openTarget();\n</script>\n";
+
+/// Render the audit as a clickable dark-theme HTML report (matches the AI-adoption
+/// report house style: summary cards → anchors, GitLab file links, Export PDF).
+fn render_html(o: &AuditOutcome) -> String {
+    use crate::tools::reports::{htmlescape as esc, EXPORT_BUTTON, PRINT_CSS};
+    let date_str = chrono::Utc::now().format("%A, %d %B %Y").to_string();
+    let version = env!("CARGO_PKG_VERSION");
+    let pid = esc(&o.project_id);
+
+    let blob = |file: &str, line: u64| -> String {
+        if o.web_url.is_empty() {
+            format!("<code>{}:{}</code>", esc(file), line)
+        } else {
+            format!(
+                "<a href=\"{}/-/blob/{}/{}#L{}\"><code>{}:{}</code></a>",
+                esc(&o.web_url),
+                esc(&o.search_ref),
+                esc(file),
+                line,
+                esc(file),
+                line
+            )
+        }
+    };
+
+    let count = |v: Verdict| o.audits.iter().filter(|a| a.verdict == v).count();
+    let cleanup = count(Verdict::CleanupDebt);
+    let drift = count(Verdict::Drift);
+    let stale = count(Verdict::StaleDoc);
+    let in_sync = count(Verdict::InSync);
+    let review = count(Verdict::NeedsReview);
+    let hardcoded = o.secrets.iter().filter(|s| !s.hardcoded_in.is_empty()).count();
+    let by = |v: Verdict| -> Vec<&RouteAudit> { o.audits.iter().filter(|a| a.verdict == v).collect() };
+
+    let (vclass, vword) = match o.version_verdict {
+        VersionVerdict::InSync => ("g", "in sync"),
+        VersionVerdict::DocBehind => ("r", "STALE"),
+        VersionVerdict::DocAhead => ("y", "ahead"),
+        VersionVerdict::Unknown => ("gr", "unknown"),
+    };
+
+    let mut h = String::new();
+    h.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n");
+    h.push_str(&format!("<title>Spec-drift audit — {pid} — {date_str}</title>\n"));
+    h.push_str("<style>\n");
+    h.push_str(SPEC_STYLE);
+    h.push_str(PRINT_CSS);
+    h.push_str("\n@media print{a{border-bottom:none !important;color:inherit !important}}\n</style>\n</head>\n<body>\n");
+    h.push_str(EXPORT_BUTTON);
+    h.push_str(AUTO_OPEN_SCRIPT);
+
+    h.push_str(&format!("<h1>Spec-drift audit — {pid}</h1>\n"));
+    h.push_str(&format!(
+        "<div class=\"sub\">Ref <code>{}</code> &middot; {} routes parsed from spec &middot; {date_str}</div>\n",
+        esc(&o.search_ref),
+        o.audits.len()
+    ));
+
+    // Summary cards.
+    h.push_str("<div class=\"grid\">\n");
+    h.push_str(&format!(
+        "<div class=\"card\"><div class=\"card-t\">Version</div><div class=\"card-v {vclass}\"><a href=\"#version\">{vword}</a></div><div class=\"card-s\">spec vs latest tag</div></div>\n"
+    ));
+    let card = |title: &str, n: usize, cls: &str, href: &str, sub: &str| -> String {
+        format!("<div class=\"card\"><div class=\"card-t\">{title}</div><div class=\"card-v {cls}\"><a href=\"{href}\">{n}</a></div><div class=\"card-s\">{sub}</div></div>\n")
+    };
+    h.push_str(&card("Cleanup debt", cleanup, if cleanup > 0 { "y" } else { "g" }, "#cleanup", "flagged, still in code"));
+    h.push_str(&card("Drift", drift, if drift > 0 { "y" } else { "g" }, "#drift", "active, missing"));
+    h.push_str(&card("Stale doc", stale, "gr", "#stale", "flagged & gone"));
+    h.push_str(&card("Undocumented", o.undocumented.len(), if o.undocumented.is_empty() { "g" } else { "y" }, "#undocumented", "in code, not in spec"));
+    h.push_str(&card("Secrets", o.secrets.len(), if hardcoded > 0 { "r" } else if o.secrets.is_empty() { "g" } else { "y" }, "#security", &format!("{hardcoded} hardcoded")));
+    h.push_str("</div>\n");
+
+    // Version.
+    h.push_str("<h2 id=\"version\">Version</h2>\n");
+    let vcls = if o.version_verdict == VersionVerdict::DocBehind { "risk" } else if o.version_verdict == VersionVerdict::InSync { "ok" } else { "warn" };
+    h.push_str(&format!(
+        "<div class=\"issue {vcls}\"><b>spec <code>{}</code> &middot; latest tag <code>{}</code></b><div class=\"m\">{}</div></div>\n",
+        esc(o.doc_version.as_deref().unwrap_or("?")),
+        esc(o.latest_tag.as_deref().unwrap_or("none")),
+        match o.version_verdict {
+            VersionVerdict::InSync => "In sync.",
+            VersionVerdict::DocBehind => "Spec is stale — refresh it to the shipped version.",
+            VersionVerdict::DocAhead => "Spec is ahead of the latest tag — unreleased, or tags lag.",
+            VersionVerdict::Unknown => "Could not compare.",
+        }
+    ));
+
+    // Changes since last audit.
+    if let Some((since, lines)) = &o.changes {
+        h.push_str(&format!("<h2 id=\"changes\">Changes since last audit ({})</h2>\n", esc(since)));
+        if lines.is_empty() {
+            h.push_str("<div class=\"issue ok\"><div class=\"m\">No changes.</div></div>\n");
+        } else {
+            for l in lines {
+                h.push_str(&format!("<div class=\"issue\"><div class=\"m\">{}</div></div>\n", esc(l)));
+            }
+        }
+    }
+
+    // Route-drift sections.
+    let route_section = |h: &mut String, id: &str, title: &str, blurb: &str, cls: &str, rows: &[&RouteAudit], show_hits: bool| {
+        if rows.is_empty() {
+            return;
+        }
+        h.push_str(&format!("<h2 id=\"{id}\">{title} ({})</h2>\n", rows.len()));
+        h.push_str(&format!("<p class=\"sub\">{blurb}</p>\n"));
+        for a in rows {
+            let label = if !a.route.label.is_empty() && a.route.label != a.route.path {
+                format!(" <span class=\"gr\">({})</span>", esc(&a.route.label))
+            } else {
+                String::new()
+            };
+            let hits = if show_hits && !a.hits.is_empty() {
+                let links: Vec<String> = a.hits.iter().map(|(f, l)| blob(f, *l)).collect();
+                format!("<div class=\"m\">{}</div>", links.join(", "))
+            } else {
+                String::new()
+            };
+            h.push_str(&format!(
+                "<div class=\"issue {cls}\"><b><code>{}</code></b>{label}{hits}</div>\n",
+                esc(&a.route.path)
+            ));
+        }
+    };
+    route_section(&mut h, "cleanup", "Cleanup debt", "Spec flags these for removal, but they're still wired in code.", "warn", &by(Verdict::CleanupDebt), true);
+    route_section(&mut h, "drift", "Drift", "Spec lists these as active, but they're missing from code.", "warn", &by(Verdict::Drift), false);
+    route_section(&mut h, "stale", "Stale doc rows", "Flagged for removal and already gone — safe to delete from the spec.", "ok", &by(Verdict::StaleDoc), false);
+
+    // Reverse drift.
+    if !o.undocumented.is_empty() {
+        h.push_str(&format!("<h2 id=\"undocumented\">Undocumented endpoints ({})</h2>\n", o.undocumented.len()));
+        let blurb = if o.harvest_mode == "search" {
+            "In code, not in the spec. Harvested by search within documented namespaces — pass a routes file for full coverage."
+        } else {
+            "In code, not in the spec — shadow surface that escaped the doc."
+        };
+        h.push_str(&format!("<p class=\"sub\">{blurb}</p>\n"));
+        h.push_str("<table>\n<tr><th>Endpoint</th><th>Location</th></tr>\n");
+        for (path, line, file) in &o.undocumented {
+            h.push_str(&format!("<tr><td><code>{}</code></td><td>{}</td></tr>\n", esc(path), blob(file, *line)));
+        }
+        h.push_str("</table>\n");
+    }
+
+    // Security.
+    if !o.secrets.is_empty() {
+        h.push_str(&format!("<h2 id=\"security\">Security ({})</h2>\n", o.secrets.len()));
+        h.push_str("<p class=\"sub\">Secret material in an org-readable doc. Rotate and restrict access; values are masked.</p>\n");
+        let mut ordered: Vec<&SecretAudit> = o.secrets.iter().collect();
+        ordered.sort_by_key(|s| s.hardcoded_in.is_empty());
+        for s in ordered {
+            let kind = s.finding.kind.label();
+            if s.hardcoded_in.is_empty() {
+                h.push_str(&format!(
+                    "<div class=\"issue warn\"><b><code>{}</code> [{kind}]</b><div class=\"m\">Doc-only leak — rotate the secret and restrict the doc.</div></div>\n",
+                    esc(&s.finding.masked)
+                ));
+            } else {
+                let loc = s.hardcoded_in.iter().map(|(f, l)| blob(f, *l)).collect::<Vec<_>>().join(", ");
+                h.push_str(&format!(
+                    "<div class=\"issue risk\"><b><code>{}</code> [{kind}]</b><div class=\"m\">Also hardcoded in code at {loc} — rotate AND remove from code.</div></div>\n",
+                    esc(&s.finding.masked)
+                ));
+            }
+        }
+    }
+
+    // Needs review.
+    let review_rows = by(Verdict::NeedsReview);
+    if !review_rows.is_empty() {
+        h.push_str(&format!("<h2 id=\"review\">Needs review ({review})</h2>\n"));
+        h.push_str("<p class=\"sub\">Path too generic to match reliably — check by hand.</p>\n");
+        for a in &review_rows {
+            h.push_str(&format!("<div class=\"issue\"><b><code>{}</code></b> <span class=\"gr\">({})</span></div>\n", esc(&a.route.path), esc(&a.route.label)));
+        }
+    }
+
+    // In sync (collapsible).
+    let synced = by(Verdict::InSync);
+    h.push_str(&format!("<details id=\"insync\"><summary>In sync ({in_sync})</summary>\n"));
+    for a in &synced {
+        h.push_str(&format!("<div><code>{}</code></div>\n", esc(&a.route.path)));
+    }
+    h.push_str("</details>\n");
+
+    h.push_str(&format!("\n<footer>gl-mcp v{version} &middot; {date_str}</footer>\n</body>\n</html>"));
+    h
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1242,6 +1514,51 @@ short: abc123";
         assert!(kinds.contains(&SecretKind::Email));
         // "short: abc123" is below the base64 threshold → not a secret.
         assert_eq!(secrets.len(), 3);
+    }
+
+    #[test]
+    fn test_render_html_smoke() {
+        let route = |path: &str, label: &str, verdict: Verdict| RouteAudit {
+            route: DocRoute {
+                label: label.to_string(),
+                path: path.to_string(),
+                status: DocStatus::Active,
+                query: None,
+            },
+            hits: Vec::new(),
+            verdict,
+        };
+        let outcome = AuditOutcome {
+            project_id: "my-org/app".to_string(),
+            search_ref: "main".to_string(),
+            web_url: "https://example.com/my-org/app".to_string(),
+            doc_version: Some("4.9.5".to_string()),
+            latest_tag: Some("release-4.9.10".to_string()),
+            version_verdict: VersionVerdict::DocBehind,
+            audits: vec![route("/v3/feedbacks", "Feedback", Verdict::Drift)],
+            secrets: vec![SecretAudit {
+                finding: SecretFinding {
+                    kind: SecretKind::Base64Secret,
+                    value: "AAAA0000".to_string(),
+                    masked: "AAAA…0000 (8 chars)".to_string(),
+                },
+                hardcoded_in: Vec::new(),
+            }],
+            undocumented: vec![("/v4/feedbacks".to_string(), 146, "Net.swift".to_string())],
+            harvest_mode: "file".to_string(),
+            changes: Some(("2026-06-15 00:00 UTC".to_string(), vec!["+ route `/x`".to_string()])),
+        };
+        let html = render_html(&outcome);
+        assert!(html.starts_with("<!DOCTYPE html>"));
+        assert!(html.contains("Spec-drift audit — my-org/app"));
+        assert!(html.contains("id=\"undocumented\""));
+        assert!(html.contains("id=\"security\""));
+        // masked secret present, raw value never rendered
+        assert!(html.contains("AAAA…0000 (8 chars)"));
+        assert!(!html.contains(">AAAA0000<"));
+        // file link points at the blob with line anchor
+        assert!(html.contains("/-/blob/main/Net.swift#L146"));
+        assert!(html.ends_with("</html>"));
     }
 
     #[test]

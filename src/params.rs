@@ -1273,3 +1273,17 @@ pub struct AuditSpecDriftParams {
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GenerateSpecAuditReportParams {
+    #[schemars(description = "Project ID or path to audit against the spec")]
+    pub project_id: String,
+    #[schemars(description = "The spec document as markdown/text (e.g. a knowledge-base app-spec article). Documented routes and version are extracted from it and cross-referenced against the codebase.")]
+    pub spec: String,
+    #[schemars(description = "Branch or tag to search in (default: default branch)")]
+    pub ref_name: Option<String>,
+    #[schemars(description = "Optional path to the file that defines the API routes; enables precise reverse-drift (undocumented endpoints in code).")]
+    pub routes_file: Option<String>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
