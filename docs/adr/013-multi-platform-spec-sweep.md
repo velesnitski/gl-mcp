@@ -45,3 +45,23 @@ or a stale version) and cross-platform totals.
 - Specs are supplied by the caller (one per target), keeping gl-mcp GitLab-only
   and consistent with the single-target tools — fetching the per-platform
   articles is orchestrated at the agent layer.
+
+## Correction (2026-06-15)
+
+A live 4-platform run (iOS/Android/Windows/macOS) caught two issues:
+
+- **Snapshot collision.** Windows and macOS both audit a single shared desktop
+  repo at the same ref, so they wrote the same metadata-map file and clobbered
+  each other — "changes since last audit" then reported spec-vs-spec
+  differences instead of real drift. Fixed by giving `compute_audit` a `map_key`
+  discriminator (the sweep passes the platform label); single-target tools pass
+  `""` and keep the legacy unsuffixed filename.
+- **Misleading undoc.** Search-harvested reverse-drift is namespace-gated, so the
+  same repo showed 6 undocumented under the Windows spec (which documents the
+  `api` namespace) and 0 under the macOS spec (which didn't). Not a bug, but the
+  rollup now marks search-harvested counts with `~` and a legend so an
+  approximate lower bound isn't mistaken for a precise zero.
+
+Also confirmed (working as designed, documented limits): Android's no-leading-
+slash Kotlin route constants are invisible to the leading-slash harvester
+(reverse-drift `undoc=0`; forward-drift via search still works).
