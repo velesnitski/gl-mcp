@@ -47,6 +47,25 @@ static PATH_RE: LazyLock<regex::Regex> =
 static VERSION_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"(?i)version[:\s]+v?([0-9]+(?:\.[0-9]+)+)").unwrap());
 
+/// First dotted-numeric run anywhere in a string (e.g. inside a tag like `release-4.9.10`).
+static SEMVER_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"[0-9]+(?:\.[0-9]+)+").unwrap());
+
+/// Base64-ish secret blob (AES keys, encrypted tokens). Min length avoids
+/// matching short obfuscated route segments.
+static SECRET_B64_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"[A-Za-z0-9+/]{32,}={0,2}").unwrap());
+
+/// UUID (app identifiers, device IDs).
+static UUID_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+        .unwrap()
+});
+
+/// Email addresses (service-account credentials).
+static EMAIL_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"(?i)\b[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}\b").unwrap());
+
 /// Substrings (lowercased) that mark a documented route as deprecated / scheduled
 /// for removal. Mix of English and the Russian annotations used in the spec wiki.
 const DEPRECATION_MARKERS: &[&str] = &[
@@ -108,6 +127,18 @@ pub(crate) struct RouteAudit {
     /// (file, line) matches, capped.
     pub hits: Vec<(String, u64)>,
     pub verdict: Verdict,
+}
+
+impl Verdict {
+    fn as_str(self) -> &'static str {
+        match self {
+            Verdict::CleanupDebt => "cleanup-debt",
+            Verdict::Drift => "drift",
+            Verdict::StaleDoc => "stale-doc",
+            Verdict::InSync => "in-sync",
+            Verdict::NeedsReview => "needs-review",
+        }
+    }
 }
 
 /// Classify a route from its documented status and whether code search found it.
@@ -250,15 +281,22 @@ pub(crate) enum VersionVerdict {
     Unknown,
 }
 
-/// Numeric components of a version like "v4.9.5" → [4, 9, 5].
+impl VersionVerdict {
+    fn as_str(self) -> &'static str {
+        match self {
+            VersionVerdict::InSync => "in-sync",
+            VersionVerdict::DocBehind => "doc-behind",
+            VersionVerdict::DocAhead => "doc-ahead",
+            VersionVerdict::Unknown => "unknown",
+        }
+    }
+}
+
+/// First dotted-numeric run in a string → its components. Tolerates any prefix:
+/// "v4.9.5", "release-4.9.10", "app-v2.3.0" all parse. Requires ≥1 dot.
 fn parse_semver(s: &str) -> Option<Vec<u64>> {
-    let trimmed = s.trim().trim_start_matches(['v', 'V']);
-    let nums: Vec<u64> = trimmed
-        .split('.')
-        .map(|p| p.trim().parse::<u64>())
-        .take_while(|r| r.is_ok())
-        .filter_map(|r| r.ok())
-        .collect();
+    let run = SEMVER_RE.find(s)?.as_str();
+    let nums: Vec<u64> = run.split('.').filter_map(|p| p.parse::<u64>().ok()).collect();
     if nums.is_empty() { None } else { Some(nums) }
 }
 
@@ -279,6 +317,241 @@ pub(crate) fn compare_versions(doc: Option<&str>, tag: Option<&str>) -> VersionV
         }
     }
     VersionVerdict::InSync
+}
+
+// ─── Security: secrets pasted into the spec ───
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SecretKind {
+    Base64Secret,
+    Uuid,
+    Email,
+}
+
+impl SecretKind {
+    fn label(self) -> &'static str {
+        match self {
+            SecretKind::Base64Secret => "key/token",
+            SecretKind::Uuid => "uuid",
+            SecretKind::Email => "credential email",
+        }
+    }
+}
+
+/// A secret-shaped string found in the spec. `value` is used only for the code
+/// cross-reference and is NEVER rendered — reports show `masked` instead, so a
+/// report pasted into a ticket or chat doesn't re-leak the secret.
+#[derive(Debug, Clone)]
+pub(crate) struct SecretFinding {
+    pub kind: SecretKind,
+    pub value: String,
+    pub masked: String,
+}
+
+#[derive(Debug)]
+pub(crate) struct SecretAudit {
+    pub finding: SecretFinding,
+    /// Code locations where the same literal appears (hardcoded). Empty = doc-only.
+    pub hardcoded_in: Vec<(String, u64)>,
+}
+
+/// Masked, display-safe preview of a secret — never the full value.
+pub(crate) fn mask_secret(kind: SecretKind, v: &str) -> String {
+    match kind {
+        SecretKind::Email => match v.split_once('@') {
+            Some((local, domain)) => {
+                let head = local.chars().next().map(|c| c.to_string()).unwrap_or_default();
+                format!("{head}***@{domain}")
+            }
+            None => "***".to_string(),
+        },
+        SecretKind::Uuid => {
+            let head: String = v.chars().take(8).collect();
+            format!("{head}…")
+        }
+        SecretKind::Base64Secret => {
+            let head: String = v.chars().take(4).collect();
+            let tail: String = {
+                let t: Vec<char> = v.chars().rev().take(4).collect();
+                t.into_iter().rev().collect()
+            };
+            format!("{head}…{tail} ({} chars)", v.len())
+        }
+    }
+}
+
+/// Distinctive substring to search the codebase for this secret.
+fn secret_search_query(f: &SecretFinding) -> String {
+    match f.kind {
+        SecretKind::Base64Secret => f.value.chars().take(24).collect(),
+        SecretKind::Uuid | SecretKind::Email => f.value.clone(),
+    }
+}
+
+/// Extract secret-shaped strings (base64 keys/tokens, UUIDs, credential emails)
+/// from the spec. Deduped by value.
+pub(crate) fn extract_secrets(spec: &str) -> Vec<SecretFinding> {
+    let mut out: Vec<SecretFinding> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let push = |kind: SecretKind, v: &str, key: String, seen: &mut std::collections::HashSet<String>, out: &mut Vec<SecretFinding>| {
+        if seen.insert(key) {
+            out.push(SecretFinding { kind, value: v.to_string(), masked: mask_secret(kind, v) });
+        }
+    };
+    // UUIDs and emails are matched first; base64 cannot overlap them (dashes / '@').
+    for m in UUID_RE.find_iter(spec) {
+        push(SecretKind::Uuid, m.as_str(), m.as_str().to_lowercase(), &mut seen, &mut out);
+    }
+    for m in EMAIL_RE.find_iter(spec) {
+        push(SecretKind::Email, m.as_str(), m.as_str().to_lowercase(), &mut seen, &mut out);
+    }
+    for m in SECRET_B64_RE.find_iter(spec) {
+        let v = m.as_str();
+        push(SecretKind::Base64Secret, v, v.to_string(), &mut seen, &mut out);
+    }
+    out
+}
+
+// ─── Local metadata map: persist each run, diff against the previous one ───
+//
+// After the first audit we persist a compact snapshot to `~/.gl-mcp/spec_maps/`.
+// On the next run for the same project+ref we diff against it and surface what
+// changed — routes that drifted or got fixed, the version verdict moving, secrets
+// appearing or resolved. The file holds real internal route paths, so it lives
+// in the user's data dir and is never committed.
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq)]
+struct RouteSnap {
+    path: String,
+    verdict: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq)]
+struct SecretSnap {
+    masked: String,
+    kind: String,
+    hardcoded: bool,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+pub(crate) struct SpecSnapshot {
+    project_id: String,
+    ref_name: String,
+    scanned_at: String,
+    version: Option<String>,
+    version_verdict: String,
+    routes: Vec<RouteSnap>,
+    secrets: Vec<SecretSnap>,
+}
+
+/// `~/.gl-mcp/spec_maps/{project}__{ref}.json` (path separators sanitized).
+fn map_path(project_id: &str, ref_name: &str) -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    let safe = |s: &str| s.replace(['/', '\\', ' '], "_");
+    std::path::PathBuf::from(home)
+        .join(".gl-mcp")
+        .join("spec_maps")
+        .join(format!("{}__{}.json", safe(project_id), safe(ref_name)))
+}
+
+fn load_snapshot(project_id: &str, ref_name: &str) -> Option<SpecSnapshot> {
+    let content = std::fs::read_to_string(map_path(project_id, ref_name)).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+fn save_snapshot(snap: &SpecSnapshot) -> std::io::Result<()> {
+    let path = map_path(&snap.project_id, &snap.ref_name);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, serde_json::to_string_pretty(snap)?)
+}
+
+fn build_snapshot(
+    project_id: &str,
+    ref_name: &str,
+    scanned_at: String,
+    version: Option<&str>,
+    version_verdict: VersionVerdict,
+    audits: &[RouteAudit],
+    secrets: &[SecretAudit],
+) -> SpecSnapshot {
+    SpecSnapshot {
+        project_id: project_id.to_string(),
+        ref_name: ref_name.to_string(),
+        scanned_at,
+        version: version.map(String::from),
+        version_verdict: version_verdict.as_str().to_string(),
+        routes: audits
+            .iter()
+            .map(|a| RouteSnap {
+                path: a.route.path.clone(),
+                verdict: a.verdict.as_str().to_string(),
+            })
+            .collect(),
+        secrets: secrets
+            .iter()
+            .map(|s| SecretSnap {
+                masked: s.finding.masked.clone(),
+                kind: s.finding.kind.label().to_string(),
+                hardcoded: !s.hardcoded_in.is_empty(),
+            })
+            .collect(),
+    }
+}
+
+/// Human-readable changes from `prev` to `new`. Empty when nothing material moved.
+fn diff_snapshots(prev: &SpecSnapshot, new: &SpecSnapshot) -> Vec<String> {
+    use std::collections::HashMap;
+    let mut lines: Vec<String> = Vec::new();
+
+    if prev.version_verdict != new.version_verdict {
+        lines.push(format!(
+            "version verdict: {} → {}",
+            prev.version_verdict, new.version_verdict
+        ));
+    }
+
+    let prev_routes: HashMap<&str, &str> =
+        prev.routes.iter().map(|r| (r.path.as_str(), r.verdict.as_str())).collect();
+    let new_routes: HashMap<&str, &str> =
+        new.routes.iter().map(|r| (r.path.as_str(), r.verdict.as_str())).collect();
+    for r in &new.routes {
+        match prev_routes.get(r.path.as_str()) {
+            None => lines.push(format!("+ route `{}` ({})", r.path, r.verdict)),
+            Some(&pv) if pv != r.verdict => {
+                lines.push(format!("~ route `{}`: {} → {}", r.path, pv, r.verdict))
+            }
+            _ => {}
+        }
+    }
+    for r in &prev.routes {
+        if !new_routes.contains_key(r.path.as_str()) {
+            lines.push(format!("- route `{}` removed from spec", r.path));
+        }
+    }
+
+    let prev_secrets: HashMap<&str, bool> =
+        prev.secrets.iter().map(|s| (s.masked.as_str(), s.hardcoded)).collect();
+    let new_secrets: HashMap<&str, bool> =
+        new.secrets.iter().map(|s| (s.masked.as_str(), s.hardcoded)).collect();
+    for s in &new.secrets {
+        match prev_secrets.get(s.masked.as_str()) {
+            None => lines.push(format!("+ secret `{}` ({})", s.masked, s.kind)),
+            Some(&ph) if ph != s.hardcoded => lines.push(format!(
+                "~ secret `{}`: hardcoded {} → {}",
+                s.masked, ph, s.hardcoded
+            )),
+            _ => {}
+        }
+    }
+    for s in &prev.secrets {
+        if !new_secrets.contains_key(s.masked.as_str()) {
+            lines.push(format!("- secret `{}` no longer in spec", s.masked));
+        }
+    }
+
+    lines
 }
 
 /// Search one route in the repo, returning capped (file, line) hits.
@@ -373,6 +646,40 @@ pub async fn audit_spec_drift(
         audits.extend(join_all(futs).await);
     }
 
+    // Security: secrets pasted into the spec, cross-referenced against the code.
+    let mut secret_audits: Vec<SecretAudit> = Vec::new();
+    for chunk in extract_secrets(spec).chunks(10) {
+        let futs = chunk.iter().map(|finding| {
+            let client = client.clone();
+            let encoded = encoded.to_string();
+            let query = secret_search_query(finding);
+            let search_ref = search_ref.to_string();
+            let finding = finding.clone();
+            async move {
+                let hardcoded_in = search_route(&client, &encoded, &query, &search_ref).await;
+                SecretAudit { finding, hardcoded_in }
+            }
+        });
+        secret_audits.extend(join_all(futs).await);
+    }
+
+    // Local metadata map: diff against the previous run, then persist this one.
+    let prev = load_snapshot(project_id, search_ref);
+    let scanned_at = chrono::Utc::now().format("%Y-%m-%d %H:%M UTC").to_string();
+    let snapshot = build_snapshot(
+        project_id,
+        search_ref,
+        scanned_at,
+        parsed.version.as_deref(),
+        version_verdict,
+        &audits,
+        &secret_audits,
+    );
+    let changes = prev.as_ref().map(|p| (p.scanned_at.clone(), diff_snapshots(p, &snapshot)));
+    if let Err(e) = save_snapshot(&snapshot) {
+        tracing::warn!("failed to persist spec map: {e}");
+    }
+
     Ok(render_report(
         project_id,
         search_ref,
@@ -381,6 +688,8 @@ pub async fn audit_spec_drift(
         latest_tag.as_deref(),
         version_verdict,
         &audits,
+        &secret_audits,
+        changes.as_ref(),
         summary_only,
     ))
 }
@@ -415,6 +724,8 @@ fn render_report(
     latest_tag: Option<&str>,
     version_verdict: VersionVerdict,
     audits: &[RouteAudit],
+    secrets: &[SecretAudit],
+    changes: Option<&(String, Vec<String>)>,
     summary_only: bool,
 ) -> String {
     let count = |v: Verdict| audits.iter().filter(|a| a.verdict == v).count();
@@ -423,10 +734,16 @@ fn render_report(
     let stale = count(Verdict::StaleDoc);
     let in_sync = count(Verdict::InSync);
     let review = count(Verdict::NeedsReview);
+    let hardcoded = secrets.iter().filter(|s| !s.hardcoded_in.is_empty()).count();
 
     if summary_only {
+        let secrets_note = if secrets.is_empty() {
+            String::new()
+        } else {
+            format!("; {} secrets ({hardcoded} hardcoded in code)", secrets.len())
+        };
         return format!(
-            "{project_id}: version {}; {cleanup} cleanup-debt, {drift} drift, {stale} stale-doc, {in_sync} in-sync, {review} need-review (of {} routes).",
+            "{project_id}: version {}; {cleanup} cleanup-debt, {drift} drift, {stale} stale-doc, {in_sync} in-sync, {review} need-review (of {} routes){secrets_note}.",
             match version_verdict {
                 VersionVerdict::InSync => "in-sync",
                 VersionVerdict::DocBehind => "STALE",
@@ -454,6 +771,19 @@ fn render_report(
     out.push(String::new());
     out.push("## Version".to_string());
     out.push(version_line(doc_version, latest_tag, version_verdict));
+
+    // Changes since the previous audit (only when a prior snapshot existed).
+    if let Some((since, lines)) = changes {
+        out.push(String::new());
+        out.push(format!("## Changes since last audit ({since})"));
+        if lines.is_empty() {
+            out.push("No changes.".to_string());
+        } else {
+            for l in lines {
+                out.push(format!("- {l}"));
+            }
+        }
+    }
 
     let section = |out: &mut Vec<String>, v: Verdict, title: &str, blurb: &str, show_hits: bool| {
         let rows: Vec<&RouteAudit> = audits.iter().filter(|a| a.verdict == v).collect();
@@ -504,6 +834,41 @@ fn render_report(
         "path too generic to match reliably — check by hand",
         false,
     );
+
+    // Security: secrets pasted into the spec. Hardcoded-in-code first (worse).
+    if !secrets.is_empty() {
+        out.push(String::new());
+        out.push(format!(
+            "## Security ({}) — secrets in the spec doc",
+            secrets.len()
+        ));
+        out.push(
+            "Secret material in an org-readable doc. Rotate and restrict access; values below are masked."
+                .to_string(),
+        );
+        let mut ordered: Vec<&SecretAudit> = secrets.iter().collect();
+        ordered.sort_by_key(|s| s.hardcoded_in.is_empty()); // hardcoded (false) first
+        for s in ordered {
+            let kind = s.finding.kind.label();
+            if s.hardcoded_in.is_empty() {
+                out.push(format!(
+                    "- `{}` [{kind}] — doc-only leak; rotate the secret and restrict the doc.",
+                    s.finding.masked
+                ));
+            } else {
+                let loc = s
+                    .hardcoded_in
+                    .iter()
+                    .map(|(f, l)| hit_link(f, *l))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                out.push(format!(
+                    "- `{}` [{kind}] — **also hardcoded in code** at {loc}; rotate AND remove from code.",
+                    s.finding.masked
+                ));
+            }
+        }
+    }
 
     out.push(String::new());
     out.push(format!("## In sync ({in_sync})"));
@@ -609,5 +974,74 @@ mod tests {
         assert_eq!(compare_versions(Some("5.1.0"), Some("5.0.9")), VersionVerdict::DocAhead);
         assert_eq!(compare_versions(Some("4.9"), Some("4.9.0")), VersionVerdict::InSync);
         assert_eq!(compare_versions(None, Some("1.0.0")), VersionVerdict::Unknown);
+    }
+
+    #[test]
+    fn test_compare_versions_tag_prefix() {
+        // Tags carry prefixes — the numeric run must still be found. (Regression:
+        // a live run saw `release-4.9.10` come back Unknown.)
+        assert_eq!(compare_versions(Some("4.9.5"), Some("release-4.9.10")), VersionVerdict::DocBehind);
+        assert_eq!(compare_versions(Some("2.3.0"), Some("app-v2.3.0")), VersionVerdict::InSync);
+        // 4.9.5 vs 4.9.10 must compare numerically, not lexically (5 < 10).
+        assert_eq!(compare_versions(Some("4.9.10"), Some("4.9.5")), VersionVerdict::DocAhead);
+    }
+
+    #[test]
+    fn test_extract_secrets() {
+        // Generic fakes — never real values.
+        let spec = "\
+key: AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIII0000=
+id: 12345678-90ab-cdef-1234-567890abcdef
+contact: svc-account@example.com
+short: abc123";
+        let secrets = extract_secrets(spec);
+        let kinds: Vec<SecretKind> = secrets.iter().map(|s| s.kind).collect();
+        assert!(kinds.contains(&SecretKind::Base64Secret));
+        assert!(kinds.contains(&SecretKind::Uuid));
+        assert!(kinds.contains(&SecretKind::Email));
+        // "short: abc123" is below the base64 threshold → not a secret.
+        assert_eq!(secrets.len(), 3);
+    }
+
+    #[test]
+    fn test_diff_snapshots() {
+        let prev = SpecSnapshot {
+            version_verdict: "STALE".into(),
+            routes: vec![
+                RouteSnap { path: "/a".into(), verdict: "drift".into() },
+                RouteSnap { path: "/b".into(), verdict: "in-sync".into() },
+                RouteSnap { path: "/gone".into(), verdict: "in-sync".into() },
+            ],
+            secrets: vec![SecretSnap { masked: "x…y".into(), kind: "uuid".into(), hardcoded: false }],
+            ..Default::default()
+        };
+        let new = SpecSnapshot {
+            version_verdict: "in-sync".into(),
+            routes: vec![
+                RouteSnap { path: "/a".into(), verdict: "in-sync".into() }, // drift fixed
+                RouteSnap { path: "/b".into(), verdict: "in-sync".into() }, // unchanged
+                RouteSnap { path: "/new".into(), verdict: "drift".into() }, // added
+            ],
+            secrets: vec![SecretSnap { masked: "x…y".into(), kind: "uuid".into(), hardcoded: true }], // now hardcoded
+            ..Default::default()
+        };
+        let d = diff_snapshots(&prev, &new);
+        assert!(d.iter().any(|l| l.contains("version verdict") && l.contains("in-sync")));
+        assert!(d.iter().any(|l| l.contains("`/a`") && l.contains("drift → in-sync")));
+        assert!(d.iter().any(|l| l.contains("+ route `/new`")));
+        assert!(d.iter().any(|l| l.contains("`/gone` removed")));
+        assert!(d.iter().any(|l| l.contains("secret") && l.contains("hardcoded false → true")));
+        // unchanged /b must not appear
+        assert!(!d.iter().any(|l| l.contains("`/b`")));
+    }
+
+    #[test]
+    fn test_mask_secret_never_reveals_full_value() {
+        let key = "AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIII0000=";
+        let masked = mask_secret(SecretKind::Base64Secret, key);
+        assert!(!masked.contains("BBBBCCCC"));
+        assert!(masked.contains("chars"));
+        assert_eq!(mask_secret(SecretKind::Email, "svc@example.com"), "s***@example.com");
+        assert_eq!(mask_secret(SecretKind::Uuid, "12345678-90ab-cdef-1234-567890abcdef"), "12345678…");
     }
 }
