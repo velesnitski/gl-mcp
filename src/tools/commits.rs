@@ -476,6 +476,34 @@ pub async fn get_mr_changes(
     Ok(result)
 }
 
+/// Fetch a file's decoded raw content at a ref, no formatting. Returns None on
+/// any error (missing file, bad ref). Used by tooling that needs to parse the
+/// file rather than display it.
+pub(crate) async fn get_file_raw(
+    client: &GitLabClient,
+    project_id: &str,
+    file_path: &str,
+    ref_name: &str,
+) -> Option<String> {
+    let encoded_project = urlencoding::encode(project_id);
+    let encoded_file = urlencoding::encode(file_path);
+    let data: Value = client
+        .get(
+            &format!("/projects/{encoded_project}/repository/files/{encoded_file}"),
+            &[("ref", ref_name)],
+        )
+        .await
+        .ok()?;
+    let content_b64 = data["content"].as_str().unwrap_or("");
+    let encoding = data["encoding"].as_str().unwrap_or("base64");
+    if encoding == "base64" {
+        let decoded = base64_decode(content_b64).ok()?;
+        Some(String::from_utf8_lossy(&decoded).to_string())
+    } else {
+        Some(content_b64.to_string())
+    }
+}
+
 /// Get file content at a specific ref.
 pub async fn get_file_content(
     client: &GitLabClient,
