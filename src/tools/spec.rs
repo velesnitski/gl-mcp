@@ -90,8 +90,14 @@ static MULTISLASH_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"/{2,}").unwrap());
 
 /// Seed queries to surface lines that define path literals when no routes file
-/// is given. Each match's snippet is mined for `"/..."` literals.
-const HARVEST_SEEDS: &[&str] = &["return \"/", "= \"/", ": \"/", "\"/v", "\"/api"];
+/// is given. Each match's snippet is mined for path literals. Both double- and
+/// single-quote forms are seeded so single-quote languages (PHP/Laravel, Ruby,
+/// Python) aren't missed, plus call-style forms like `Route::get('/...')`.
+const HARVEST_SEEDS: &[&str] = &[
+    "return \"/", "= \"/", ": \"/", "\"/v", "\"/api",
+    "return '/", "= '/", ": '/", "'/v", "'/api",
+    "('/", "(\"/",
+];
 
 /// Substrings (lowercased) that mark a documented route as deprecated / scheduled
 /// for removal. Mix of English and the Russian annotations used in the spec wiki.
@@ -1905,6 +1911,24 @@ short: abc123";
         assert!(paths.contains(&"/v4/user/devices"));
         // line numbers are 1-based and populated
         assert!(eps.iter().all(|(_, l)| *l > 0));
+    }
+
+    #[test]
+    fn test_harvest_single_quoted_routes() {
+        // PHP/Laravel and Ruby style — single-quoted leading-slash literals.
+        let code = "Route::get('/user/settings', [C::class, 'm']);\n  get '/v1/votes'\n";
+        let paths: Vec<String> =
+            harvest_path_literals(code).into_iter().map(|(p, _)| p).collect();
+        assert!(paths.contains(&"/user/settings".to_string()));
+        assert!(paths.contains(&"/v1/votes".to_string()));
+    }
+
+    #[test]
+    fn test_harvest_seeds_cover_both_quote_styles() {
+        // Regression: search-harvest must seed single-quote forms too, or it
+        // silently misses PHP/Ruby/Python repos (caught on a Laravel backend).
+        assert!(HARVEST_SEEDS.iter().any(|s| s.contains('\'')));
+        assert!(HARVEST_SEEDS.iter().any(|s| s.contains('"')));
     }
 
     #[test]

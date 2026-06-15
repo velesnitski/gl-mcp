@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-06-15
+
+### Fixed
+- `audit_spec_drift` / `sweep_spec_audit` reverse-drift search-harvest now seeds single-quote route literals (`'/login'`) and call-style forms (`Route::get('/...')`), not just double-quote — so PHP/Laravel, Ruby, and Python repos are no longer silently missed when no `routes_file` is given.
+
+97 tools total.
+
 ## [0.22.0] - 2026-06-15
 
 ### Added

@@ -56,3 +56,12 @@ reports a shadow endpoint *appearing* or *resolving*.
 - This closes the spec-audit roadmap (forward drift, version, security, map,
   reverse drift). Further depth (fragment-assembled routes, multi-platform
   sweep) is additive, not foundational.
+
+## Follow-up (2026-06-15)
+
+Auditing a Laravel backend (`Route::get('/login', ...)`) showed the
+search-harvest seeds were double-quote-only (`"/v`, `return "/`), so single-quote
+languages (PHP, Ruby, Python) were silently missed in the no-`routes_file` path —
+the literal extractor already accepts both quotes, only the seeds were biased.
+Added single-quote seed mirrors plus call-style forms (`('/`, `("/`). Languages
+that quote routes either way are now covered without a routes file.
