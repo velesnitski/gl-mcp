@@ -76,6 +76,19 @@ static LITERAL_PATH_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
 static BRACE_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"\{[^}]*\}").unwrap());
 
+/// A run of 2+ string literals joined by `+` — a path split across fragments,
+/// e.g. `"/v3" + "/user"`. Captures the whole run; literals mined separately.
+static CONCAT_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r#""[^"]*"(?:\s*\+\s*"[^"]*")+"#).unwrap());
+
+/// A single double-quoted string literal; group 1 is its contents.
+static STRING_LIT_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r#""([^"]*)""#).unwrap());
+
+/// Two or more consecutive slashes (left after stripping an interpolated segment).
+static MULTISLASH_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"/{2,}").unwrap());
+
 /// Seed queries to surface lines that define path literals when no routes file
 /// is given. Each match's snippet is mined for `"/..."` literals.
 const HARVEST_SEEDS: &[&str] = &["return \"/", "= \"/", ": \"/", "\"/v", "\"/api"];
@@ -232,12 +245,14 @@ fn first_segment(path: &str) -> Option<String> {
     path_segments(path).first().map(|s| s.to_string())
 }
 
-/// Normalize a path literal pulled from code: strip `\(interp)` / `{param}` and
-/// query, trim trailing punctuation. Returns None if it isn't a usable path.
+/// Normalize a path literal pulled from code: strip `\(interp)` / `{param}`
+/// segments, collapse the resulting double slashes, drop the query, trim
+/// trailing punctuation. Returns None if it isn't a usable path.
 pub(crate) fn normalize_code_path(p: &str) -> Option<String> {
     let no_interp = INTERP_RE.replace_all(p, "");
     let no_brace = BRACE_RE.replace_all(&no_interp, "");
-    let path = no_brace.split('?').next().unwrap_or(&no_brace);
+    let collapsed = MULTISLASH_RE.replace_all(&no_brace, "/");
+    let path = collapsed.split('?').next().unwrap_or(&collapsed);
     let path = path.trim().trim_end_matches(['/', '.', ':', '\\']);
     if path.len() >= 2 && path.starts_with('/') {
         Some(path.to_string())
@@ -246,18 +261,43 @@ pub(crate) fn normalize_code_path(p: &str) -> Option<String> {
     }
 }
 
-/// Extract deduped (path, 1-based line) for every quoted leading-slash literal
-/// in a source file. The code-side endpoint inventory for reverse-drift.
+/// Extract deduped (path, 1-based line) endpoints from a source file. Handles
+/// both whole path literals (`"/v3/user"`) and paths split across a `+`-joined
+/// run of fragments (`"/v3" + "/user"`), so fragment-assembled routes aren't
+/// missed or split into bogus pieces.
 pub(crate) fn harvest_path_literals(content: &str) -> Vec<(String, u64)> {
     let mut out: Vec<(String, u64)> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut emit = |norm: String, line: u64, out: &mut Vec<(String, u64)>, seen: &mut std::collections::HashSet<String>| {
+        if seen.insert(norm.clone()) {
+            out.push((norm, line));
+        }
+    };
     for (i, line) in content.lines().enumerate() {
+        let lineno = (i + 1) as u64;
+
+        // 1. Concatenation runs: stitch the literal fragments into one path.
+        let mut consumed: Vec<(usize, usize)> = Vec::new();
+        for run in CONCAT_RE.find_iter(line) {
+            let joined: String = STRING_LIT_RE
+                .captures_iter(run.as_str())
+                .map(|c| c.get(1).map(|m| m.as_str()).unwrap_or(""))
+                .collect();
+            if let Some(norm) = normalize_code_path(&joined) {
+                emit(norm, lineno, &mut out, &mut seen);
+            }
+            consumed.push((run.start(), run.end()));
+        }
+
+        // 2. Standalone leading-slash literals outside any consumed run.
         for cap in LITERAL_PATH_RE.captures_iter(line) {
+            let whole = cap.get(0).unwrap();
+            if consumed.iter().any(|(s, e)| whole.start() >= *s && whole.end() <= *e) {
+                continue;
+            }
             if let Some(m) = cap.get(1) {
                 if let Some(norm) = normalize_code_path(m.as_str()) {
-                    if seen.insert(norm.clone()) {
-                        out.push((norm, (i + 1) as u64));
-                    }
+                    emit(norm, lineno, &mut out, &mut seen);
                 }
             }
         }
@@ -1259,6 +1299,31 @@ short: abc123";
         assert!(paths.contains(&"/v4/user/devices"));
         // line numbers are 1-based and populated
         assert!(eps.iter().all(|(_, l)| *l > 0));
+    }
+
+    #[test]
+    fn test_harvest_fragment_assembled_routes() {
+        // The blind spot: paths split across concatenated literals, or with an
+        // interpolated middle segment.
+        let code = r#"
+        let a = "/v3" + "/user"
+        let b = base + "/orders"
+        let c = "/users/\(id)/posts"
+        let ct = "application/json"
+        let bearer = "Bearer " + token
+        "#;
+        let paths: Vec<String> =
+            harvest_path_literals(code).into_iter().map(|(p, _)| p).collect();
+        // "/v3" + "/user" stitched into one endpoint, not split into /v3 and /user
+        assert!(paths.contains(&"/v3/user".to_string()));
+        assert!(!paths.contains(&"/v3".to_string()));
+        // base + "/orders": base is a variable, the literal tail is still caught
+        assert!(paths.contains(&"/orders".to_string()));
+        // interpolated middle segment removed, double slash collapsed
+        assert!(paths.contains(&"/users/posts".to_string()));
+        // header values are not endpoints
+        assert!(!paths.iter().any(|p| p.contains("application/json")));
+        assert!(!paths.iter().any(|p| p.contains("Bearer")));
     }
 
     #[test]
