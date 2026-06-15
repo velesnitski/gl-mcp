@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `audit_spec_drift` version compare now parses prefixed tags (`release-4.9.10`, `app-v2.3.0`) and compares numerically — previously only a leading `v` was stripped, so prefixed tags returned "could not compare".
+- `audit_spec_drift` security check no longer mistakes a long slash-delimited route path for a base64 secret (the base64 class includes `/`); a candidate now needs `=`/`+` or no `/` to count.
 
 ## [0.20.0] - 2026-06-12
 
