@@ -1311,3 +1311,11 @@ pub struct SweepSpecAuditParams {
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GenerateSweepReportParams {
+    #[schemars(description = "Teams/platforms to audit. Each is audited independently (and concurrently); results roll up into one clickable cross-team HTML report.")]
+    pub targets: Vec<SpecAuditTarget>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}

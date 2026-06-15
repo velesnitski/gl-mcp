@@ -1112,6 +1112,21 @@ impl GlMcpServer {
             tools::spec::sweep_spec_audit(client, &targets, p.summary_only.unwrap_or(false)).await
         })
     }
+
+    #[tool(description = "Generate a clickable HTML cross-team spec-drift report: summary cards (teams, stale versions, drift, undocumented, secrets), a By-Team table linking to per-team detail, a needs-attention list, and collapsible per-team sections (version, drift, stale-doc, undocumented endpoints with GitLab links, masked secrets). Audits all targets concurrently. Save to file and open in browser.")]
+    async fn generate_sweep_report(&self, Parameters(p): Parameters<GenerateSweepReportParams>) -> Result<CallToolResult, McpError> {
+        let id = p.targets.first().map(|t| t.project_id.clone()).unwrap_or_default();
+        simple_tool!(self, p, "generate_sweep_report", &id, |client| {
+            let targets: Vec<tools::spec::SweepTarget> = p.targets.iter().map(|t| tools::spec::SweepTarget {
+                label: t.label.clone().unwrap_or_else(|| t.project_id.clone()),
+                project_id: t.project_id.clone(),
+                spec: t.spec.clone(),
+                ref_name: t.ref_name.clone().unwrap_or_default(),
+                routes_file: t.routes_file.clone().unwrap_or_default(),
+            }).collect();
+            tools::spec::generate_sweep_report(client, &targets).await
+        })
+    }
 }
 
 // ─── ServerHandler ───
