@@ -1266,6 +1266,8 @@ pub struct AuditSpecDriftParams {
     pub spec: String,
     #[schemars(description = "Branch or tag to search in (default: default branch)")]
     pub ref_name: Option<String>,
+    #[schemars(description = "Optional path to the file that defines the API routes (e.g. a network-layer source file). When set, reverse-drift (endpoints in code but not in the spec) is harvested precisely from this file; otherwise it's harvested by search within documented namespaces.")]
+    pub routes_file: Option<String>,
     #[schemars(description = "Return compact one-line summary (~5x smaller). Use first to scan.")]
     pub summary_only: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
