@@ -66,6 +66,20 @@ static UUID_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
 static EMAIL_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"(?i)\b[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}\b").unwrap());
 
+/// A quoted, leading-slash path literal in source code, e.g. `return "/v3/user"`.
+/// Group 1 is the raw path (interpolation normalized out later).
+static LITERAL_PATH_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r#"["'](/[A-Za-z0-9_][\w\-./{}()\\:]*)["']"#).unwrap()
+});
+
+/// `{identifier}` path-parameter placeholder.
+static BRACE_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\{[^}]*\}").unwrap());
+
+/// Seed queries to surface lines that define path literals when no routes file
+/// is given. Each match's snippet is mined for `"/..."` literals.
+const HARVEST_SEEDS: &[&str] = &["return \"/", "= \"/", ": \"/", "\"/v", "\"/api"];
+
 /// Substrings (lowercased) that mark a documented route as deprecated / scheduled
 /// for removal. Mix of English and the Russian annotations used in the spec wiki.
 const DEPRECATION_MARKERS: &[&str] = &[
@@ -195,6 +209,60 @@ pub(crate) fn route_search_query(path: &str) -> Option<String> {
             Some(format!("{}/{}", segs[n - 2], segs[n - 1]))
         }
     }
+}
+
+/// Non-empty path segments.
+fn path_segments(path: &str) -> Vec<&str> {
+    path.split('/').filter(|s| !s.is_empty()).collect()
+}
+
+/// Match key for a path: its last two segments (or the single segment). Lets a
+/// code path and a doc path match despite prefix differences.
+pub(crate) fn path_key(path: &str) -> String {
+    let s = path_segments(path);
+    match s.as_slice() {
+        [] => String::new(),
+        [one] => one.to_string(),
+        _ => format!("{}/{}", s[s.len() - 2], s[s.len() - 1]),
+    }
+}
+
+/// First path segment (the API "namespace", e.g. `v3`).
+fn first_segment(path: &str) -> Option<String> {
+    path_segments(path).first().map(|s| s.to_string())
+}
+
+/// Normalize a path literal pulled from code: strip `\(interp)` / `{param}` and
+/// query, trim trailing punctuation. Returns None if it isn't a usable path.
+pub(crate) fn normalize_code_path(p: &str) -> Option<String> {
+    let no_interp = INTERP_RE.replace_all(p, "");
+    let no_brace = BRACE_RE.replace_all(&no_interp, "");
+    let path = no_brace.split('?').next().unwrap_or(&no_brace);
+    let path = path.trim().trim_end_matches(['/', '.', ':', '\\']);
+    if path.len() >= 2 && path.starts_with('/') {
+        Some(path.to_string())
+    } else {
+        None
+    }
+}
+
+/// Extract deduped (path, 1-based line) for every quoted leading-slash literal
+/// in a source file. The code-side endpoint inventory for reverse-drift.
+pub(crate) fn harvest_path_literals(content: &str) -> Vec<(String, u64)> {
+    let mut out: Vec<(String, u64)> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (i, line) in content.lines().enumerate() {
+        for cap in LITERAL_PATH_RE.captures_iter(line) {
+            if let Some(m) = cap.get(1) {
+                if let Some(norm) = normalize_code_path(m.as_str()) {
+                    if seen.insert(norm.clone()) {
+                        out.push((norm, (i + 1) as u64));
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 /// True if a row's text marks the route as deprecated.
@@ -442,6 +510,8 @@ pub(crate) struct SpecSnapshot {
     version_verdict: String,
     routes: Vec<RouteSnap>,
     secrets: Vec<SecretSnap>,
+    #[serde(default)]
+    undocumented: Vec<String>,
 }
 
 /// `~/.gl-mcp/spec_maps/{project}__{ref}.json` (path separators sanitized).
@@ -467,6 +537,7 @@ fn save_snapshot(snap: &SpecSnapshot) -> std::io::Result<()> {
     std::fs::write(&path, serde_json::to_string_pretty(snap)?)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_snapshot(
     project_id: &str,
     ref_name: &str,
@@ -475,6 +546,7 @@ fn build_snapshot(
     version_verdict: VersionVerdict,
     audits: &[RouteAudit],
     secrets: &[SecretAudit],
+    undocumented: &[(String, u64, String)],
 ) -> SpecSnapshot {
     SpecSnapshot {
         project_id: project_id.to_string(),
@@ -497,6 +569,7 @@ fn build_snapshot(
                 hardcoded: !s.hardcoded_in.is_empty(),
             })
             .collect(),
+        undocumented: undocumented.iter().map(|(p, _, _)| p.clone()).collect(),
     }
 }
 
@@ -551,7 +624,44 @@ fn diff_snapshots(prev: &SpecSnapshot, new: &SpecSnapshot) -> Vec<String> {
         }
     }
 
+    let prev_undoc: std::collections::HashSet<&str> =
+        prev.undocumented.iter().map(String::as_str).collect();
+    let new_undoc: std::collections::HashSet<&str> =
+        new.undocumented.iter().map(String::as_str).collect();
+    for p in &new.undocumented {
+        if !prev_undoc.contains(p.as_str()) {
+            lines.push(format!("+ undocumented endpoint `{p}` appeared in code"));
+        }
+    }
+    for p in &prev.undocumented {
+        if !new_undoc.contains(p.as_str()) {
+            lines.push(format!("- undocumented endpoint `{p}` resolved (now documented or gone)"));
+        }
+    }
+
     lines
+}
+
+/// Raw blob-search results (each has `path`, `startline`, `data`).
+async fn search_blobs(
+    client: &GitLabClient,
+    encoded: &str,
+    query: &str,
+    search_ref: &str,
+    per_page: &str,
+) -> Vec<Value> {
+    let mut params: Vec<(&str, &str)> = vec![
+        ("scope", "blobs"),
+        ("search", query),
+        ("per_page", per_page),
+    ];
+    if !search_ref.is_empty() {
+        params.push(("ref", search_ref));
+    }
+    client
+        .get(&format!("/projects/{encoded}/search"), &params)
+        .await
+        .unwrap_or_default()
 }
 
 /// Search one route in the repo, returning capped (file, line) hits.
@@ -561,19 +671,8 @@ async fn search_route(
     query: &str,
     search_ref: &str,
 ) -> Vec<(String, u64)> {
-    let mut params: Vec<(&str, &str)> = vec![
-        ("scope", "blobs"),
-        ("search", query),
-        ("per_page", "5"),
-    ];
-    if !search_ref.is_empty() {
-        params.push(("ref", search_ref));
-    }
-    let results: Vec<Value> = client
-        .get(&format!("/projects/{encoded}/search"), &params)
+    search_blobs(client, encoded, query, search_ref, "5")
         .await
-        .unwrap_or_default();
-    results
         .iter()
         .take(5)
         .map(|r| {
@@ -585,12 +684,51 @@ async fn search_route(
         .collect()
 }
 
+/// Harvest path literals across the repo via seed searches, mining each result
+/// snippet for `"/..."` literals. Returns (path, line, file). Noisier than a
+/// dedicated routes file, so callers namespace-filter the output.
+async fn harvest_via_search(
+    client: &GitLabClient,
+    encoded: &str,
+    search_ref: &str,
+) -> Vec<(String, u64, String)> {
+    let futs = HARVEST_SEEDS.iter().map(|seed| {
+        let client = client.clone();
+        let encoded = encoded.to_string();
+        let search_ref = search_ref.to_string();
+        let seed = seed.to_string();
+        async move { search_blobs(&client, &encoded, &seed, &search_ref, "20").await }
+    });
+    let batches = join_all(futs).await;
+
+    let mut out: Vec<(String, u64, String)> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for results in batches {
+        for r in &results {
+            let file = r["path"].as_str().unwrap_or("").to_string();
+            let line = r["startline"].as_u64().unwrap_or(0);
+            let data = r["data"].as_str().unwrap_or("");
+            for cap in LITERAL_PATH_RE.captures_iter(data) {
+                if let Some(m) = cap.get(1) {
+                    if let Some(norm) = normalize_code_path(m.as_str()) {
+                        if seen.insert(norm.clone()) {
+                            out.push((norm, line, file.clone()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Audit a documented spec against a project's code: route drift + version drift.
 pub async fn audit_spec_drift(
     client: &GitLabClient,
     project_id: &str,
     spec: &str,
     ref_name: &str,
+    routes_file: &str,
     summary_only: bool,
 ) -> Result<String> {
     let encoded = urlencoding::encode(project_id);
@@ -613,6 +751,13 @@ pub async fn audit_spec_drift(
         .unwrap_or_default();
     let latest_tag = tags.first().and_then(|t| t["name"].as_str()).map(String::from);
     let version_verdict = compare_versions(parsed.version.as_deref(), latest_tag.as_deref());
+
+    // Documented match-keys and namespaces, captured before `parsed.routes` is
+    // consumed below — used for reverse-drift.
+    let documented_keys: std::collections::HashSet<String> =
+        parsed.routes.iter().map(|r| path_key(&r.path)).collect();
+    let documented_ns: std::collections::HashSet<String> =
+        parsed.routes.iter().filter_map(|r| first_segment(&r.path)).collect();
 
     // Search searchable routes concurrently (chunks of 10); non-searchable routes
     // go straight to NeedsReview with no API call.
@@ -663,6 +808,37 @@ pub async fn audit_spec_drift(
         secret_audits.extend(join_all(futs).await);
     }
 
+    // Reverse drift: endpoints in code the spec never documented. Build a
+    // code-side inventory (from a named routes file if given, else harvested by
+    // search) and subtract the documented paths by match-key.
+    let (code_endpoints, harvest_mode): (Vec<(String, u64, String)>, &str) = if !routes_file.is_empty()
+    {
+        let content = crate::tools::commits::get_file_raw(client, project_id, routes_file, search_ref)
+            .await
+            .unwrap_or_default();
+        let eps = harvest_path_literals(&content)
+            .into_iter()
+            .map(|(p, l)| (p, l, routes_file.to_string()))
+            .collect();
+        (eps, "file")
+    } else {
+        // Search-harvested literals are noisy — keep only paths in a namespace
+        // the spec already documents (suppresses filesystem/asset junk).
+        let eps = harvest_via_search(client, &encoded, search_ref)
+            .await
+            .into_iter()
+            .filter(|(p, _, _)| {
+                first_segment(p).map(|s| documented_ns.contains(&s)).unwrap_or(false)
+            })
+            .collect();
+        (eps, "search")
+    };
+    let mut undocumented: Vec<(String, u64, String)> = code_endpoints
+        .into_iter()
+        .filter(|(p, _, _)| !documented_keys.contains(&path_key(p)))
+        .collect();
+    undocumented.sort_by(|a, b| a.0.cmp(&b.0));
+
     // Local metadata map: diff against the previous run, then persist this one.
     let prev = load_snapshot(project_id, search_ref);
     let scanned_at = chrono::Utc::now().format("%Y-%m-%d %H:%M UTC").to_string();
@@ -674,6 +850,7 @@ pub async fn audit_spec_drift(
         version_verdict,
         &audits,
         &secret_audits,
+        &undocumented,
     );
     let changes = prev.as_ref().map(|p| (p.scanned_at.clone(), diff_snapshots(p, &snapshot)));
     if let Err(e) = save_snapshot(&snapshot) {
@@ -689,6 +866,8 @@ pub async fn audit_spec_drift(
         version_verdict,
         &audits,
         &secret_audits,
+        &undocumented,
+        harvest_mode,
         changes.as_ref(),
         summary_only,
     ))
@@ -725,6 +904,8 @@ fn render_report(
     version_verdict: VersionVerdict,
     audits: &[RouteAudit],
     secrets: &[SecretAudit],
+    undocumented: &[(String, u64, String)],
+    harvest_mode: &str,
     changes: Option<&(String, Vec<String>)>,
     summary_only: bool,
 ) -> String {
@@ -742,8 +923,13 @@ fn render_report(
         } else {
             format!("; {} secrets ({hardcoded} hardcoded in code)", secrets.len())
         };
+        let undoc_note = if undocumented.is_empty() {
+            String::new()
+        } else {
+            format!("; {} undocumented", undocumented.len())
+        };
         return format!(
-            "{project_id}: version {}; {cleanup} cleanup-debt, {drift} drift, {stale} stale-doc, {in_sync} in-sync, {review} need-review (of {} routes){secrets_note}.",
+            "{project_id}: version {}; {cleanup} cleanup-debt, {drift} drift, {stale} stale-doc, {in_sync} in-sync, {review} need-review (of {} routes){secrets_note}{undoc_note}.",
             match version_verdict {
                 VersionVerdict::InSync => "in-sync",
                 VersionVerdict::DocBehind => "STALE",
@@ -867,6 +1053,21 @@ fn render_report(
                     s.finding.masked
                 ));
             }
+        }
+    }
+
+    // Reverse drift: endpoints in code that the spec never documented.
+    if !undocumented.is_empty() {
+        out.push(String::new());
+        out.push(format!(
+            "## Undocumented endpoints ({}) — in code, not in the spec",
+            undocumented.len()
+        ));
+        if harvest_mode == "search" {
+            out.push("Harvested by search within documented namespaces; pass `routes_file` (the file that defines the routes) for full coverage including new namespaces.".to_string());
+        }
+        for (path, line, file) in undocumented {
+            out.push(format!("- `{path}` → {}", hit_link(file, *line)));
         }
     }
 
@@ -1013,6 +1214,7 @@ short: abc123";
                 RouteSnap { path: "/gone".into(), verdict: "in-sync".into() },
             ],
             secrets: vec![SecretSnap { masked: "x…y".into(), kind: "uuid".into(), hardcoded: false }],
+            undocumented: vec!["/v4/old".into()],
             ..Default::default()
         };
         let new = SpecSnapshot {
@@ -1023,6 +1225,7 @@ short: abc123";
                 RouteSnap { path: "/new".into(), verdict: "drift".into() }, // added
             ],
             secrets: vec![SecretSnap { masked: "x…y".into(), kind: "uuid".into(), hardcoded: true }], // now hardcoded
+            undocumented: vec!["/v4/shadow".into()], // /v4/old resolved, /v4/shadow new
             ..Default::default()
         };
         let d = diff_snapshots(&prev, &new);
@@ -1031,8 +1234,50 @@ short: abc123";
         assert!(d.iter().any(|l| l.contains("+ route `/new`")));
         assert!(d.iter().any(|l| l.contains("`/gone` removed")));
         assert!(d.iter().any(|l| l.contains("secret") && l.contains("hardcoded false → true")));
+        assert!(d.iter().any(|l| l.contains("+ undocumented endpoint `/v4/shadow`")));
+        assert!(d.iter().any(|l| l.contains("`/v4/old` resolved")));
         // unchanged /b must not appear
         assert!(!d.iter().any(|l| l.contains("`/b`")));
+    }
+
+    #[test]
+    fn test_harvest_path_literals() {
+        // Swift-ish endpoint enum plus a non-route literal.
+        let code = r#"
+        case .getUserInfo:
+            return "/v3/user"
+        case .hotspots:
+            return "/hotspots/\(identifier)"
+        case .devices:
+            return "/v4/user/devices"
+        let asset = "/Users/dev/Library/thing.png"
+        "#;
+        let eps = harvest_path_literals(code);
+        let paths: Vec<&str> = eps.iter().map(|(p, _)| p.as_str()).collect();
+        assert!(paths.contains(&"/v3/user"));
+        assert!(paths.contains(&"/hotspots")); // interpolation segment stripped
+        assert!(paths.contains(&"/v4/user/devices"));
+        // line numbers are 1-based and populated
+        assert!(eps.iter().all(|(_, l)| *l > 0));
+    }
+
+    #[test]
+    fn test_path_key_matching() {
+        // last-two-segments key tolerates prefix differences
+        assert_eq!(path_key("/v3/user"), "v3/user");
+        assert_eq!(path_key("/user/nodes-pools/favorites"), "nodes-pools/favorites");
+        assert_eq!(path_key("/login"), "login");
+        // a code path and a doc path with the same tail match
+        assert_eq!(path_key("/api/v3/user"), path_key("/v3/user"));
+    }
+
+    #[test]
+    fn test_normalize_code_path() {
+        assert_eq!(normalize_code_path("/v3/user"), Some("/v3/user".to_string()));
+        assert_eq!(normalize_code_path("/hotspots/\\(identifier)"), Some("/hotspots".to_string()));
+        assert_eq!(normalize_code_path("/orders?currency=USD"), Some("/orders".to_string()));
+        assert_eq!(normalize_code_path("/users/{id}"), Some("/users".to_string()));
+        assert_eq!(normalize_code_path("notapath"), None);
     }
 
     #[test]
