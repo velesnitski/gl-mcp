@@ -1255,3 +1255,19 @@ pub struct GetAiAdoptionParams {
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }
+
+// ─── Spec Drift Audit ───
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AuditSpecDriftParams {
+    #[schemars(description = "Project ID or path to audit against the spec")]
+    pub project_id: String,
+    #[schemars(description = "The spec document as markdown/text (e.g. a knowledge-base app-spec article). Documented routes and version are extracted from it and cross-referenced against the codebase.")]
+    pub spec: String,
+    #[schemars(description = "Branch or tag to search in (default: default branch)")]
+    pub ref_name: Option<String>,
+    #[schemars(description = "Return compact one-line summary (~5x smaller). Use first to scan.")]
+    pub summary_only: Option<bool>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}

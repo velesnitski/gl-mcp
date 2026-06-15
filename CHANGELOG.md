@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `audit_spec_drift` — cross-reference a documented spec (e.g. a knowledge-base app-spec article, passed as markdown) against a project's code. Route drift: cleanup-debt (flagged for removal but still in code), stale-doc (flagged and already gone), drift (listed active but missing), needs-review (path too generic to match). Version drift: spec version vs latest git tag. gl-mcp stays GitLab-only — the caller supplies the spec text.
+
 ## [0.20.0] - 2026-06-12
 
 ### Added
