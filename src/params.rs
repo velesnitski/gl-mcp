@@ -1287,3 +1287,27 @@ pub struct GenerateSpecAuditReportParams {
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SpecAuditTarget {
+    #[schemars(description = "Project ID or path for this platform")]
+    pub project_id: String,
+    #[schemars(description = "The spec document for this platform, as markdown/text")]
+    pub spec: String,
+    #[schemars(description = "Display label for the rollup (e.g. 'iOS'). Defaults to the project path.")]
+    pub label: Option<String>,
+    #[schemars(description = "Branch or tag to search in (default: default branch)")]
+    pub ref_name: Option<String>,
+    #[schemars(description = "Optional path to the routes-defining file for precise reverse-drift")]
+    pub routes_file: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SweepSpecAuditParams {
+    #[schemars(description = "Platforms to audit. Each is audited independently (and concurrently); results roll up into one cross-platform table.")]
+    pub targets: Vec<SpecAuditTarget>,
+    #[schemars(description = "Return only the rollup table (no needs-attention / totals detail).")]
+    pub summary_only: Option<bool>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
