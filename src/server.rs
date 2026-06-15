@@ -1090,6 +1090,13 @@ impl GlMcpServer {
             tools::spec::audit_spec_drift(client, &p.project_id, &p.spec, p.ref_name.as_deref().unwrap_or(""), p.routes_file.as_deref().unwrap_or(""), p.summary_only.unwrap_or(false)).await
         )
     }
+
+    #[tool(description = "Generate a clickable HTML spec-drift report for a project: version banner, route-drift sections (cleanup-debt/drift/stale-doc), undocumented endpoints, security findings (masked), and changes since the last audit. Dark theme with Export PDF and GitLab file links. Save to file and open in browser.")]
+    async fn generate_spec_audit_report(&self, Parameters(p): Parameters<GenerateSpecAuditReportParams>) -> Result<CallToolResult, McpError> {
+        simple_tool!(self, p, "generate_spec_audit_report", &p.project_id, |client|
+            tools::spec::generate_spec_audit_report(client, &p.project_id, &p.spec, p.ref_name.as_deref().unwrap_or(""), p.routes_file.as_deref().unwrap_or("")).await
+        )
+    }
 }
 
 // ─── ServerHandler ───
