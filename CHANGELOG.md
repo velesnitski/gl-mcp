@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-06-15
+
 ### Added
 - `audit_spec_drift` — cross-reference a documented spec (e.g. a knowledge-base app-spec article, passed as markdown) against a project's code. Route drift: cleanup-debt (flagged for removal but still in code), stale-doc (flagged and already gone), drift (listed active but missing), needs-review (path too generic to match). Version drift: spec version vs latest git tag. gl-mcp stays GitLab-only — the caller supplies the spec text.
 - `audit_spec_drift` security check — detects secret-shaped strings in the spec (base64 keys/tokens, UUIDs, credential emails) and code-searches each to flag doc-only leaks vs secrets also hardcoded in the repo. Reports masked previews only, never the raw value.
@@ -17,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `audit_spec_drift` version compare now parses prefixed tags (`release-4.9.10`, `app-v2.3.0`) and compares numerically — previously only a leading `v` was stripped, so prefixed tags returned "could not compare".
 - `audit_spec_drift` security check no longer mistakes a long slash-delimited route path for a base64 secret (the base64 class includes `/`); a candidate now needs `=`/`+` or no `/` to count.
+
+96 tools total.
 
 ## [0.20.0] - 2026-06-12
 
