@@ -783,6 +783,99 @@ async fn harvest_via_search(
     out
 }
 
+/// Files to harvest from one routes-file resolution are capped, to bound API
+/// calls when a directory entry expands to many blobs.
+const ROUTES_FILE_CAP: usize = 60;
+
+/// Skip clearly non-source files when expanding a directory entry — the literal
+/// harvester would find nothing useful in them anyway, and they cost a fetch.
+fn is_code_file(path: &str) -> bool {
+    const SKIP: &[&str] = &[
+        ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp", ".bmp", ".pdf",
+        ".lock", ".zip", ".gz", ".tar", ".woff", ".woff2", ".ttf", ".eot", ".otf",
+        ".mp4", ".mp3", ".wav", ".bin", ".so", ".a", ".o", ".class", ".jar",
+        ".keystore", ".jks", ".p12", ".ipa", ".apk", ".dmg",
+    ];
+    let lower = path.to_lowercase();
+    !SKIP.iter().any(|ext| lower.ends_with(ext))
+}
+
+/// Harvest path literals from several (file, content) pairs, deduped by path
+/// (first file wins), each tagged with its source file. Pure — testable.
+pub(crate) fn harvest_multi(files: &[(String, String)]) -> Vec<(String, u64, String)> {
+    let mut out: Vec<(String, u64, String)> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (fpath, content) in files {
+        for (p, line) in harvest_path_literals(content) {
+            if seen.insert(p.clone()) {
+                out.push((p, line, fpath.clone()));
+            }
+        }
+    }
+    out
+}
+
+/// Resolve a `routes_file` value into (path, content) pairs to harvest.
+/// Accepts a comma-separated list; each entry is either a file (fetched as-is)
+/// or a directory (every code file under it, recursively). Fetches concurrently.
+async fn resolve_routes_files(
+    client: &GitLabClient,
+    project_id: &str,
+    search_ref: &str,
+    routes_file: &str,
+) -> Vec<(String, String)> {
+    let encoded = urlencoding::encode(project_id);
+
+    // Build the flat list of file paths to fetch.
+    let mut paths: Vec<String> = Vec::new();
+    for entry in routes_file.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+        let mut params: Vec<(&str, &str)> =
+            vec![("path", entry), ("recursive", "true"), ("per_page", "100")];
+        if !search_ref.is_empty() {
+            params.push(("ref", search_ref));
+        }
+        let tree: Vec<Value> = client
+            .get(&format!("/projects/{encoded}/repository/tree"), &params)
+            .await
+            .unwrap_or_default();
+        let blobs: Vec<String> = tree
+            .iter()
+            .filter(|t| t["type"].as_str() == Some("blob"))
+            .filter_map(|t| t["path"].as_str())
+            .filter(|p| is_code_file(p))
+            .map(String::from)
+            .collect();
+        if blobs.is_empty() {
+            // Not a directory (or empty) — treat the entry as a single file.
+            paths.push(entry.to_string());
+        } else {
+            paths.extend(blobs);
+        }
+    }
+    if paths.len() > ROUTES_FILE_CAP {
+        tracing::warn!("routes_file expanded to {} files; capping at {ROUTES_FILE_CAP}", paths.len());
+        paths.truncate(ROUTES_FILE_CAP);
+    }
+
+    // Fetch concurrently (chunks of 10), keeping only files that exist.
+    let mut out: Vec<(String, String)> = Vec::new();
+    for chunk in paths.chunks(10) {
+        let futs = chunk.iter().map(|path| {
+            let client = client.clone();
+            let project = project_id.to_string();
+            let path = path.clone();
+            let search_ref = search_ref.to_string();
+            async move {
+                crate::tools::commits::get_file_raw(&client, &project, &path, &search_ref)
+                    .await
+                    .map(|c| (path, c))
+            }
+        });
+        out.extend(join_all(futs).await.into_iter().flatten());
+    }
+    out
+}
+
 /// Everything an audit produces — shared by the markdown and HTML renderers.
 pub(crate) struct AuditOutcome {
     project_id: String,
@@ -890,14 +983,10 @@ pub(crate) async fn compute_audit(
     // search) and subtract the documented paths by match-key.
     let (code_endpoints, harvest_mode): (Vec<(String, u64, String)>, &str) = if !routes_file.is_empty()
     {
-        let content = crate::tools::commits::get_file_raw(client, project_id, routes_file, search_ref)
-            .await
-            .unwrap_or_default();
-        let eps = harvest_path_literals(&content)
-            .into_iter()
-            .map(|(p, l)| (p, l, routes_file.to_string()))
-            .collect();
-        (eps, "file")
+        // routes_file may be a single file, a comma-separated list, or a directory
+        // (expanded to every code file under it). Harvest all, dedup by path.
+        let files = resolve_routes_files(client, project_id, search_ref, routes_file).await;
+        (harvest_multi(&files), "file")
     } else {
         // Search-harvested literals are noisy — keep only paths in a namespace
         // the spec already documents (suppresses filesystem/asset junk).
@@ -2104,6 +2193,35 @@ short: abc123";
         assert!(paths.contains(&"/v4/user/devices"));
         // line numbers are 1-based and populated
         assert!(eps.iter().all(|(_, l)| *l > 0));
+    }
+
+    #[test]
+    fn test_is_code_file() {
+        assert!(is_code_file("routes/api/withoutPrefix.php"));
+        assert!(is_code_file("network/ApiConst.kt"));
+        assert!(is_code_file("resources/url_info/urls.json"));
+        assert!(!is_code_file("assets/logo.png"));
+        assert!(!is_code_file("Gemfile.lock"));
+        assert!(!is_code_file("app/release.apk"));
+    }
+
+    #[test]
+    fn test_harvest_multi_dedup_and_attribution() {
+        let files = vec![
+            ("routes/api.php".to_string(), "Route::get('/v3/user', f);\nRoute::post('/orders', f);".to_string()),
+            ("routes/crm.php".to_string(), "Route::get('/v3/user', f);\nRoute::get('/crm/stats', f);".to_string()),
+        ];
+        let eps = harvest_multi(&files);
+        let paths: Vec<&str> = eps.iter().map(|(p, _, _)| p.as_str()).collect();
+        // union across files, /v3/user deduped (first file wins its attribution)
+        assert!(paths.contains(&"/v3/user"));
+        assert!(paths.contains(&"/orders"));
+        assert!(paths.contains(&"/crm/stats"));
+        assert_eq!(paths.iter().filter(|p| **p == "/v3/user").count(), 1);
+        let user = eps.iter().find(|(p, _, _)| p == "/v3/user").unwrap();
+        assert_eq!(user.2, "routes/api.php"); // first file wins
+        let crm = eps.iter().find(|(p, _, _)| p == "/crm/stats").unwrap();
+        assert_eq!(crm.2, "routes/crm.php"); // tagged with its own file
     }
 
     #[test]
