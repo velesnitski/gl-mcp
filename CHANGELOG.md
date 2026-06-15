@@ -7,8 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-06-15
+
 ### Added
 - `generate_sweep_report` — clickable HTML cross-team spec-drift report: summary cards (teams, stale versions, drift, undocumented, secrets), a By-Team table linking to per-team detail, a needs-attention list, and collapsible per-team sections (version, drift, stale-doc, undocumented endpoints with GitLab links, masked secrets). Audits all teams concurrently; failures become an error row.
+
+98 tools total.
 
 ## [0.23.0] - 2026-06-15
 
