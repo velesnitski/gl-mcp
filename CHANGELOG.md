@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Build profiles tuned for a frequently-rebuilt tool: release uses `lto = "thin"` (faster link, binary 9.8→10 MB) and dev/test uses `debug = "line-tables-only"` (readable backtraces, ~24% smaller `target/debug`). No runtime behavior change.
+
 ## [0.25.0] - 2026-06-15
 
 ### Changed
