@@ -1266,7 +1266,7 @@ pub struct AuditSpecDriftParams {
     pub spec: String,
     #[schemars(description = "Branch or tag to search in (default: default branch)")]
     pub ref_name: Option<String>,
-    #[schemars(description = "Optional path to the file that defines the API routes (e.g. a network-layer source file). When set, reverse-drift (endpoints in code but not in the spec) is harvested precisely from this file; otherwise it's harvested by search within documented namespaces.")]
+    #[schemars(description = "Optional path(s) to the route-defining source for precise reverse-drift: a file, a comma-separated list of files, or a directory (every code file under it, recursively — e.g. 'routes/api' for a Laravel app). Without it, reverse-drift is search-harvested within documented namespaces.")]
     pub routes_file: Option<String>,
     #[schemars(description = "Return compact one-line summary (~5x smaller). Use first to scan.")]
     pub summary_only: Option<bool>,
@@ -1282,7 +1282,7 @@ pub struct GenerateSpecAuditReportParams {
     pub spec: String,
     #[schemars(description = "Branch or tag to search in (default: default branch)")]
     pub ref_name: Option<String>,
-    #[schemars(description = "Optional path to the file that defines the API routes; enables precise reverse-drift (undocumented endpoints in code).")]
+    #[schemars(description = "Optional route-defining source for precise reverse-drift: a file, comma-separated files, or a directory (recursive).")]
     pub routes_file: Option<String>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
@@ -1298,7 +1298,7 @@ pub struct SpecAuditTarget {
     pub label: Option<String>,
     #[schemars(description = "Branch or tag to search in (default: default branch)")]
     pub ref_name: Option<String>,
-    #[schemars(description = "Optional path to the routes-defining file for precise reverse-drift")]
+    #[schemars(description = "Optional route-defining source for precise reverse-drift: a file, comma-separated files, or a directory (recursive)")]
     pub routes_file: Option<String>,
 }
 

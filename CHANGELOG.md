@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-06-15
+
+### Changed
+- `audit_spec_drift` / `generate_spec_audit_report` / `sweep_spec_audit` / `generate_sweep_report` `routes_file` now accepts a single file, a comma-separated list, **or a directory** (expanded recursively to every code file under it — e.g. `routes/api` audits a Laravel backend's whole route surface in one pass). Non-source files are skipped, fetches run concurrently (capped at 60), and each undocumented endpoint still links to its own source file.
+
+98 tools total.
+
 ## [0.24.0] - 2026-06-15
 
 ### Added
