@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `--version` / `-V` flag — prints the bare version and exits without starting the server or requiring config.
+- `Makefile` + `scripts/sync-mcp-label.py` — `make install` (build + sync) re-keys the gl-mcp entry in the MCP config to `gl-mcp v<version>` so Claude Code's `/mcp` dialog shows the running version (the dialog labels by config key, not the reported server name). Idempotent, keeps a `.bak`. Mirrors slk-mcp's fleet pattern.
+
+### Fixed
+- Corrected the advertised tool count to the actual **93** (`Cargo.toml`/`CLAUDE.md` had drifted to "98").
+
 ## [0.26.0] - 2026-06-15
 
 ### Changed
