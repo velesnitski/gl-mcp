@@ -24,6 +24,14 @@ use crate::server::GlMcpServer;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // `--version`/`-V`: print the bare version and exit (no server start, no
+    // config required). scripts/sync-mcp-label.py uses this to read the running
+    // binary's version when re-keying the /mcp label.
+    if std::env::args().any(|a| a == "--version" || a == "-V") {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     logging::setup_logging();
     logging::setup_sentry();
     let instance_id = logging::instance_id();
