@@ -1002,29 +1002,42 @@ pub async fn get_group_activity(
 pub async fn list_group_projects(
     client: &GitLabClient,
     group_path: &str,
-    per_page: u32,
+    max_results: u32,
 ) -> Result<String> {
     let encoded = urlencoding::encode(group_path);
-    let per_page_str = per_page.to_string();
 
-    let projects: Vec<Value> = client
-        .get(
+    // `max_results` is a cap, not a page size — GitLab clamps per_page to 100,
+    // so paginate via get_all_pages and truncate. Without this, groups with
+    // >100 projects were silently cut off despite "list all projects".
+    let cap = (max_results as usize).max(1);
+    let max_pages = cap.div_ceil(100).min(20); // hard ceiling: 2000 projects
+    let mut projects: Vec<Value> = client
+        .get_all_pages(
             &format!("/groups/{encoded}/projects"),
             &[
-                ("per_page", per_page_str.as_str()),
                 ("include_subgroups", "true"),
                 ("order_by", "last_activity_at"),
                 ("sort", "desc"),
             ],
+            max_pages,
         )
-        .await
-        ?;
+        .await?;
 
     if projects.is_empty() {
         return Ok(format!("No projects found in group '{group_path}'."));
     }
 
-    let mut lines = vec![format!("**Group '{group_path}': {} projects**\n", projects.len())];
+    let capped = projects.len() > cap;
+    projects.truncate(cap);
+    let suffix = if capped {
+        " (capped — pass a higher per_page for more)"
+    } else {
+        ""
+    };
+    let mut lines = vec![format!(
+        "**Group '{group_path}': {} projects{suffix}**\n",
+        projects.len()
+    )];
     for p in &projects {
         let name = p["path_with_namespace"].as_str().unwrap_or("?");
         let id = p["id"].as_u64().unwrap_or(0);
