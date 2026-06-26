@@ -74,7 +74,7 @@ pub struct ListMembersParams {
 pub struct ListGroupProjectsParams {
     #[schemars(description = "Group path (e.g., 'example-org/software')")]
     pub group_path: String,
-    #[schemars(description = "Max results (default: 50)")]
+    #[schemars(description = "Max results to return — paginated across pages (default: 200, hard ceiling 2000)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub per_page: Option<u32>,
     #[schemars(description = "GitLab instance name (optional)")]

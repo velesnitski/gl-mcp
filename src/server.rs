@@ -193,7 +193,7 @@ impl GlMcpServer {
     #[tool(description = "List all projects in a GitLab group (including subgroups)")]
     async fn list_group_projects(&self, Parameters(p): Parameters<ListGroupProjectsParams>) -> Result<CallToolResult, McpError> {
         simple_tool!(self, p, "list_group_projects", "", |client|
-            tools::commits::list_group_projects(client, &p.group_path, p.per_page.unwrap_or(50)).await
+            tools::commits::list_group_projects(client, &p.group_path, p.per_page.unwrap_or(200)).await
         )
     }
 
