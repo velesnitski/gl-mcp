@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Corrected the advertised tool count to the actual **93** (`Cargo.toml`/`CLAUDE.md` had drifted to "98").
+- `list_group_projects` now paginates (via `get_all_pages`) instead of a single request — groups with more than 100 projects were silently truncated (GitLab caps `per_page` at 100) despite "list all projects". `per_page` is honored as a max-results cap (default raised 50 → 200, hard ceiling 2000); the header flags truncation.
 
 ## [0.26.0] - 2026-06-15
 
