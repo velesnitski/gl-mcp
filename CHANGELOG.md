@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-06-29
+
+### Fixed
+- `get_job_log` was completely broken — it fetched the CI job **trace** with `client.get::<String>()`, which tries to JSON-parse the body, but the trace endpoint returns **plain text**, so every call failed with `JSON parse error: expected value at line 1 column 1`. Added `client.get_text()` (raw body, 429-retry) and switched the trace fetch to it; empty traces now return a clear note.
+- Compact mode (`GITLAB_COMPACT=1`) no longer corrupts file contents. `strip_markdown` is now **code-fence-aware**: content inside ```` ``` ````/`~~~` fences (file reads via `get_file_content`, job logs, diffs) is passed through byte-for-byte, while prose in reports/dashboards is still stripped for token savings. Previously it removed `#`/`**` from *all* output, e.g. turning a commented `# RUN apt-get …` Dockerfile line into an apparent active instruction and flattening markdown headings.
+
+See ADR 021. 95 tools total.
+
 ## [0.29.0] - 2026-06-29
 
 ### Added

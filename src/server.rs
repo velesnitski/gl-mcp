@@ -72,18 +72,40 @@ fn resolve_client<'a>(resolver: &'a Resolver, instance: &Option<String>, id: &st
         .map_err(|e| McpError::internal_error(e.to_string(), None))
 }
 
+/// Strip markdown formatting from prose to save tokens in compact mode.
+///
+/// Content inside fenced code blocks (``` or ~~~) is left **byte-for-byte
+/// untouched** — file contents, job logs, and diffs are returned through such
+/// fences, and stripping `#`/`**` there would corrupt the data (e.g. turn a
+/// commented `# RUN ...` into an apparent active instruction, or flatten a
+/// markdown file's headings).
 pub(crate) fn strip_markdown(text: &str) -> String {
-    let mut out = text.replace("**", "").replace("__", "");
-    out = out.lines().map(|line| {
-        if line.starts_with("### ") { &line[4..] }
-        else if line.starts_with("## ") { &line[3..] }
-        else if line.starts_with("# ") { &line[2..] }
-        else { line }
-    }).collect::<Vec<_>>().join("\n");
-    while out.contains("\n\n\n") {
-        out = out.replace("\n\n\n", "\n\n");
+    let mut out: Vec<String> = Vec::new();
+    let mut in_fence = false;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+            out.push(line.to_string());
+            continue;
+        }
+        if in_fence {
+            // Never alter fenced content (file reads, logs, diffs).
+            out.push(line.to_string());
+            continue;
+        }
+        // Prose: strip bold/underline emphasis and ATX heading markers.
+        let mut l = line.replace("**", "").replace("__", "");
+        if let Some(s) = l.strip_prefix("### ") { l = s.to_string(); }
+        else if let Some(s) = l.strip_prefix("## ") { l = s.to_string(); }
+        else if let Some(s) = l.strip_prefix("# ") { l = s.to_string(); }
+        // Collapse consecutive blank lines in prose only.
+        if l.is_empty() && out.last().map(|p| p.is_empty()).unwrap_or(false) {
+            continue;
+        }
+        out.push(l);
     }
-    out
+    out.join("\n")
 }
 
 /// Guard: block write tools in read-only mode.
@@ -1206,5 +1228,20 @@ mod tests {
         assert_eq!(strip_markdown("## H2"), "H2");
         assert_eq!(strip_markdown("# H1"), "H1");
         assert_eq!(strip_markdown("plain text"), "plain text");
+    }
+
+    #[test]
+    fn test_strip_markdown_preserves_code_fences() {
+        // `#` comments and `**` inside a fence (file reads, logs, diffs) must survive.
+        let dockerfile = "```docker\n# RUN apt-get update\nRUN apk add curl\n```";
+        assert_eq!(strip_markdown(dockerfile), dockerfile);
+
+        // A markdown file's headings inside a fence are not flattened.
+        let md = "```markdown\n# Project X\n## License\n```";
+        assert_eq!(strip_markdown(md), md);
+
+        // Prose around a fence is still stripped; the fence is preserved.
+        let mixed = "# Title\n```\n# keep me\n```\n**bye**";
+        assert_eq!(strip_markdown(mixed), "Title\n```\n# keep me\n```\nbye");
     }
 }
