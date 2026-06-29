@@ -22,6 +22,8 @@ pub const WRITE_TOOLS: &[&str] = &[
     "merge_mr",
     "rebase_mr",
     "close_mr",
+    "update_merge_request",
+    "create_branch",
     "create_label",
     "retry_pipeline",
     "cancel_pipeline",

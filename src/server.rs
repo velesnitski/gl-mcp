@@ -474,6 +474,14 @@ impl GlMcpServer {
         )
     }
 
+    #[tool(description = "Update a merge request's title, description, labels, or target branch. Only the fields you pass are changed.")]
+    async fn update_merge_request(&self, Parameters(p): Parameters<UpdateMergeRequestParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "update_merge_request");
+        simple_tool!(self, p, "update_merge_request", &p.project_id, |client|
+            tools::merge_requests::update_merge_request(client, &p.project_id, p.mr_iid, p.title.as_deref().unwrap_or(""), p.description.as_deref().unwrap_or(""), p.labels.as_deref().unwrap_or(""), p.target_branch.as_deref().unwrap_or("")).await
+        )
+    }
+
     #[tool(description = "Get MR discussions: threaded review comments with resolved/unresolved status")]
     async fn get_mr_discussions(&self, Parameters(p): Parameters<GetMrDiscussionsParams>) -> Result<CallToolResult, McpError> {
         simple_tool!(self, p, "get_mr_discussions", &p.project_id, |client|
@@ -597,6 +605,14 @@ impl GlMcpServer {
         write_guard!(self, "delete_branch");
         simple_tool!(self, p, "delete_branch", &p.project_id, |client|
             tools::projects::delete_branch(client, &p.project_id, &p.branch).await
+        )
+    }
+
+    #[tool(description = "Create a branch from a source ref (branch/tag/SHA; default: main)")]
+    async fn create_branch(&self, Parameters(p): Parameters<CreateBranchParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "create_branch");
+        simple_tool!(self, p, "create_branch", &p.project_id, |client|
+            tools::projects::create_branch(client, &p.project_id, &p.branch, p.ref_name.as_deref().unwrap_or("")).await
         )
     }
 

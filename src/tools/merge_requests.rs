@@ -1252,6 +1252,55 @@ pub async fn close_mr(
     Ok(format!("Closed: **!{mr_iid}** — {title} [{state}]"))
 }
 
+/// Update a merge request's title, description, labels, or target branch.
+/// Only the fields you pass (non-empty) are changed.
+pub async fn update_merge_request(
+    client: &GitLabClient,
+    project_id: &str,
+    mr_iid: u64,
+    title: &str,
+    description: &str,
+    labels: &str,
+    target_branch: &str,
+) -> Result<String> {
+    let path = format!(
+        "/projects/{}/merge_requests/{}",
+        urlencoding::encode(project_id),
+        mr_iid
+    );
+
+    let mut body = serde_json::Map::new();
+    if !title.is_empty() {
+        body.insert("title".into(), serde_json::json!(title));
+    }
+    if !description.is_empty() {
+        body.insert("description".into(), serde_json::json!(description));
+    }
+    if !labels.is_empty() {
+        body.insert("labels".into(), serde_json::json!(labels));
+    }
+    if !target_branch.is_empty() {
+        body.insert("target_branch".into(), serde_json::json!(target_branch));
+    }
+    if body.is_empty() {
+        return Err(crate::error::Error::Other(
+            "Nothing to update — set at least one of title, description, labels, target_branch."
+                .into(),
+        ));
+    }
+
+    let mr: Value = client.put(&path, &Value::Object(body)).await?;
+
+    let new_title = mr["title"].as_str().unwrap_or("?");
+    let web_url = mr["web_url"].as_str().unwrap_or("");
+    let mut out = format!("Updated **!{mr_iid}** — {new_title}");
+    if !web_url.is_empty() {
+        out.push('\n');
+        out.push_str(web_url);
+    }
+    Ok(out)
+}
+
 /// Get MR discussions (threaded comments).
 pub async fn get_mr_discussions(
     client: &GitLabClient,

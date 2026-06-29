@@ -1,6 +1,6 @@
 # gl-mcp
 
-GitLab MCP server. Rust, single binary, 93 tools.
+GitLab MCP server. Rust, single binary, 95 tools.
 
 ## Build & Test
 
@@ -16,7 +16,7 @@ src/
 ├── main.rs          # Entry point: stdio (default) or HTTP transport
 ├── lib.rs           # Library crate (for tests)
 ├── server.rs        # rmcp tool registration, tool_call! + write_guard! macros
-├── params.rs        # All 92 parameter structs (serde + schemars)
+├── params.rs        # All parameter structs (serde + schemars)
 ├── config.rs        # Env var config (GITLAB_URL, GITLAB_TOKEN, etc.)
 ├── client.rs        # GitLab API HTTP client (reqwest, caching, retry, pagination)
 ├── resolver.rs      # Multi-instance resolution (domain auto-detect from URLs)
@@ -25,9 +25,9 @@ src/
 ├── teams.rs         # teams.json management
 └── tools/
     ├── mod.rs           # WRITE_TOOLS list, is_tool_enabled()
-    ├── projects.rs      # list_projects, get_project, list_members, list_branches, get_user, delete_branch
+    ├── projects.rs      # list_projects, get_project, list_members, list_branches, get_user, create/delete_branch
     ├── issues.rs        # search/get/create/update_issue, add_note (group-scoped search)
-    ├── merge_requests.rs # list/get MRs, turnaround, dashboard, review depth, timeline, categories
+    ├── merge_requests.rs # list/get/create/update MRs, turnaround, dashboard, review depth, timeline, categories
     ├── pipelines.rs     # list/get pipelines, get_job_log, retry/cancel, get_mr_pipelines
     ├── commits.rs       # list_commits, diffs, file_content, user/team/group activity, compare_developers
     ├── repository.rs    # search_code, tree, languages, tags, branches, environments, deploy_frequency, project_stats
