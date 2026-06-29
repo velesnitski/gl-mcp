@@ -1319,3 +1319,33 @@ pub struct GenerateSweepReportParams {
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateMergeRequestParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Merge request IID (the ! number)")]
+    pub mr_iid: u64,
+    #[schemars(description = "New title (optional)")]
+    pub title: Option<String>,
+    #[schemars(description = "New description / body in markdown (optional)")]
+    pub description: Option<String>,
+    #[schemars(description = "Comma-separated labels to set, replacing existing (optional)")]
+    pub labels: Option<String>,
+    #[schemars(description = "New target branch (optional)")]
+    pub target_branch: Option<String>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateBranchParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "New branch name")]
+    pub branch: String,
+    #[schemars(description = "Source ref (branch/tag/SHA) to branch from (default: main)")]
+    pub ref_name: Option<String>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}

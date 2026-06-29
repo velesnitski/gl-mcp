@@ -216,6 +216,28 @@ pub async fn delete_branch(
     Ok(format!("Branch `{branch}` deleted from **{project_id}**."))
 }
 
+/// Create a branch from a source ref (default: main).
+pub async fn create_branch(
+    client: &GitLabClient,
+    project_id: &str,
+    branch: &str,
+    ref_name: &str,
+) -> Result<String> {
+    let from = if ref_name.is_empty() { "main" } else { ref_name };
+    let path = format!(
+        "/projects/{}/repository/branches?branch={}&ref={}",
+        urlencoding::encode(project_id),
+        urlencoding::encode(branch),
+        urlencoding::encode(from),
+    );
+    let b: Value = client.post(&path, &serde_json::json!({})).await?;
+    let name = b["name"].as_str().unwrap_or(branch);
+    let sha = b["commit"]["short_id"].as_str().unwrap_or("?");
+    Ok(format!(
+        "Branch `{name}` created from `{from}` at `{sha}` in **{project_id}**."
+    ))
+}
+
 /// Look up a GitLab user by username or numeric ID.
 pub async fn get_user(
     client: &GitLabClient,
