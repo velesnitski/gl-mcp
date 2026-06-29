@@ -344,21 +344,36 @@ pub async fn update_file(
 
     let from_branch = if source_branch.is_empty() { "main" } else { source_branch };
 
-    // Check if file exists (create vs update)
+    // Does the target branch already exist? If so we commit straight onto it
+    // (passing start_branch then makes GitLab reject with "branch already
+    // exists" — which is why stacking multiple files onto one branch failed).
+    let branch_exists = client
+        .get::<Value>(
+            &format!(
+                "/projects/{encoded_project}/repository/branches/{}",
+                urlencoding::encode(branch)
+            ),
+            &[],
+        )
+        .await
+        .is_ok();
+
+    // Check create vs update against the branch we're committing to — a file
+    // added earlier on this branch won't exist on `from_branch` yet.
+    let check_ref = if branch_exists { branch } else { from_branch };
     let action = {
         let check = client
             .get::<Value>(
                 &format!("/projects/{encoded_project}/repository/files/{encoded_file}"),
-                &[("ref", from_branch)],
+                &[("ref", check_ref)],
             )
             .await;
         if check.is_ok() { "update" } else { "create" }
     };
 
-    // Commit via commits API (handles branch creation automatically)
-    let payload = serde_json::json!({
+    // Commit via the commits API. start_branch only when creating the branch.
+    let mut payload = serde_json::json!({
         "branch": branch,
-        "start_branch": from_branch,
         "commit_message": commit_message,
         "actions": [{
             "action": action,
@@ -366,6 +381,9 @@ pub async fn update_file(
             "content": content,
         }]
     });
+    if !branch_exists {
+        payload["start_branch"] = serde_json::json!(from_branch);
+    }
 
     let result: Value = client
         .post(&format!("/projects/{encoded_project}/repository/commits"), &payload)
