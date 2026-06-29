@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-06-29
+
+### Added
+- `update_merge_request` — edit an open MR's title, description, labels, or target branch (`PUT /merge_requests/:iid`). Only the fields you pass are changed; a no-op (all fields empty) is refused rather than issuing an empty update. Closes the MR lifecycle gap: create → **update** → merge/close.
+- `create_branch` — create a branch from any source ref (branch/tag/SHA, default `main`). Makes branch lifecycle symmetric with `delete_branch`, and pairs with the now-stackable `update_file` for scripted multi-file branches.
+
+Both are write-guarded (blocked in read-only mode). See ADR 020.
+
+95 tools total.
+
 ## [0.28.0] - 2026-06-29
 
 ### Fixed
