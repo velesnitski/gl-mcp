@@ -75,6 +75,34 @@ impl GitLabClient {
         }
     }
 
+    /// GET request returning the raw response body as text (no JSON parsing).
+    /// Use for endpoints that return plain text rather than JSON — e.g. a CI
+    /// job trace/log. Retries on HTTP 429.
+    pub async fn get_text(&self, path: &str, params: &[(&str, &str)]) -> Result<String> {
+        let url = format!("{}{}", self.base_url, path);
+        let mut attempt = 0u32;
+        loop {
+            let resp = self.http.get(&url).query(params).send().await?;
+            if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && attempt < MAX_RETRIES {
+                let retry_after = Self::parse_retry_after(&resp);
+                attempt += 1;
+                warn!(
+                    attempt,
+                    retry_after_secs = retry_after,
+                    path,
+                    "Rate limited (429), retrying"
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(retry_after)).await;
+                continue;
+            }
+            if resp.status().is_success() {
+                return Ok(resp.text().await?);
+            } else {
+                return Err(self.extract_error(resp).await);
+            }
+        }
+    }
+
     /// GET request with TTL-based caching. Use for frequently repeated lookups.
     pub async fn get_cached<T: DeserializeOwned>(
         &self,
