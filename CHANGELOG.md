@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `update_file` can now stack multiple files onto one feature branch. It only sends `start_branch` when creating the branch (GitLab rejected a second commit to an existing branch with "branch already exists"), and checks create-vs-update against the target branch rather than the source — so a README rewrite plus several ADR files land on one branch for a single MR.
+
 ## [0.27.0] - 2026-06-26
 
 ### Added
