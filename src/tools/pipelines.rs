@@ -169,14 +169,18 @@ pub async fn get_job_log(
     let stage = job["stage"].as_str().unwrap_or("?");
     let duration = job["duration"].as_f64().unwrap_or(0.0);
 
-    // Get log text (plain text, not JSON)
-    let _log_url = format!("{}/api/v4/projects/{encoded}/jobs/{job_id}/trace", "");
-    // Use get_json which returns Value, but trace returns plain text
-    // We need raw text — use the client's get method differently
+    // The trace endpoint returns plain text, not JSON — use get_text (get::<String>
+    // would try to JSON-deserialize the trace and fail with a parse error).
     let log_text: String = client
-        .get(&format!("/projects/{encoded}/jobs/{job_id}/trace"), &[])
+        .get_text(&format!("/projects/{encoded}/jobs/{job_id}/trace"), &[])
         .await
         ?;
+
+    if log_text.trim().is_empty() {
+        return Ok(format!(
+            "## Job #{job_id}: {name}\n**Stage:** {stage} | **Status:** {status} | **Duration:** {duration:.0}s\n\n*(log is empty — the job may be pending/created, or its trace was erased)*"
+        ));
+    }
 
     // Tail: take last N lines
     let lines: Vec<&str> = log_text.lines().collect();
