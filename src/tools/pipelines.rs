@@ -126,6 +126,7 @@ pub async fn get_pipeline(
         for (stage, stage_jobs) in &stages {
             parts.push(format!("\n### {stage}"));
             for job in stage_jobs {
+                let job_id = job["id"].as_u64().unwrap_or(0);
                 let name = job["name"].as_str().unwrap_or("?");
                 let status = job["status"].as_str().unwrap_or("?");
                 let duration = job["duration"].as_f64().unwrap_or(0.0);
@@ -141,12 +142,50 @@ pub async fn get_pipeline(
                     _ => "❓",
                 };
 
-                parts.push(format!("- {icon} **{name}** [{status}] {duration:.0}s"));
+                // Include the numeric job id so get_job_log can be called directly.
+                let mut line = format!("- {icon} **{name}** [{status}] (job {job_id}) {duration:.0}s");
+                if status == "failed" {
+                    if let Some(reason) = job["failure_reason"].as_str() {
+                        if !reason.is_empty() {
+                            line.push_str(&format!(" — {reason}"));
+                        }
+                    }
+                }
+                parts.push(line);
             }
         }
     }
 
     Ok(parts.join("\n"))
+}
+
+/// Remove ANSI escape sequences and carriage returns that GitLab embeds in CI
+/// job traces, so the log is readable (no `\x1b[0K`/`\x1b[32;1m` noise) and
+/// fewer tokens are spent on control codes.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\x1b' => {
+                if chars.peek() == Some(&'[') {
+                    chars.next(); // consume '['
+                    // CSI: param/intermediate bytes, then a final byte in @..~
+                    while let Some(&nc) = chars.peek() {
+                        chars.next();
+                        if ('\u{40}'..='\u{7e}').contains(&nc) {
+                            break;
+                        }
+                    }
+                } else {
+                    chars.next(); // drop the byte following a lone ESC
+                }
+            }
+            '\r' => {} // drop carriage returns (progress-line overwrites)
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// Get CI job log (trace).
@@ -168,17 +207,25 @@ pub async fn get_job_log(
     let status = job["status"].as_str().unwrap_or("?");
     let stage = job["stage"].as_str().unwrap_or("?");
     let duration = job["duration"].as_f64().unwrap_or(0.0);
+    let failure_reason = job["failure_reason"].as_str().unwrap_or("");
+    let meta = if status == "failed" && !failure_reason.is_empty() {
+        format!("**Stage:** {stage} | **Status:** {status} ({failure_reason}) | **Duration:** {duration:.0}s")
+    } else {
+        format!("**Stage:** {stage} | **Status:** {status} | **Duration:** {duration:.0}s")
+    };
 
     // The trace endpoint returns plain text, not JSON — use get_text (get::<String>
     // would try to JSON-deserialize the trace and fail with a parse error).
-    let log_text: String = client
-        .get_text(&format!("/projects/{encoded}/jobs/{job_id}/trace"), &[])
-        .await
-        ?;
+    // Strip the ANSI colour/erase codes GitLab embeds before processing.
+    let log_text = strip_ansi(
+        &client
+            .get_text(&format!("/projects/{encoded}/jobs/{job_id}/trace"), &[])
+            .await?,
+    );
 
     if log_text.trim().is_empty() {
         return Ok(format!(
-            "## Job #{job_id}: {name}\n**Stage:** {stage} | **Status:** {status} | **Duration:** {duration:.0}s\n\n*(log is empty — the job may be pending/created, or its trace was erased)*"
+            "## Job #{job_id}: {name}\n{meta}\n\n*(log is empty — the job may be pending/created, or its trace was erased)*"
         ));
     }
 
@@ -189,7 +236,7 @@ pub async fn get_job_log(
 
     let mut parts = vec![
         format!("## Job #{job_id}: {name}"),
-        format!("**Stage:** {stage} | **Status:** {status} | **Duration:** {duration:.0}s"),
+        meta,
     ];
 
     if start > 0 {
@@ -430,4 +477,23 @@ pub async fn get_ci_variables(
     }
 
     Ok(lines.join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_ansi;
+
+    #[test]
+    fn strips_csi_color_and_erase_codes() {
+        // Real GitLab-trace shape: color codes + erase-line + carriage return.
+        let raw = "\u{1b}[0K\u{1b}[32;1m$ docker login\u{1b}[0;m\r\nError: unauthorized";
+        assert_eq!(strip_ansi(raw), "$ docker login\nError: unauthorized");
+    }
+
+    #[test]
+    fn leaves_plain_text_untouched() {
+        assert_eq!(strip_ansi("plain log line"), "plain log line");
+        // A lone ESC drops only the following byte, not real content.
+        assert_eq!(strip_ansi("a\u{1b}Xb"), "ab");
+    }
 }
