@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-06-30
+
+### Added
+- `get_pipeline` now shows each job's **numeric id** (`(job <id>)`) and the GitLab **`failure_reason`** for failed jobs, so you can go straight from a pipeline to `get_job_log` without scraping the id out-of-band.
+
+### Changed
+- `get_job_log` strips **ANSI escape codes** and carriage returns from the trace before tailing it — readable, token-efficient logs instead of `\x1b[0K\x1b[32;1m…` noise. The job header also surfaces `failure_reason`.
+
+See ADR 022. 95 tools total.
+
 ## [0.30.0] - 2026-06-29
 
 ### Fixed
