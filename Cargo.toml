@@ -1,6 +1,6 @@
 [package]
 name = "gl-mcp"
-version = "0.30.0"
+version = "0.31.0"
 edition = "2024"
 description = "GitLab MCP server for Claude Code — 95 tools for projects, issues, MRs, CI/CD, code review, team analytics, and spec-drift auditing"
 license = "MIT"
