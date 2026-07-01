@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-07-01
+
+### Added
+- `add_member` — add a member to a project (`POST /projects/:id/members`). `user` accepts a **username** (leading `@` optional) or numeric id — resolved automatically, so no user-id lookup — and `access_level` accepts a **role name** (guest/reporter/developer/maintainer/owner) or number. Optional `expires_at` (YYYY-MM-DD). Write-guarded.
+
+See ADR 024. 98 tools total.
+
 ## [0.32.0] - 2026-07-01
 
 ### Added

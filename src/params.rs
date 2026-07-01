@@ -1072,6 +1072,20 @@ pub struct DeleteProjectParams {
     pub instance: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AddMemberParams {
+    #[schemars(description = "Project ID or URL-encoded path (e.g. 'group/project')")]
+    pub project_id: String,
+    #[schemars(description = "User to add: a username (leading '@' optional) or a numeric user id")]
+    pub user: String,
+    #[schemars(description = "Role: guest, reporter, developer, maintainer, or owner (or the numeric level 10/20/30/40/50)")]
+    pub access_level: String,
+    #[schemars(description = "Optional membership expiry date, YYYY-MM-DD")]
+    pub expires_at: Option<String>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
 // ─── Deploy Tokens ───
 
 #[derive(Debug, Deserialize, JsonSchema)]
