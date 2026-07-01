@@ -787,6 +787,39 @@ pub async fn add_member(
     Ok(out)
 }
 
+/// Add a member to a group (POST /groups/:id/members). Unlike `add_member`, this
+/// grants access to **all projects in the group**. `group_id` is a numeric id or
+/// a full path (e.g. `my-org/devops`); `user`/`access_level`/`expires_at` behave
+/// as in `add_member`.
+pub async fn add_group_member(
+    client: &GitLabClient,
+    group_id: &str,
+    user: &str,
+    access_level: &str,
+    expires_at: &str,
+) -> Result<String> {
+    let (user_id, username) = resolve_user_id(client, user).await?;
+    let level = parse_access_level(access_level)?;
+    let mut body = serde_json::json!({ "user_id": user_id, "access_level": level });
+    if !expires_at.is_empty() {
+        body["expires_at"] = serde_json::json!(expires_at);
+    }
+    let path = format!("/groups/{}/members", urlencoding::encode(group_id));
+    let m: Value = client.post(&path, &body).await?;
+    let role = m["access_level"]
+        .as_u64()
+        .map(access_level_name)
+        .unwrap_or("?");
+    let expiry = m["expires_at"].as_str().filter(|s| !s.is_empty());
+    let mut out = format!(
+        "Added **@{username}** (id {user_id}) to group **{group_id}** as **{role}** — grants access to all projects in the group."
+    );
+    if let Some(e) = expiry {
+        out.push_str(&format!(" Expires {e}."));
+    }
+    Ok(out)
+}
+
 /// Create a new deploy token for a project.
 pub async fn create_deploy_token(
     client: &GitLabClient,

@@ -36,6 +36,7 @@ pub const WRITE_TOOLS: &[&str] = &[
     "transfer_project",
     "delete_project",
     "add_member",
+    "add_group_member",
     "set_ci_variable",
     "update_ci_variable",
     "delete_ci_variable",
