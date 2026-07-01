@@ -1,6 +1,6 @@
 # gl-mcp
 
-GitLab MCP server. Rust, single binary, 95 tools.
+GitLab MCP server. Rust, single binary, 97 tools.
 
 ## Build & Test
 
@@ -25,7 +25,7 @@ src/
 ├── teams.rs         # teams.json management
 └── tools/
     ├── mod.rs           # WRITE_TOOLS list, is_tool_enabled()
-    ├── projects.rs      # list_projects, get_project, list_members, list_branches, get_user, create/delete_branch
+    ├── projects.rs      # list_projects, get_project, create/transfer/delete_project, list_members, list_branches, get_user, create/delete_branch
     ├── issues.rs        # search/get/create/update_issue, add_note (group-scoped search)
     ├── merge_requests.rs # list/get/create/update MRs, turnaround, dashboard, review depth, timeline, categories
     ├── pipelines.rs     # list/get pipelines, get_job_log, retry/cancel, get_mr_pipelines
