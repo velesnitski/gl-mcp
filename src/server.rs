@@ -261,6 +261,14 @@ impl GlMcpServer {
         )
     }
 
+    #[tool(description = "Add a member to a GROUP (grants access to all projects in the group). `group_id` is a numeric id or full path (e.g. 'my-org/devops'); `user`/`access_level`/`expires_at` as in add_member.")]
+    async fn add_group_member(&self, Parameters(p): Parameters<AddGroupMemberParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "add_group_member");
+        simple_tool!(self, p, "add_group_member", "", |client|
+            tools::projects::add_group_member(client, &p.group_id, &p.user, &p.access_level, p.expires_at.as_deref().unwrap_or("")).await
+        )
+    }
+
     #[tool(description = "Create a deploy token for a project. Returns the token value once at creation — save it immediately. Scopes: read_repository, read_registry, write_registry, read_package_registry, write_package_registry.")]
     async fn create_deploy_token(&self, Parameters(p): Parameters<CreateDeployTokenParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "create_deploy_token");
