@@ -1086,6 +1086,20 @@ pub struct AddMemberParams {
     pub instance: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AddGroupMemberParams {
+    #[schemars(description = "Group ID or full path (e.g. 'my-org/devops'). Grants access to all projects in the group.")]
+    pub group_id: String,
+    #[schemars(description = "User to add: a username (leading '@' optional) or a numeric user id")]
+    pub user: String,
+    #[schemars(description = "Role: guest, reporter, developer, maintainer, or owner (or the numeric level 10/20/30/40/50)")]
+    pub access_level: String,
+    #[schemars(description = "Optional membership expiry date, YYYY-MM-DD")]
+    pub expires_at: Option<String>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
 // ─── Deploy Tokens ───
 
 #[derive(Debug, Deserialize, JsonSchema)]

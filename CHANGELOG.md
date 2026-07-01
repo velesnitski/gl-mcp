@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-07-01
+
+### Added
+- `add_group_member` — add a member to a **group** (`POST /groups/:id/members`), granting access to **all projects in the group** (vs `add_member` which is project-scoped). `group_id` accepts a full path (e.g. `my-org/devops`) or numeric id; `user` (username or id) and `access_level` (role name or number) are resolved the same way as `add_member`, plus optional `expires_at`. Write-guarded.
+
+See ADR 025. 99 tools total.
+
 ## [0.33.0] - 2026-07-01
 
 ### Added
