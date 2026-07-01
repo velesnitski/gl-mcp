@@ -1038,6 +1038,8 @@ pub struct CreateProjectParams {
     #[schemars(description = "Namespace (group) ID for project placement (numeric)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub namespace_id: Option<u32>,
+    #[schemars(description = "Namespace as a full group path (e.g. 'my-org/devops') or numeric id — resolved and validated. Preferred over namespace_id; avoids having to look up the subgroup's numeric id.")]
+    pub namespace: Option<String>,
     #[schemars(description = "Visibility: 'private', 'internal', or 'public' (default: 'private')")]
     pub visibility: Option<String>,
     #[schemars(description = "Default branch name (default: 'main')")]
@@ -1046,6 +1048,26 @@ pub struct CreateProjectParams {
     pub description: Option<String>,
     #[schemars(description = "Initialize repository with a README (default: true)")]
     pub initialize_with_readme: Option<bool>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TransferProjectParams {
+    #[schemars(description = "Project ID or URL-encoded path (e.g. 'group/project')")]
+    pub project_id: String,
+    #[schemars(description = "Target namespace: a full group path like 'my-org/devops' or a numeric group id. Resolved and validated before the move.")]
+    pub namespace: String,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DeleteProjectParams {
+    #[schemars(description = "Project ID or URL-encoded path (e.g. 'group/project')")]
+    pub project_id: String,
+    #[schemars(description = "Safety confirmation: must EXACTLY equal the project's full path (path_with_namespace), e.g. 'my-org/my-project'. Deletion is refused if it does not match.")]
+    pub confirm_full_path: String,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }

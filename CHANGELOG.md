@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-07-01
+
+### Added
+- `transfer_project` — move a project to a different namespace/group (`PUT /projects/:id/transfer`). `namespace` accepts a **full group path** (e.g. `my-org/devops`) or a numeric id; it's resolved and validated before the move, so you never need to look up a subgroup's numeric id. Non-destructive.
+- `delete_project` — delete a project (`DELETE /projects/:id`), **guarded** by a required `confirm_full_path` that must exactly match the project's `path_with_namespace`, so a mistyped id can't delete the wrong project.
+- `create_project` now accepts a `namespace` param (full path or id), resolved/validated — preventing the "landed one namespace too high" mistake that a bare numeric `namespace_id` invites. `namespace_id` is still honored for back-compat.
+
+Both new tools are write-guarded. See ADR 023. 97 tools total.
+
 ## [0.31.0] - 2026-06-30
 
 ### Added

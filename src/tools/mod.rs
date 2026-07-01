@@ -33,6 +33,8 @@ pub const WRITE_TOOLS: &[&str] = &[
     "update_branch_protection",
     "revert_commit",
     "create_project",
+    "transfer_project",
+    "delete_project",
     "set_ci_variable",
     "update_ci_variable",
     "delete_ci_variable",
