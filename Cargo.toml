@@ -1,8 +1,8 @@
 [package]
 name = "gl-mcp"
-version = "0.32.0"
+version = "0.33.0"
 edition = "2024"
-description = "GitLab MCP server for Claude Code — 97 tools for projects, issues, MRs, CI/CD, code review, team analytics, and spec-drift auditing"
+description = "GitLab MCP server for Claude Code — 98 tools for projects, issues, MRs, CI/CD, code review, team analytics, and spec-drift auditing"
 license = "MIT"
 authors = ["Alex Velesnitski <velesnitski@gmail.com>"]
 repository = "https://github.com/velesnitski/gl-mcp"
