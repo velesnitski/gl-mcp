@@ -591,6 +591,7 @@ pub async fn create_project(
     name: &str,
     path: &str,
     namespace_id: Option<u32>,
+    namespace: &str,
     visibility: &str,
     default_branch: &str,
     description: &str,
@@ -605,7 +606,13 @@ pub async fn create_project(
         "default_branch": default_branch,
         "initialize_with_readme": initialize_with_readme,
     });
-    if let Some(ns) = namespace_id {
+    // Namespace: a full group path or numeric id via `namespace` takes precedence
+    // (resolved + validated so mistakes fail fast); otherwise fall back to the
+    // numeric namespace_id.
+    if !namespace.is_empty() {
+        let (ns_id, _) = resolve_namespace(client, namespace).await?;
+        body["namespace_id"] = serde_json::json!(ns_id);
+    } else if let Some(ns) = namespace_id {
         body["namespace_id"] = serde_json::json!(ns);
     }
     if !description.is_empty() {
@@ -631,6 +638,70 @@ pub async fn create_project(
     ];
 
     Ok(lines.join("\n"))
+}
+
+/// Resolve a namespace given as a numeric group ID or a full group path, returning
+/// `(numeric id, full_path)`. Validates the group is accessible. `GET /groups/:id`
+/// accepts both a numeric id and a URL-encoded path, so one call handles both.
+async fn resolve_namespace(client: &GitLabClient, ns: &str) -> Result<(u64, String)> {
+    let g: Value = client
+        .get(&format!("/groups/{}", urlencoding::encode(ns)), &[])
+        .await?;
+    let id = g["id"].as_u64().ok_or_else(|| {
+        crate::error::Error::Other(format!("Group '{ns}' not found or not accessible"))
+    })?;
+    let full = g["full_path"].as_str().unwrap_or(ns).to_string();
+    Ok((id, full))
+}
+
+/// Transfer a project to a different namespace/group (PUT /projects/:id/transfer).
+/// `namespace` is a numeric group id or a full path like `group/subgroup`. The
+/// target is resolved and validated before the move, which is non-destructive.
+pub async fn transfer_project(
+    client: &GitLabClient,
+    project_id: &str,
+    namespace: &str,
+) -> Result<String> {
+    let (ns_id, ns_full) = resolve_namespace(client, namespace).await?;
+    let path = format!("/projects/{}/transfer", urlencoding::encode(project_id));
+    let proj: Value = client
+        .put(&path, &serde_json::json!({ "namespace": ns_id }))
+        .await?;
+    let full = proj["path_with_namespace"].as_str().unwrap_or("?");
+    let web_url = proj["web_url"].as_str().unwrap_or("");
+    let mut out = format!("Transferred **{project_id}** into `{ns_full}` → new path `{full}`");
+    if !web_url.is_empty() {
+        out.push('\n');
+        out.push_str(web_url);
+    }
+    Ok(out)
+}
+
+/// Delete a project (DELETE /projects/:id) — irreversible. Guarded:
+/// `confirm_full_path` must exactly equal the project's `path_with_namespace`,
+/// so a mistyped id cannot delete the wrong project.
+pub async fn delete_project(
+    client: &GitLabClient,
+    project_id: &str,
+    confirm_full_path: &str,
+) -> Result<String> {
+    let proj: Value = client
+        .get(&format!("/projects/{}", urlencoding::encode(project_id)), &[])
+        .await?;
+    let actual = proj["path_with_namespace"].as_str().unwrap_or("");
+    if confirm_full_path.trim() != actual {
+        return Err(crate::error::Error::Other(format!(
+            "Refusing to delete: confirm_full_path ('{}') does not match the project's full path ('{}'). Pass the exact path_with_namespace to confirm.",
+            confirm_full_path.trim(),
+            actual
+        )));
+    }
+    client
+        .delete(&format!("/projects/{}", urlencoding::encode(project_id)))
+        .await?;
+    Ok(format!(
+        "Deleted **{actual}**. GitLab may retain it for a deletion-protection window (marked for deletion) before permanent removal."
+    ))
 }
 
 /// Create a new deploy token for a project.

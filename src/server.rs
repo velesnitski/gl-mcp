@@ -228,11 +228,28 @@ impl GlMcpServer {
                 &p.name,
                 p.path.as_deref().unwrap_or(""),
                 p.namespace_id,
+                p.namespace.as_deref().unwrap_or(""),
                 p.visibility.as_deref().unwrap_or("private"),
                 p.default_branch.as_deref().unwrap_or("main"),
                 p.description.as_deref().unwrap_or(""),
                 p.initialize_with_readme.unwrap_or(true),
             ).await
+        )
+    }
+
+    #[tool(description = "Transfer a project to a different namespace/group. `namespace` accepts a full group path like 'my-org/devops' or a numeric group id (resolved & validated). Non-destructive move — no data loss.")]
+    async fn transfer_project(&self, Parameters(p): Parameters<TransferProjectParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "transfer_project");
+        simple_tool!(self, p, "transfer_project", &p.project_id, |client|
+            tools::projects::transfer_project(client, &p.project_id, &p.namespace).await
+        )
+    }
+
+    #[tool(description = "Delete a project (IRREVERSIBLE). Requires confirm_full_path to exactly match the project's path_with_namespace as a safety check against deleting the wrong project.")]
+    async fn delete_project(&self, Parameters(p): Parameters<DeleteProjectParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "delete_project");
+        simple_tool!(self, p, "delete_project", &p.project_id, |client|
+            tools::projects::delete_project(client, &p.project_id, &p.confirm_full_path).await
         )
     }
 
