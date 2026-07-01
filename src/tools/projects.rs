@@ -704,6 +704,89 @@ pub async fn delete_project(
     ))
 }
 
+/// Map a friendly access-level name (or numeric string) to GitLab's numeric level.
+fn parse_access_level(level: &str) -> Result<u32> {
+    Ok(match level.trim().to_lowercase().as_str() {
+        "guest" | "10" => 10,
+        "planner" | "15" => 15,
+        "reporter" | "20" => 20,
+        "developer" | "dev" | "30" => 30,
+        "maintainer" | "40" => 40,
+        "owner" | "50" => 50,
+        other => {
+            return Err(crate::error::Error::Other(format!(
+                "Unknown access level '{other}'. Use one of: guest, reporter, developer, maintainer, owner (or 10/20/30/40/50)."
+            )))
+        }
+    })
+}
+
+/// Human-readable name for a GitLab access level number.
+fn access_level_name(n: u64) -> &'static str {
+    match n {
+        10 => "Guest",
+        15 => "Planner",
+        20 => "Reporter",
+        30 => "Developer",
+        40 => "Maintainer",
+        50 => "Owner",
+        _ => "?",
+    }
+}
+
+/// Resolve a user given as a numeric id or a username (leading `@` optional),
+/// returning `(user id, username)`.
+async fn resolve_user_id(client: &GitLabClient, user: &str) -> Result<(u64, String)> {
+    let u = user.trim().trim_start_matches('@');
+    if !u.is_empty() && u.chars().all(|c| c.is_ascii_digit()) {
+        let usr: Value = client.get(&format!("/users/{u}"), &[]).await?;
+        let id = usr["id"].as_u64().unwrap_or_else(|| u.parse().unwrap_or(0));
+        let name = usr["username"].as_str().unwrap_or(u).to_string();
+        return Ok((id, name));
+    }
+    let users: Vec<Value> = client.get("/users", &[("username", u)]).await?;
+    let usr = users
+        .into_iter()
+        .next()
+        .ok_or_else(|| crate::error::Error::Other(format!("User '@{u}' not found")))?;
+    let id = usr["id"]
+        .as_u64()
+        .ok_or_else(|| crate::error::Error::Other(format!("User '@{u}' has no id")))?;
+    let name = usr["username"].as_str().unwrap_or(u).to_string();
+    Ok((id, name))
+}
+
+/// Add a member to a project (POST /projects/:id/members). `user` is a username
+/// (with or without `@`) or a numeric id; `access_level` is a role name
+/// (guest/reporter/developer/maintainer/owner) or number. Optional `expires_at`
+/// (YYYY-MM-DD) sets a membership expiry.
+pub async fn add_member(
+    client: &GitLabClient,
+    project_id: &str,
+    user: &str,
+    access_level: &str,
+    expires_at: &str,
+) -> Result<String> {
+    let (user_id, username) = resolve_user_id(client, user).await?;
+    let level = parse_access_level(access_level)?;
+    let mut body = serde_json::json!({ "user_id": user_id, "access_level": level });
+    if !expires_at.is_empty() {
+        body["expires_at"] = serde_json::json!(expires_at);
+    }
+    let path = format!("/projects/{}/members", urlencoding::encode(project_id));
+    let m: Value = client.post(&path, &body).await?;
+    let role = m["access_level"]
+        .as_u64()
+        .map(access_level_name)
+        .unwrap_or("?");
+    let expiry = m["expires_at"].as_str().filter(|s| !s.is_empty());
+    let mut out = format!("Added **@{username}** (id {user_id}) to **{project_id}** as **{role}**.");
+    if let Some(e) = expiry {
+        out.push_str(&format!(" Expires {e}."));
+    }
+    Ok(out)
+}
+
 /// Create a new deploy token for a project.
 pub async fn create_deploy_token(
     client: &GitLabClient,

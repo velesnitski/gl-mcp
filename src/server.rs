@@ -253,6 +253,14 @@ impl GlMcpServer {
         )
     }
 
+    #[tool(description = "Add a member to a project. `user` is a username (leading '@' optional) or numeric id; `access_level` is a role name (guest/reporter/developer/maintainer/owner) or number. Optional expires_at (YYYY-MM-DD).")]
+    async fn add_member(&self, Parameters(p): Parameters<AddMemberParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "add_member");
+        simple_tool!(self, p, "add_member", &p.project_id, |client|
+            tools::projects::add_member(client, &p.project_id, &p.user, &p.access_level, p.expires_at.as_deref().unwrap_or("")).await
+        )
+    }
+
     #[tool(description = "Create a deploy token for a project. Returns the token value once at creation — save it immediately. Scopes: read_repository, read_registry, write_registry, read_package_registry, write_package_registry.")]
     async fn create_deploy_token(&self, Parameters(p): Parameters<CreateDeployTokenParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "create_deploy_token");
