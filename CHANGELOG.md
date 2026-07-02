@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.34.1] - 2026-07-02
+
+### Fixed
+- Expected user-input errors no longer create Sentry issues (false alerts). The Sentry filter matched **exact** error strings, so variably-worded validation messages slipped through — e.g. `add_member`'s "User '@x' not found" didn't match the literal `"User not found"` in the allowlist, and lowercase "has no id" didn't match "User has no ID". `is_actionable_error` now matches user-error **phrases case-insensitively** (`not found`, `not accessible`, `unknown access level`, `has no id`, `refusing to delete`, `nothing to update`, …), so validation errors from the member/project lifecycle tools stay out of Sentry while real errors (5xx, HTTP, JSON) still page. See ADR 026.
+
 ## [0.34.0] - 2026-07-01
 
 ### Added
