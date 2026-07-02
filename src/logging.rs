@@ -176,26 +176,32 @@ fn add_sentry_breadcrumb(_tool: &str, _duration_ms: u128, _status: &str, _error:
 /// Filters out expected user-side errors (404, 401, 403, validation errors, not-found-by-name).
 #[cfg(feature = "sentry")]
 fn is_actionable_error(err: &str) -> bool {
-    // GitLab API client/auth errors — user issue, not code bug
-    let user_errors = [
-        "404 Not Found",
-        "404 Project Not Found",
-        "404 User Not Found",
-        "401 Unauthorized",
-        "403 Forbidden",
-        "Not found:",
-        "User not found",
-        "Unknown instance:",
-        "User has no ID",
-        "No commits in MR",
-        "No changes found",
-        "No activity",
+    let e = err.to_lowercase();
+
+    // Expected user-side / validation errors — never alert on these. Matched
+    // case-insensitively and by *phrase* (not exact string), so variably-worded
+    // messages like "User '@x' not found" or lowercase "has no id" are covered.
+    const USER_ERROR_MARKERS: &[&str] = &[
+        "not found",          // "User '@x' not found", "Not found: ...", 404
+        "not accessible",     // "Group '...' not found or not accessible"
+        "unauthorized",       // 401
+        "forbidden",          // 403
+        "unknown instance",
+        "unknown access level",
+        "has no id",
+        "refusing to delete", // delete_project confirm-path mismatch
+        "nothing to update",  // update_merge_request no-op
+        "no commits",
+        "no changes",
+        "no activity",
     ];
-    if user_errors.iter().any(|p| err.contains(p)) {
+    if USER_ERROR_MARKERS.iter().any(|p| e.contains(p)) {
         return false;
     }
-    // 4xx codes generally are user errors except 408 (timeout) and 429 (rate limit — we retry)
-    if err.contains("GitLab API error (4") && !err.contains("(408") && !err.contains("(429") {
+
+    // 4xx codes generally are user errors, except 408 (timeout) and 429
+    // (rate limit — we retry).
+    if e.contains("gitlab api error (4") && !e.contains("(408") && !e.contains("(429") {
         return false;
     }
     true
@@ -308,6 +314,14 @@ mod tests {
         assert!(!is_actionable_error("GitLab API error (403 Forbidden)"));
         assert!(!is_actionable_error("Not found: User @foo"));
         assert!(!is_actionable_error("Unknown instance: production"));
+        // Variably-worded validation errors from the member/project tools —
+        // these previously leaked to Sentry because the filter matched exact strings.
+        assert!(!is_actionable_error("User '@ghost' not found"));
+        assert!(!is_actionable_error("User '@foo' has no id"));
+        assert!(!is_actionable_error("Group 'my-org/devops' not found or not accessible"));
+        assert!(!is_actionable_error("Unknown access level 'boss'. Use one of: guest, ..."));
+        assert!(!is_actionable_error("Refusing to delete: confirm_full_path ('a') does not match ('b')."));
+        assert!(!is_actionable_error("Nothing to update — set at least one of title, description..."));
 
         // Real errors — should be captured
         assert!(is_actionable_error("GitLab API error (500 Internal Server Error)"));
