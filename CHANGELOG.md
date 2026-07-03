@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-07-03
+
+### Changed
+- `get_ai_adoption` no longer undercounts real usage in the per-team roll-up. The team table now has an **Active** column (config markers **OR** any usage evidence — AI-trailed commits on any branch incl. squash-hidden feature branches, `.tasks/` commits, or AI-marked MRs) next to the marker-based **Configured** column. Previously a team could read "0/6 adopting" while a repo had 100% AI-trailed commits, because usage-without-config landed only in a side "Invisible usage" section and was excluded from the headline. The `summary_only` line is now `active/repos · configured (best L…)`. "Best level" stays marker-based (config quality is a separate axis). See ADR 027.
+
 ## [0.34.1] - 2026-07-02
 
 ### Fixed
