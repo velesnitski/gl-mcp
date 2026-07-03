@@ -114,6 +114,20 @@ impl RepoMarkers {
             || self.hooks
             || self.tasks_dir
     }
+
+    /// Any usage evidence, regardless of the 10% threshold used for the L3
+    /// "Scaling" level: an AI-trailed commit on ANY branch (so squash-hidden
+    /// feature-branch commits count), `.tasks/` activity, or an AI-marked MR.
+    pub(crate) fn has_usage_evidence(&self) -> bool {
+        self.ai_commits > 0 || self.tasks_recent_commits > 0 || self.ai_mr_count > 0
+    }
+
+    /// Active for the adoption roll-up: configured OR has usage evidence. Config
+    /// presence and actual usage are separate axes; a repo is active if either
+    /// holds, so a repo with AI-trailed commits but no CLAUDE.md still counts.
+    pub(crate) fn is_active(&self) -> bool {
+        self.has_any_marker() || self.has_usage_evidence()
+    }
 }
 
 /// Active usage = measurable AI commit share OR recent commits touching `.tasks/`
@@ -878,6 +892,8 @@ pub async fn get_ai_adoption(
     struct TeamStats {
         repos: usize,
         with_markers: usize,
+        /// Repos with config markers OR any usage evidence (the real adoption count).
+        active: usize,
         best_level: u8,
         adopting_ai_pcts: Vec<f64>,
         dormant: usize,
@@ -889,6 +905,7 @@ pub async fn get_ai_adoption(
         let stats = teams.entry(r.team.clone()).or_insert(TeamStats {
             repos: 0,
             with_markers: 0,
+            active: 0,
             best_level: 0,
             adopting_ai_pcts: Vec::new(),
             dormant: 0,
@@ -897,6 +914,11 @@ pub async fn get_ai_adoption(
         if level >= 1 {
             stats.with_markers += 1;
             stats.adopting_ai_pcts.push(r.markers.ai_pct());
+        }
+        // Active counts markers OR usage evidence — so usage-without-config
+        // (incl. squash-hidden feature-branch trailers) is no longer dropped.
+        if r.markers.is_active() {
+            stats.active += 1;
         }
         if level > stats.best_level {
             stats.best_level = level;
@@ -908,7 +930,7 @@ pub async fn get_ai_adoption(
         let team_parts: Vec<String> = teams
             .iter()
             .map(|(name, s)| {
-                format!("{name}: {}/{} adopting (best L{})", s.with_markers, s.repos, s.best_level)
+                format!("{name}: {}/{} active · {} configured (best L{})", s.active, s.repos, s.with_markers, s.best_level)
             })
             .collect();
         let in_flight_part = if in_flight.is_empty() {
@@ -930,6 +952,7 @@ pub async fn get_ai_adoption(
             .or_insert(TeamStats {
                 repos: 0,
                 with_markers: 0,
+                active: 0,
                 best_level: 0,
                 adopting_ai_pcts: Vec::new(),
                 dormant: 0,
@@ -944,8 +967,8 @@ pub async fn get_ai_adoption(
         String::new(),
         "### By Team".to_string(),
         String::new(),
-        "| Team | Repos | With markers | Best level | AI commits % (avg of adopting) | Dormant |".to_string(),
-        "|------|-------|--------------|-----------|--------------------------------|---------|".to_string(),
+        "| Team | Repos | Active | Configured | Best level | AI commits % (avg of configured) | Dormant |".to_string(),
+        "|------|-------|--------|-----------|-----------|----------------------------------|---------|".to_string(),
     ];
 
     for (name, s) in &teams {
@@ -958,8 +981,8 @@ pub async fn get_ai_adoption(
             )
         };
         out.push(format!(
-            "| {name} | {} | {} | L{} | {avg_pct} | {} |",
-            s.repos, s.with_markers, s.best_level, s.dormant
+            "| {name} | {} | {} | {} | L{} | {avg_pct} | {} |",
+            s.repos, s.active, s.with_markers, s.best_level, s.dormant
         ));
     }
 
@@ -1947,6 +1970,37 @@ mod tests {
         let m = empty();
         assert_eq!(adoption_level(&m), 0);
         assert!(quality_flags(&m).is_empty());
+    }
+
+    #[test]
+    fn test_active_counts_usage_without_config() {
+        // Config-only repo: a marker → configured (level ≥ 1) and active.
+        let mut cfg = empty();
+        cfg.claude_md = true;
+        assert!(adoption_level(&cfg) >= 1);
+        assert!(cfg.is_active());
+
+        // Usage-only: AI-trailed commits, no config markers. Config axis stays L0,
+        // but it IS active — the case the roll-up previously dropped.
+        let mut usage = empty();
+        usage.ai_commits = 5;
+        usage.total_commits = 5;
+        assert_eq!(adoption_level(&usage), 0);
+        assert!(usage.has_usage_evidence());
+        assert!(usage.is_active());
+
+        // Squash-hidden: trailers only on a feature branch (0 on default) still count.
+        let mut squash = empty();
+        squash.ai_commits = 2;
+        squash.ai_commits_default = 0;
+        squash.total_commits = 40;
+        assert_eq!(adoption_level(&squash), 0);
+        assert!(squash.is_active());
+
+        // Truly empty: neither configured nor active.
+        let none = empty();
+        assert_eq!(adoption_level(&none), 0);
+        assert!(!none.is_active());
     }
 
     #[test]
