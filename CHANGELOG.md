@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-07-03
+
+### Changed
+- `generate_ai_adoption_report` (HTML) mirrors the v0.35.0 active/configured split: a new **AI-Active** summary card (config markers OR usage evidence — trailed commits on any branch incl. squash-hidden, `.tasks/` activity, AI-marked MRs) alongside the marker-based card (renamed **Configured (L1+)**), and an **AI-Active** column in the By-Team table (highlighted green when it exceeds Configured — real adoption the config number misses). Methodology section documents both axes. Leadership slides built from the report no longer inherit the undercount.
+
+### Added
+- `get_group_activity` gains `include_commit_messages` (default false): lists head-commit titles per push (`branch: title`, cap 10/member) under each member, straight from the events payload — no extra API calls. Enables text correlation (e.g. issue IDs in commit messages).
+
+See ADR 028. 99 tools total.
+
 ## [0.35.0] - 2026-07-03
 
 ### Changed
