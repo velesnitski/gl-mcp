@@ -144,7 +144,11 @@ macro_rules! tool_call {
             }
             Err(e) => {
                 let msg = e.short_message();
-                timer.finish("error", 0, Some(msg.clone()));
+                // Typed classification: user-input errors report as "user_error",
+                // which the Sentry layer never captures (only "error" is) — no
+                // message-wording heuristics involved.
+                let status = if e.is_user_error() { "user_error" } else { "error" };
+                timer.finish(status, 0, Some(msg.clone()));
                 Ok(CallToolResult::error(vec![Content::text(msg)]))
             }
         }

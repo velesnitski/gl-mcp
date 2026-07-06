@@ -1,6 +1,10 @@
 //! GitLab API HTTP client.
 //!
 //! Reusable async client with connection pooling, response caching, and structured error handling.
+//!
+//! All verbs funnel through a single retry core (`send_with_retry`), so retry
+//! policy (429 + Retry-After today) lives in exactly one place — adding a verb
+//! or changing the policy is a one-site edit.
 
 use reqwest::{Client, Response};
 use serde::de::DeserializeOwned;
@@ -53,36 +57,16 @@ impl GitLabClient {
         })
     }
 
-    /// GET request, returning deserialized JSON. Retries on HTTP 429.
-    pub async fn get<T: DeserializeOwned>(&self, path: &str, params: &[(&str, &str)]) -> Result<T> {
-        let url = format!("{}{}", self.base_url, path);
+    /// The single request core: send the request produced by `build`, retrying
+    /// on HTTP 429 (honoring Retry-After), and return the successful body as
+    /// text. Non-2xx responses become structured `Error::GitLab` values.
+    async fn send_with_retry<F>(&self, path: &str, build: F) -> Result<String>
+    where
+        F: Fn(&Client) -> reqwest::RequestBuilder,
+    {
         let mut attempt = 0u32;
         loop {
-            let resp = self.http.get(&url).query(params).send().await?;
-            if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && attempt < MAX_RETRIES {
-                let retry_after = Self::parse_retry_after(&resp);
-                attempt += 1;
-                warn!(
-                    attempt,
-                    retry_after_secs = retry_after,
-                    path,
-                    "Rate limited (429), retrying"
-                );
-                tokio::time::sleep(std::time::Duration::from_secs(retry_after)).await;
-                continue;
-            }
-            return self.handle_response(resp).await;
-        }
-    }
-
-    /// GET request returning the raw response body as text (no JSON parsing).
-    /// Use for endpoints that return plain text rather than JSON — e.g. a CI
-    /// job trace/log. Retries on HTTP 429.
-    pub async fn get_text(&self, path: &str, params: &[(&str, &str)]) -> Result<String> {
-        let url = format!("{}{}", self.base_url, path);
-        let mut attempt = 0u32;
-        loop {
-            let resp = self.http.get(&url).query(params).send().await?;
+            let resp = build(&self.http).send().await?;
             if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && attempt < MAX_RETRIES {
                 let retry_after = Self::parse_retry_after(&resp);
                 attempt += 1;
@@ -97,10 +81,34 @@ impl GitLabClient {
             }
             if resp.status().is_success() {
                 return Ok(resp.text().await?);
-            } else {
-                return Err(self.extract_error(resp).await);
             }
+            return Err(self.extract_error(resp).await);
         }
+    }
+
+    /// Deserialize a response body, treating an empty body as JSON `null`
+    /// (GitLab returns empty bodies on some successful writes).
+    fn parse_json<T: DeserializeOwned>(body: &str) -> Result<T> {
+        if body.is_empty() {
+            Ok(serde_json::from_str("null")?)
+        } else {
+            Ok(serde_json::from_str(body)?)
+        }
+    }
+
+    /// GET request, returning deserialized JSON. Retries on HTTP 429.
+    pub async fn get<T: DeserializeOwned>(&self, path: &str, params: &[(&str, &str)]) -> Result<T> {
+        let url = format!("{}{}", self.base_url, path);
+        let body = self.send_with_retry(path, |h| h.get(&url).query(params)).await?;
+        Self::parse_json(&body)
+    }
+
+    /// GET request returning the raw response body as text (no JSON parsing).
+    /// Use for endpoints that return plain text rather than JSON — e.g. a CI
+    /// job trace/log. Retries on HTTP 429.
+    pub async fn get_text(&self, path: &str, params: &[(&str, &str)]) -> Result<String> {
+        let url = format!("{}{}", self.base_url, path);
+        self.send_with_retry(path, |h| h.get(&url).query(params)).await
     }
 
     /// GET request with TTL-based caching. Use for frequently repeated lookups.
@@ -123,27 +131,7 @@ impl GitLabClient {
 
         // Cache miss — fetch from API
         let url = format!("{}{}", self.base_url, path);
-        let mut attempt = 0u32;
-        let body: String = loop {
-            let resp = self.http.get(&url).query(params).send().await?;
-            if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && attempt < MAX_RETRIES {
-                let retry_after = Self::parse_retry_after(&resp);
-                attempt += 1;
-                warn!(
-                    attempt,
-                    retry_after_secs = retry_after,
-                    path,
-                    "Rate limited (429), retrying"
-                );
-                tokio::time::sleep(std::time::Duration::from_secs(retry_after)).await;
-                continue;
-            }
-            if resp.status().is_success() {
-                break resp.text().await?;
-            } else {
-                return Err(self.extract_error(resp).await);
-            }
-        };
+        let body = self.send_with_retry(path, |h| h.get(&url).query(params)).await?;
 
         // Store in cache
         {
@@ -155,81 +143,28 @@ impl GitLabClient {
             cache.insert(cache_key.to_string(), (Instant::now(), body.clone()));
         }
 
-        if body.is_empty() {
-            Ok(serde_json::from_str("null")?)
-        } else {
-            Ok(serde_json::from_str(&body)?)
-        }
+        Self::parse_json(&body)
     }
 
     /// POST request with JSON body. Retries on HTTP 429.
     pub async fn post<T: DeserializeOwned>(&self, path: &str, body: &Value) -> Result<T> {
         let url = format!("{}{}", self.base_url, path);
-        let mut attempt = 0u32;
-        loop {
-            let resp = self.http.post(&url).json(body).send().await?;
-            if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && attempt < MAX_RETRIES {
-                let retry_after = Self::parse_retry_after(&resp);
-                attempt += 1;
-                warn!(
-                    attempt,
-                    retry_after_secs = retry_after,
-                    path,
-                    "Rate limited (429), retrying"
-                );
-                tokio::time::sleep(std::time::Duration::from_secs(retry_after)).await;
-                continue;
-            }
-            return self.handle_response(resp).await;
-        }
+        let text = self.send_with_retry(path, |h| h.post(&url).json(body)).await?;
+        Self::parse_json(&text)
     }
 
     /// PUT request with JSON body. Retries on HTTP 429.
     pub async fn put<T: DeserializeOwned>(&self, path: &str, body: &Value) -> Result<T> {
         let url = format!("{}{}", self.base_url, path);
-        let mut attempt = 0u32;
-        loop {
-            let resp = self.http.put(&url).json(body).send().await?;
-            if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && attempt < MAX_RETRIES {
-                let retry_after = Self::parse_retry_after(&resp);
-                attempt += 1;
-                warn!(
-                    attempt,
-                    retry_after_secs = retry_after,
-                    path,
-                    "Rate limited (429), retrying"
-                );
-                tokio::time::sleep(std::time::Duration::from_secs(retry_after)).await;
-                continue;
-            }
-            return self.handle_response(resp).await;
-        }
+        let text = self.send_with_retry(path, |h| h.put(&url).json(body)).await?;
+        Self::parse_json(&text)
     }
 
     /// DELETE request. Retries on HTTP 429.
     pub async fn delete(&self, path: &str) -> Result<()> {
         let url = format!("{}{}", self.base_url, path);
-        let mut attempt = 0u32;
-        loop {
-            let resp = self.http.delete(&url).send().await?;
-            if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && attempt < MAX_RETRIES {
-                let retry_after = Self::parse_retry_after(&resp);
-                attempt += 1;
-                warn!(
-                    attempt,
-                    retry_after_secs = retry_after,
-                    path,
-                    "Rate limited (429), retrying"
-                );
-                tokio::time::sleep(std::time::Duration::from_secs(retry_after)).await;
-                continue;
-            }
-            if resp.status().is_success() {
-                return Ok(());
-            } else {
-                return Err(self.extract_error(resp).await);
-            }
-        }
+        self.send_with_retry(path, |h| h.delete(&url)).await?;
+        Ok(())
     }
 
     /// Parse Retry-After header from a 429 response, defaulting to exponential backoff.
@@ -288,18 +223,5 @@ impl GitLabClient {
             page += 1;
         }
         Ok(all)
-    }
-
-    async fn handle_response<T: DeserializeOwned>(&self, resp: Response) -> Result<T> {
-        if resp.status().is_success() {
-            let body = resp.text().await?;
-            if body.is_empty() {
-                Ok(serde_json::from_str("null")?)
-            } else {
-                Ok(serde_json::from_str(&body)?)
-            }
-        } else {
-            Err(self.extract_error(resp).await)
-        }
     }
 }

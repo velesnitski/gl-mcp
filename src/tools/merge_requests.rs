@@ -295,29 +295,18 @@ pub async fn create_merge_request(
     }
 
     if !assignee.is_empty() {
-        // Resolve username to ID
-        let users: Vec<Value> = client
-            .get("/users", &[("username", assignee)])
-            .await
-            .unwrap_or_default();
-        if let Some(user) = users.first() {
-            if let Some(id) = user["id"].as_u64() {
-                body["assignee_id"] = Value::Number(id.into());
-            }
+        // Soft resolution: an unknown (or unreachable) assignee must not block
+        // MR creation — the MR is the point, the assignee is an enrichment.
+        if let Ok(Some(id)) = super::users::lookup_user_id(client, assignee).await {
+            body["assignee_id"] = Value::Number(id.into());
         }
     }
 
     if !reviewers.is_empty() {
         let mut reviewer_ids = Vec::new();
         for username in reviewers.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
-            let users: Vec<Value> = client
-                .get("/users", &[("username", username)])
-                .await
-                .unwrap_or_default();
-            if let Some(user) = users.first() {
-                if let Some(id) = user["id"].as_u64() {
-                    reviewer_ids.push(Value::Number(id.into()));
-                }
+            if let Ok(Some(id)) = super::users::lookup_user_id(client, username).await {
+                reviewer_ids.push(Value::Number(id.into()));
             }
         }
         if !reviewer_ids.is_empty() {
@@ -1283,7 +1272,7 @@ pub async fn update_merge_request(
         body.insert("target_branch".into(), serde_json::json!(target_branch));
     }
     if body.is_empty() {
-        return Err(crate::error::Error::Other(
+        return Err(crate::error::Error::UserInput(
             "Nothing to update — set at least one of title, description, labels, target_branch."
                 .into(),
         ));

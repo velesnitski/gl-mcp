@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-07-03
+
+### Changed (internal refactor — no tool-surface changes)
+- **One retry core.** All six HTTP verbs (`get`, `get_text`, `get_cached`, `post`, `put`, `delete`) now funnel through a single `send_with_retry`; the 429/Retry-After loop previously hand-copied into each verb lives in exactly one place. (This duplication is what originally broke `get_job_log` — adding a verb meant re-copying the loop.)
+- **Typed user-error classification.** New `Error::UserInput` variant + `Error::is_user_error()` (UserInput/NotFound/GitLab-4xx-except-408/429). `tool_call!` reports such failures with status `user_error`, which Sentry never captures — the ADR 026 string heuristic is demoted to a fallback for string-only error paths. Analytics now distinguishes `user_error` from `error`.
+- **One user-resolution implementation.** New `tools/users.rs` with `resolve_user_id` (hard — errors on unknown user; member grants) and `lookup_user_id` (soft — `Ok(None)`; assignee/reviewer enrichment), plus access-level parsing moved from `projects.rs`. Replaces 5 scattered inline implementations across issues/merge_requests/projects.
+
+See ADR 029. Behavior-preserving: 175 tests pass; tool surface unchanged (99 tools).
+
 ## [0.36.0] - 2026-07-03
 
 ### Changed

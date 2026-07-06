@@ -155,7 +155,12 @@ fn add_sentry_breadcrumb(tool: &str, duration_ms: u128, status: &str, error: Opt
         ..Default::default()
     });
 
-    // Capture errors as Sentry events — but only actionable ones
+    // Capture errors as Sentry events — but only actionable ones. Two layers:
+    // 1. Typed: user-input errors arrive with status "user_error" (classified
+    //    by Error::is_user_error() at the tool_call! boundary) and are never
+    //    captured — this is the primary gate.
+    // 2. String heuristic (is_actionable_error): fallback for error paths that
+    //    only carry a message string (e.g. cross-instance report fallbacks).
     if status == "error" {
         if let Some(err) = error {
             if is_actionable_error(err) {

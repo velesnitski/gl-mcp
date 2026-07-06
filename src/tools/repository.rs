@@ -337,7 +337,7 @@ pub async fn update_file(
     // Safety: never write to main/master/develop directly
     let protected = ["main", "master", "develop", "release", "production"];
     if protected.iter().any(|p| branch.eq_ignore_ascii_case(p)) {
-        return Err(Error::Other(format!(
+        return Err(Error::UserInput(format!(
             "Cannot write directly to protected branch '{branch}'. Use a feature branch."
         )));
     }
