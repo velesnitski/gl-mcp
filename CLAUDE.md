@@ -25,6 +25,7 @@ src/
 ├── teams.rs         # teams.json management
 └── tools/
     ├── mod.rs           # WRITE_TOOLS list, is_tool_enabled()
+    ├── users.rs         # shared user resolution (hard/soft) + access-level parsing
     ├── projects.rs      # list_projects, get_project, create/transfer/delete_project, list_members, list_branches, get_user, create/delete_branch
     ├── issues.rs        # search/get/create/update_issue, add_note (group-scoped search)
     ├── merge_requests.rs # list/get/create/update MRs, turnaround, dashboard, review depth, timeline, categories

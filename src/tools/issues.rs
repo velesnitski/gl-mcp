@@ -189,15 +189,8 @@ pub async fn create_issue(
         body["labels"] = Value::String(labels.to_string());
     }
     if !assignee.is_empty() {
-        // Look up user ID
-        let users: Vec<Value> = client
-            .get("/users", &[("username", assignee)])
-            .await
-            ?;
-        if let Some(user) = users.first() {
-            if let Some(id) = user["id"].as_u64() {
-                body["assignee_ids"] = serde_json::json!([id]);
-            }
+        if let Some(id) = super::users::lookup_user_id(client, assignee).await? {
+            body["assignee_ids"] = serde_json::json!([id]);
         }
     }
     if let Some(mid) = milestone_id {
@@ -244,16 +237,8 @@ pub async fn update_issue(
     if let Some(a) = assignee {
         if a.is_empty() {
             body["assignee_ids"] = serde_json::json!([]);
-        } else {
-            let users: Vec<Value> = client
-                .get("/users", &[("username", a)])
-                .await
-                ?;
-            if let Some(user) = users.first() {
-                if let Some(id) = user["id"].as_u64() {
-                    body["assignee_ids"] = serde_json::json!([id]);
-                }
-            }
+        } else if let Some(id) = super::users::lookup_user_id(client, a).await? {
+            body["assignee_ids"] = serde_json::json!([id]);
         }
     }
 
