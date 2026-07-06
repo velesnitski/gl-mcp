@@ -185,12 +185,65 @@ impl GlMcpServer {
         if team_count > 0 {
             eprintln!("Loaded {} teams from teams.json", team_count);
         }
+        let tool_router = Self::build_router(&config);
         Self {
             resolver,
             config: std::sync::Arc::new(config),
             teams: std::sync::Arc::new(std::sync::Mutex::new(teams)),
-            tool_router: Self::tool_router(),
+            tool_router,
         }
+    }
+
+    /// Build the tool router, pruned to what this configuration exposes.
+    ///
+    /// Pruning at construction (rather than gating at call time) means the
+    /// removed tools are absent from `tools/list` itself — the schema tokens
+    /// are actually saved, and the model never sees tools it cannot call.
+    /// Three filters share the mechanism:
+    /// - GITLAB_TOOLSET ("core" or an explicit list) — profile allowlist
+    /// - DISABLED_TOOLS — per-tool denylist
+    /// - GITLAB_READ_ONLY — hides WRITE_TOOLS
+    /// The call-time guards (`write_guard!`) remain as defense in depth.
+    fn build_router(config: &Config) -> rmcp::handler::server::tool::ToolRouter<Self> {
+        let mut router = Self::tool_router();
+        let allowlist = tools::toolset_allowlist(&config.toolset);
+
+        if let Some(ref allowed) = allowlist {
+            // Warn about allowlist entries that match no tool — catches typos
+            // and stale names when tools get renamed.
+            for name in allowed {
+                if !router.has_route(name) {
+                    eprintln!("gl-mcp: GITLAB_TOOLSET names unknown tool '{name}' (ignored)");
+                }
+            }
+        }
+
+        let all_names: Vec<String> = router
+            .list_all()
+            .into_iter()
+            .map(|t| t.name.to_string())
+            .collect();
+        let total = all_names.len();
+        for name in &all_names {
+            let in_toolset = allowlist
+                .as_ref()
+                .map(|allowed| allowed.iter().any(|a| a == name))
+                .unwrap_or(true);
+            if !in_toolset || !tools::is_tool_enabled(name, config.read_only, &config.disabled_tools) {
+                router.remove_route(name);
+            }
+        }
+
+        let exposed = router.list_all().len();
+        if exposed < total {
+            eprintln!(
+                "gl-mcp: toolset '{}' — exposing {exposed}/{total} tools (read_only={}, {} disabled)",
+                config.toolset,
+                config.read_only,
+                config.disabled_tools.len()
+            );
+        }
+        router
     }
 
     // ─── Projects ───
@@ -1234,6 +1287,65 @@ impl ServerHandler for GlMcpServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_config(toolset: &str, read_only: bool, disabled: &[&str]) -> Config {
+        Config {
+            instances: vec![crate::config::GitLabInstance {
+                name: "default".into(),
+                url: "https://gitlab.example.com".into(),
+                token: "x".into(),
+            }],
+            read_only,
+            disabled_tools: disabled.iter().map(|s| s.to_string()).collect(),
+            compact: false,
+            toolset: toolset.into(),
+        }
+    }
+
+    #[test]
+    fn core_toolset_names_all_exist() {
+        // Every CORE_TOOLS entry must name a real registered tool — catches
+        // stale entries when tools are renamed or removed.
+        let router = GlMcpServer::tool_router();
+        for name in tools::CORE_TOOLS {
+            assert!(router.has_route(name), "CORE_TOOLS names unknown tool '{name}'");
+        }
+    }
+
+    #[test]
+    fn build_router_prunes_by_toolset_and_flags() {
+        let full = GlMcpServer::build_router(&test_config("full", false, &[])).list_all().len();
+        assert!(full >= 99, "full toolset should expose everything (got {full})");
+
+        // core → exactly the CORE_TOOLS entries (all of which exist, per test above)
+        let core = GlMcpServer::build_router(&test_config("core", false, &[])).list_all().len();
+        assert_eq!(core, tools::CORE_TOOLS.len());
+
+        // read-only prunes write tools from the listing itself
+        let ro = GlMcpServer::build_router(&test_config("full", true, &[])).list_all().len();
+        assert_eq!(ro, full - tools::WRITE_TOOLS.len());
+
+        // DISABLED_TOOLS prunes from the listing (not just call time)
+        let disabled = GlMcpServer::build_router(&test_config("full", false, &["get_job_log"]))
+            .list_all()
+            .len();
+        assert_eq!(disabled, full - 1);
+
+        // explicit custom list
+        let custom = GlMcpServer::build_router(&test_config("get_project,list_projects", false, &[]))
+            .list_all()
+            .len();
+        assert_eq!(custom, 2);
+    }
+
+    #[test]
+    fn toolset_allowlist_resolution() {
+        assert!(tools::toolset_allowlist("full").is_none());
+        assert!(tools::toolset_allowlist("").is_none());
+        assert_eq!(tools::toolset_allowlist("core").unwrap().len(), tools::CORE_TOOLS.len());
+        let custom = tools::toolset_allowlist("Get-Project, list_projects").unwrap();
+        assert_eq!(custom, vec!["get_project".to_string(), "list_projects".to_string()]);
+    }
 
     #[test]
     fn test_parse_period_hours() {
