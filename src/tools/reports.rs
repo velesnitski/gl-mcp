@@ -50,7 +50,7 @@ pub async fn generate_dev_report(
         ?;
 
     let user = users.first().ok_or_else(|| Error::NotFound(format!("User @{username} not found")))?;
-    let user_id = user["id"].as_u64().ok_or(Error::Other("User has no ID".into()))?;
+    let user_id = user["id"].as_u64().ok_or(Error::UserInput("User has no ID".into()))?;
     let display_name = user["name"].as_str().unwrap_or(username);
 
     // 2. Fetch events

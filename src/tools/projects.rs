@@ -4,6 +4,8 @@ use crate::client::GitLabClient;
 use crate::error::Result;
 use serde_json::Value;
 
+use super::users::{access_level_name, parse_access_level, resolve_user_id};
+
 /// List projects accessible to the authenticated user.
 pub async fn list_projects(
     client: &GitLabClient,
@@ -253,7 +255,7 @@ pub async fn get_user(
             .get_cached(&cache_key, "/users", &[("username", username)], 60)
             .await?;
         users.into_iter().next().ok_or_else(|| {
-            crate::error::Error::Other(format!("User not found: {username}"))
+            crate::error::Error::UserInput(format!("User not found: {username}"))
         })?
     };
 
@@ -648,7 +650,7 @@ async fn resolve_namespace(client: &GitLabClient, ns: &str) -> Result<(u64, Stri
         .get(&format!("/groups/{}", urlencoding::encode(ns)), &[])
         .await?;
     let id = g["id"].as_u64().ok_or_else(|| {
-        crate::error::Error::Other(format!("Group '{ns}' not found or not accessible"))
+        crate::error::Error::UserInput(format!("Group '{ns}' not found or not accessible"))
     })?;
     let full = g["full_path"].as_str().unwrap_or(ns).to_string();
     Ok((id, full))
@@ -690,7 +692,7 @@ pub async fn delete_project(
         .await?;
     let actual = proj["path_with_namespace"].as_str().unwrap_or("");
     if confirm_full_path.trim() != actual {
-        return Err(crate::error::Error::Other(format!(
+        return Err(crate::error::Error::UserInput(format!(
             "Refusing to delete: confirm_full_path ('{}') does not match the project's full path ('{}'). Pass the exact path_with_namespace to confirm.",
             confirm_full_path.trim(),
             actual
@@ -702,58 +704,6 @@ pub async fn delete_project(
     Ok(format!(
         "Deleted **{actual}**. GitLab may retain it for a deletion-protection window (marked for deletion) before permanent removal."
     ))
-}
-
-/// Map a friendly access-level name (or numeric string) to GitLab's numeric level.
-fn parse_access_level(level: &str) -> Result<u32> {
-    Ok(match level.trim().to_lowercase().as_str() {
-        "guest" | "10" => 10,
-        "planner" | "15" => 15,
-        "reporter" | "20" => 20,
-        "developer" | "dev" | "30" => 30,
-        "maintainer" | "40" => 40,
-        "owner" | "50" => 50,
-        other => {
-            return Err(crate::error::Error::Other(format!(
-                "Unknown access level '{other}'. Use one of: guest, reporter, developer, maintainer, owner (or 10/20/30/40/50)."
-            )))
-        }
-    })
-}
-
-/// Human-readable name for a GitLab access level number.
-fn access_level_name(n: u64) -> &'static str {
-    match n {
-        10 => "Guest",
-        15 => "Planner",
-        20 => "Reporter",
-        30 => "Developer",
-        40 => "Maintainer",
-        50 => "Owner",
-        _ => "?",
-    }
-}
-
-/// Resolve a user given as a numeric id or a username (leading `@` optional),
-/// returning `(user id, username)`.
-async fn resolve_user_id(client: &GitLabClient, user: &str) -> Result<(u64, String)> {
-    let u = user.trim().trim_start_matches('@');
-    if !u.is_empty() && u.chars().all(|c| c.is_ascii_digit()) {
-        let usr: Value = client.get(&format!("/users/{u}"), &[]).await?;
-        let id = usr["id"].as_u64().unwrap_or_else(|| u.parse().unwrap_or(0));
-        let name = usr["username"].as_str().unwrap_or(u).to_string();
-        return Ok((id, name));
-    }
-    let users: Vec<Value> = client.get("/users", &[("username", u)]).await?;
-    let usr = users
-        .into_iter()
-        .next()
-        .ok_or_else(|| crate::error::Error::Other(format!("User '@{u}' not found")))?;
-    let id = usr["id"]
-        .as_u64()
-        .ok_or_else(|| crate::error::Error::Other(format!("User '@{u}' has no id")))?;
-    let name = usr["username"].as_str().unwrap_or(u).to_string();
-    Ok((id, name))
 }
 
 /// Add a member to a project (POST /projects/:id/members). `user` is a username
