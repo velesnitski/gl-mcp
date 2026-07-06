@@ -1406,6 +1406,10 @@ pub async fn generate_ai_adoption_report(
     // funnel rows are disjoint.
     let l0_plain = level_counts[0] - in_flight.len();
     let adopting_count = level_counts[1] + level_counts[2] + level_counts[3];
+    // AI-active = config markers OR any usage evidence (trailed commits on any
+    // branch incl. squash-hidden, .tasks activity, AI-marked MRs). The usage
+    // axis the marker-based "Adopting (L1+)" figure misses.
+    let ai_active_count = results.iter().filter(|r| r.markers.is_active()).count();
 
     // Invisible usage = AI-trailed commits but zero config markers, heaviest first.
     let mut invisible: Vec<&RepoResult> = results
@@ -1434,6 +1438,8 @@ pub async fn generate_ai_adoption_report(
     struct TeamStats {
         repos: usize,
         adopting: usize,
+        /// Config markers OR usage evidence — the usage-inclusive adoption count.
+        ai_active: usize,
         best_level: u8,
         up: usize,
         steady: usize,
@@ -1449,6 +1455,9 @@ pub async fn generate_ai_adoption_report(
         if level >= 1 {
             stats.adopting += 1;
             stats.adopting_ai_pcts.push(r.markers.ai_pct());
+        }
+        if r.markers.is_active() {
+            stats.ai_active += 1;
         }
         if level > stats.best_level {
             stats.best_level = level;
@@ -1469,6 +1478,7 @@ pub async fn generate_ai_adoption_report(
 
     let group_esc = esc(group_path);
     let adopting_pct = adopting_count as f64 / active_count as f64 * 100.0;
+    let ai_active_pct = ai_active_count as f64 / active_count as f64 * 100.0;
 
     // "N dormant skipped" links to the dormant details only when that section
     // renders (non-empty); same string is reused in the Active Repos card.
@@ -1536,7 +1546,8 @@ window.addEventListener('hashchange',openTarget);openTarget();
 <!-- Summary Cards -->
 <div class="grid">
   <div class="card"><div class="card-t">Active Repos</div><div class="card-v b"><a href="#by-team">{active_count}</a></div><div class="card-s">{dormant_skipped}</div></div>
-  <div class="card"><div class="card-t">Adopting (L1+)</div><div class="card-v g"><a href="#adopting">{adopting_count}</a></div><div class="card-s">{adopting_pct:.0}% of active</div></div>
+  <div class="card"><div class="card-t">AI-Active</div><div class="card-v g"><a href="#by-team">{ai_active_count}</a></div><div class="card-s">{ai_active_pct:.0}% of active &middot; config or usage evidence</div></div>
+  <div class="card"><div class="card-t">Configured (L1+)</div><div class="card-v b"><a href="#adopting">{adopting_count}</a></div><div class="card-s">{adopting_pct:.0}% of active &middot; marker-based</div></div>
   <div class="card"><div class="card-t">In-flight</div><div class="card-v y">{in_flight_card}</div><div class="card-s">branch signals only</div></div>
   <div class="card"><div class="card-t">Scaling (L3)</div><div class="card-v g"><a href="#adopting">{l3}</a></div><div class="card-s">agents + active usage</div></div>
   <div class="card"><div class="card-t">Attribution Rate</div><div class="card-v{attr_class}"><a href="#methodology">{attr_str}</a></div><div class="card-s">usage visible via commit trailers</div></div>
@@ -1592,7 +1603,7 @@ window.addEventListener('hashchange',openTarget);openTarget();
             Some(format!("{}://{host}", parsed.scheme()))
         });
 
-    html.push_str("<h2 id=\"by-team\">By Team</h2>\n<table>\n<tr><th>Team</th><th>Repos</th><th>Adopting</th><th>Best Level</th><th>Trajectory</th><th>AI-visible Usage</th><th>Dormant</th></tr>\n");
+    html.push_str("<h2 id=\"by-team\">By Team</h2>\n<table>\n<tr><th>Team</th><th>Repos</th><th>AI-Active</th><th>Configured</th><th>Best Level</th><th>Trajectory</th><th>AI-visible Usage</th><th>Dormant</th></tr>\n");
     for (name, s) in &teams {
         let team_url = match &origin {
             Some(o) if name != "(root)" => format!("{o}/{group_path}/{name}"),
@@ -1633,13 +1644,20 @@ window.addEventListener('hashchange',openTarget);openTarget();
         } else {
             s.adopting.to_string()
         };
+        // AI-active exceeding configured = usage-without-config repos; highlight
+        // the gap in green (real adoption the config number misses).
+        let ai_active_cell = if s.ai_active > s.adopting {
+            format!("<span class=\"g\"><b>{}</b></span>", s.ai_active)
+        } else {
+            s.ai_active.to_string()
+        };
         let dormant_cell = if s.dormant > 0 {
             anchor("#dormant", &s.dormant.to_string())
         } else {
             s.dormant.to_string()
         };
         html.push_str(&format!(
-            "<tr><td><b>{}</b></td><td>{}</td><td>{adopting_cell}</td><td class=\"{level_class}\"><b>L{}</b></td><td>{traj_str}</td><td>{avg_pct}</td><td>{dormant_cell}</td></tr>\n",
+            "<tr><td><b>{}</b></td><td>{}</td><td>{ai_active_cell}</td><td>{adopting_cell}</td><td class=\"{level_class}\"><b>L{}</b></td><td>{traj_str}</td><td>{avg_pct}</td><td>{dormant_cell}</td></tr>\n",
             link(&team_url, &esc(name)),
             s.repos,
             s.best_level,
@@ -1939,7 +1957,7 @@ window.addEventListener('hashchange',openTarget);openTarget();
     // ── Methodology footnote ──
 
     html.push_str(&format!(
-        "<details id=\"methodology\"><summary>Methodology</summary><p>Levels: <b>L0</b> no AI tooling markers; <b>L1 Exploring</b> any config marker (CLAUDE.md, AGENTS.md, .cursorrules, .mcp.json); <b>L2 Practicing</b> CLAUDE.md plus shared workflow assets (commands, settings, MCP config, hooks, or an ADR log) &mdash; or agents configured but not yet used; <b>L3 Scaling</b> agents plus measurable usage (&ge;10% AI-trailed commits, recent <code>.tasks</code> activity, or AI-marked MR descriptions). Usage is measured across <i>all</i> branches over the last {days} days because squash-merge strips commit trailers from the default branch; MR descriptions and <code>.tasks</code>/<code>.claude</code> path activity count as first-class evidence. <b>In-flight</b> repos have AI-named feature branches but no config merged yet. Trajectory: &uarr; actively building (live AI branches or recent config/ADR maintenance), &rarr; steady use, &darr; markers present but unused and unmaintained. Attribution rate = share of adopting repos with usage evidence whose usage is visible via Co-Authored-By trailers. &ldquo;Who&rdquo; names the commit authors of trailed commits (top 3) and the AI tool parsed from the trailer itself; sample commits link to the evidence. Repos with no activity in {dormant_days} days are skipped as dormant and listed as archive candidates.</p></details>\n"
+        "<details id=\"methodology\"><summary>Methodology</summary><p><b>AI-Active</b> counts repos with config markers <i>or</i> any usage evidence &mdash; an AI-trailed commit on any branch (squash-hidden feature-branch usage counts), recent <code>.tasks</code> activity, or an AI-marked MR &mdash; so real adoption is not gated on config presence; <b>Configured</b> is the marker-based count (L1+). Levels: <b>L0</b> no AI tooling markers; <b>L1 Exploring</b> any config marker (CLAUDE.md, AGENTS.md, .cursorrules, .mcp.json); <b>L2 Practicing</b> CLAUDE.md plus shared workflow assets (commands, settings, MCP config, hooks, or an ADR log) &mdash; or agents configured but not yet used; <b>L3 Scaling</b> agents plus measurable usage (&ge;10% AI-trailed commits, recent <code>.tasks</code> activity, or AI-marked MR descriptions). Usage is measured across <i>all</i> branches over the last {days} days because squash-merge strips commit trailers from the default branch; MR descriptions and <code>.tasks</code>/<code>.claude</code> path activity count as first-class evidence. <b>In-flight</b> repos have AI-named feature branches but no config merged yet. Trajectory: &uarr; actively building (live AI branches or recent config/ADR maintenance), &rarr; steady use, &darr; markers present but unused and unmaintained. Attribution rate = share of adopting repos with usage evidence whose usage is visible via Co-Authored-By trailers. &ldquo;Who&rdquo; names the commit authors of trailed commits (top 3) and the AI tool parsed from the trailer itself; sample commits link to the evidence. Repos with no activity in {dormant_days} days are skipped as dormant and listed as archive candidates.</p></details>\n"
     ));
 
     // ── Footer ──

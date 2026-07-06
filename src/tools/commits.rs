@@ -912,6 +912,7 @@ pub async fn get_group_activity(
     client: &GitLabClient,
     group_path: &str,
     hours: u32,
+    include_commit_messages: bool,
 ) -> Result<String> {
     // Get group members
     let path = format!("/groups/{}/members", urlencoding::encode(group_path));
@@ -960,6 +961,9 @@ pub async fn get_group_activity(
         let mut mrs_opened = 0u64;
         let mut mrs_merged = 0u64;
         let mut project_ids: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
+        // Head-commit titles from push events (already in the events payload —
+        // no extra API calls). One entry per push: "branch: title".
+        let mut push_titles: Vec<String> = Vec::new();
 
         for event in &events {
             let action = event["action_name"].as_str().unwrap_or("");
@@ -969,6 +973,12 @@ pub async fn get_group_activity(
             if action == "pushed to" || action == "pushed new" {
                 let push_commits = event["push_data"]["commit_count"].as_u64().unwrap_or(0);
                 commits += push_commits;
+                if include_commit_messages {
+                    if let Some(title) = event["push_data"]["commit_title"].as_str() {
+                        let branch = event["push_data"]["ref"].as_str().unwrap_or("?");
+                        push_titles.push(format!("{branch}: {title}"));
+                    }
+                }
             }
             if target_type == "MergeRequest" {
                 if action == "opened" { mrs_opened += 1; }
@@ -990,6 +1000,19 @@ pub async fn get_group_activity(
             "- @{username} ({name}): {commits} commits, {mrs_opened} MRs opened, {mrs_merged} merged | {}",
             if proj_list.is_empty() { "\u{2013}".to_string() } else { proj_list.join(", ") }
         ));
+
+        // Indented head-commit titles under the member line (cap 10, newest first —
+        // events arrive newest-first). Enough for text correlation (issue IDs etc.)
+        // without per-project commit fetches.
+        if include_commit_messages && !push_titles.is_empty() {
+            let total = push_titles.len();
+            for t in push_titles.iter().take(10) {
+                lines.push(format!("    · {t}"));
+            }
+            if total > 10 {
+                lines.push(format!("    · … {} more pushes", total - 10));
+            }
+        }
     }
 
     lines.insert(1, format!("Active: {active_count}/{} members | {total_commits} commits, {total_mrs} MRs\n",
