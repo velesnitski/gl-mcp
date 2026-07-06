@@ -11,6 +11,10 @@
 //!   GITLAB_READ_ONLY    — disable write tools (true/1/yes)
 //!   DISABLED_TOOLS      — comma-separated tool names to disable
 //!   GITLAB_COMPACT      — strip markdown for token savings (true/1/yes)
+//!   GITLAB_TOOLSET      — "full" (default), "core" (~30 everyday tools), or an
+//!                         explicit comma-separated tool list. Tools outside the
+//!                         set are pruned from tools/list entirely (schema-token
+//!                         savings for clients that load all schemas up front)
 
 use std::collections::HashMap;
 use crate::error::{Error, Result};
@@ -41,6 +45,8 @@ pub struct Config {
     pub read_only: bool,
     pub disabled_tools: Vec<String>,
     pub compact: bool,
+    /// GITLAB_TOOLSET: "full", "core", or an explicit comma-separated tool list.
+    pub toolset: String,
 }
 
 fn is_truthy(val: &str) -> bool {
@@ -64,6 +70,12 @@ impl Config {
             .map(|s| s.trim().to_lowercase().replace('-', "_"))
             .filter(|s| !s.is_empty())
             .collect();
+
+        let toolset = env::var("GITLAB_TOOLSET")
+            .ok()
+            .map(|v| v.trim().to_lowercase())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "full".to_string());
 
         // Multi-instance support
         let instances = if let Ok(names) = env::var("GITLAB_INSTANCES") {
@@ -109,6 +121,7 @@ impl Config {
             read_only,
             disabled_tools,
             compact,
+            toolset,
         })
     }
 

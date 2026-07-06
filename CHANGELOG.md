@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-07-03
+
+**Stability milestone.** The tool surface (99 tools: names, parameters, output shapes) is now a semver contract: additive changes bump minor, breaking changes bump major with a deprecation note. This release caps the v0.28→v0.38 hardening arc — architecture pass (one retry core, typed error classification, shared user resolution), fence-safe compact mode, Sentry hygiene, honest adoption metrics, project/member lifecycle, CI debugging, and toolset profiles — with all known defects fixed and the task backlog empty.
+
+### Added
+- `GITLAB_TOOLSET` — toolset profiles for schema-token savings. `full` (default), `core` (~33 everyday dev tools: navigate/read/search, issues, MRs, commits, CI, basic writes — selected from usage analytics), or an explicit comma-separated tool list. Pruning happens **at router construction**, so filtered tools are absent from `tools/list` itself: the measured ~77 KB (~20k-token) full schema payload drops ~70% under `core`. Matters for MCP clients that load all schemas up front (Claude Code defers schemas, so it was already unaffected). Unknown names in a custom list are warned about at startup.
+
+### Changed
+- `DISABLED_TOOLS` and `GITLAB_READ_ONLY` now also prune the affected tools from `tools/list` (previously they were listed but rejected at call time). The model no longer sees tools it cannot call, and their schemas cost nothing. Call-time guards remain as defense in depth.
+
+See ADR 030. 99 tools total (`full`); `core` exposes 33.
+
 ## [0.37.0] - 2026-07-03
 
 ### Changed (internal refactor — no tool-surface changes)
