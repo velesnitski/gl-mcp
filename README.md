@@ -119,7 +119,7 @@ For HTTP transport: `gl-mcp --transport http --port 8000`
 
 ---
 
-## Tools (86)
+## Tools (99)
 
 ### Projects & Users
 | Tool | Description |
@@ -135,9 +135,17 @@ For HTTP transport: `gl-mcp --transport http --port 8000`
 | `list_group_projects` | All projects in a group (with subgroups) |
 | `list_branches` | List branches, filtered by name |
 | `get_stale_branches` | Find merged-but-not-deleted and inactive branches |
+| `create_branch` | Create a branch from any ref (default: main) |
 | `delete_branch` | Delete a branch (e.g., after merge) |
 | `check_branch_protection` | View protected branch settings |
 | `update_branch_protection` | Create or update protected branch rules |
+| `create_project` | Create a project; namespace by group path or id |
+| `transfer_project` | Move a project to another namespace (path or id, validated) |
+| `delete_project` | Delete a project — guarded by exact-path confirmation |
+| `add_member` | Add a project member by username + role name |
+| `add_group_member` | Add a group member (grants all projects in the group) |
+| `create_deploy_token` | Create a deploy token (value shown once) |
+| `list_deploy_tokens` | List deploy tokens (metadata only) |
 
 ### Issues
 | Tool | Description |
@@ -160,6 +168,7 @@ For HTTP transport: `gl-mcp --transport http --port 8000`
 | `merge_mr` | Merge MR with squash and remove-branch options |
 | `rebase_mr` | Trigger MR rebase |
 | `close_mr` | Close a merge request without merging |
+| `update_merge_request` | Edit an MR's title/description/labels/target branch |
 | `get_mr_discussions` | Threaded MR discussions with resolved status |
 | `get_mr_turnaround` | Avg/median merge time, per-author and per-merger breakdown |
 | `get_mr_dashboard` | Compact group dashboard: open count, avg age, reviewer bottlenecks |
@@ -182,6 +191,9 @@ For HTTP transport: `gl-mcp --transport http --port 8000`
 | `retry_pipeline` | Retry a failed pipeline |
 | `cancel_pipeline` | Cancel a running pipeline |
 | `get_ci_variables` | List CI/CD variable keys and metadata (never values) |
+| `set_ci_variable` | Create a CI/CD variable (masked/protected flags) |
+| `update_ci_variable` | Update a CI/CD variable |
+| `delete_ci_variable` | Delete a CI/CD variable |
 
 ### Commits & Code Review
 | Tool | Description |
@@ -234,6 +246,16 @@ For HTTP transport: `gl-mcp --transport http --port 8000`
 | `generate_team_report` | HTML team comparison with review matrix, MR sizes, process issues |
 | `generate_project_report` | HTML project quality report with grade distribution, commit quality |
 
+### AI Adoption & Spec Audit
+| Tool | Description |
+|------|-------------|
+| `get_ai_adoption` | Org-wide AI-tooling adoption scan: active vs configured per team |
+| `generate_ai_adoption_report` | HTML adoption report (AI-Active/Configured axes, evidence links) |
+| `audit_spec_drift` | Audit a documented spec against the repo (routes, versions, security) |
+| `generate_spec_audit_report` | HTML spec-drift report for a project |
+| `sweep_spec_audit` | Audit several specs concurrently |
+| `generate_sweep_report` | HTML cross-team spec-drift sweep report |
+
 ---
 
 ## Token Optimization
@@ -275,6 +297,7 @@ Language detection for 25+ languages including PHP, Go, Kotlin, Swift, TypeScrip
 | `GITLAB_COMPACT` | No | Strip markdown formatting (`1`/`true`/`yes`) |
 | `GITLAB_READ_ONLY` | No | Disable write tools (`1`/`true`/`yes`) |
 | `DISABLED_TOOLS` | No | Comma-separated tools to disable |
+| `GITLAB_TOOLSET` | No | `full` (default), `core` (~30 everyday dev tools), or an explicit comma-separated tool list. Pruned tools are absent from `tools/list` itself, cutting the schema payload ~70% in `core` — useful for MCP clients that load all tool schemas up front |
 | `SENTRY_DSN` | No | Sentry DSN for error tracking |
 | `GITLAB_ALLOW_HTTP` | No | Allow non-HTTPS URLs |
 
@@ -334,6 +357,15 @@ Pass `instance="staging"` to any tool. URLs auto-resolve to the correct instance
 | [serde](https://serde.rs) / [schemars](https://crates.io/crates/schemars) | JSON + schema generation |
 
 ---
+
+## Versioning
+
+As of **1.0.0** the tool surface is a [semver](https://semver.org) contract:
+tool names, parameters, and output shapes are stable. New tools and new
+optional parameters bump the **minor** version; anything that renames a tool,
+removes a parameter, or changes semantics bumps the **major** version with a
+deprecation note in the changelog. Internal changes (performance, refactors,
+dependency updates) bump the **patch** version.
 
 ## Contributing
 

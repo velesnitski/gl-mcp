@@ -55,6 +55,7 @@ src/
 | `GITLAB_COMPACT` | no | `1` strips markdown from all responses |
 | `GITLAB_READ_ONLY` | no | `1` blocks write tools |
 | `DISABLED_TOOLS` | no | Comma-separated tool names |
+| `GITLAB_TOOLSET` | no | `full` (default), `core` (~30 everyday tools), or explicit tool list — prunes tools/list itself |
 | `GITLAB_INSTANCES` | no | Multi-instance: comma-separated names |
 | `SENTRY_DSN` | no | Sentry error tracking |
 
