@@ -631,7 +631,7 @@ pub async fn get_user_activity(
         ?;
 
     let user = users.first().ok_or_else(|| Error::NotFound(format!("User @{username} not found")))?;
-    let user_id = user["id"].as_u64().ok_or(Error::Other("User has no ID".into()))?;
+    let user_id = user["id"].as_u64().ok_or(Error::UserInput("User has no ID".into()))?;
     let display_name = user["name"].as_str().unwrap_or(username);
 
     let since = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
