@@ -539,6 +539,8 @@ pub struct GetGroupActivityParams {
     pub group_path: String,
     #[schemars(description = "Period: 'today', 'yesterday', 'week', '3d', or hours (default: 24)")]
     pub period: Option<String>,
+    #[schemars(description = "Include head-commit titles per push under each member (from push events; enables text correlation, e.g. issue IDs). Default: false")]
+    pub include_commit_messages: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }

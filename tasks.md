@@ -19,26 +19,23 @@ issue IDs without falling back to direct REST calls.
 Added `include_descriptions: bool` opt-in param. When true with
 `summary_only=true`, returns indented description lines under each MR.
 
-### `get_group_activity` — return per-commit messages
+### ~~`get_group_activity` — return per-commit messages~~ ✅ DONE (2026-07-03)
 
-Currently aggregates pushes/commits/MRs as counts. Doesn't surface raw
-commit messages, so can't do text-based correlation (e.g. finding
-commits that reference an issue). Use `list_commits(all_branches=true)`
-per-project as a workaround.
+Implemented in v0.36.0 as `include_commit_messages: bool = false`. When set,
+each member's line is followed by indented `branch: title` entries — the
+head-commit title of each push event (cap 10/member), straight from the events
+payload (zero extra API calls). Limitation, documented in ADR 028: push events
+carry only the **head** commit's title; for exhaustive per-commit messages the
+`list_commits(all_branches=true)` workaround remains the tool.
 
-**Possible fix:** add `include_commit_messages: bool = false` param.
+### ~~`generate_ai_adoption_report` (HTML) — mirror the active/configured split~~ ✅ DONE (2026-07-03)
 
-**Priority:** Low — workaround exists.
-
-### `generate_ai_adoption_report` (HTML) — mirror the active/configured split
-
-The HTML report's "Adopting (L1+)" summary card and team table are still
-marker-based (`level >= 1`), so they inherit the same undercount that task #2
-fixed in the text `get_ai_adoption`. Leadership slides are built from this
-report, so it should gain an **Active** card/column alongside "Adopting" using
-the same `is_active()` helper (already in `adoption.rs`).
-
-**Priority:** Moderate — same evidence, re-aggregation only; separate render path.
+Implemented in v0.36.0. New **AI-Active** summary card (config OR usage
+evidence, via `is_active()`) next to the marker-based card, renamed
+**Configured (L1+)**; new **AI-Active** column in the By-Team table, highlighted
+green when it exceeds Configured (usage-without-config repos). Methodology
+defines both axes. Named "AI-Active" to avoid colliding with the existing
+"Active Repos" (= scanned, non-dormant) card. See ADR 028.
 
 ## ~~2. `get_ai_adoption` — count usage-evidence in the adoption roll-up~~ ✅ DONE (2026-07-03)
 

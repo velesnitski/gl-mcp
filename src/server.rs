@@ -844,7 +844,7 @@ impl GlMcpServer {
     async fn get_group_activity(&self, Parameters(p): Parameters<GetGroupActivityParams>) -> Result<CallToolResult, McpError> {
         let hours = parse_period(p.period.as_deref().unwrap_or("24"));
         simple_tool!(self, p, "get_group_activity", "", |client|
-            tools::commits::get_group_activity(client, &p.group_path, hours).await
+            tools::commits::get_group_activity(client, &p.group_path, hours, p.include_commit_messages.unwrap_or(false)).await
         )
     }
 
