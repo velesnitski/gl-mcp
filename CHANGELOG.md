@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-07-09
+
+### Security (hardening — not a vulnerability fix)
+- Reviewed gl-mcp against yt-mcp advisory **GHSA-99mq-fjjc-6v9j** (path traversal in a `file_path` tool, CWE-22/73). gl-mcp is **not affected**: no tool reads a caller-controlled *local* file (`update_file` takes content directly; `get_file_content`/`analyze_file` operate on the *remote* GitLab repo via URL-encoded API paths), so the read-and-exfiltrate class does not exist here. The only local write from caller input — spec-audit snapshot filenames (`~/.gl-mcp/spec_maps/…`) — was already traversal-safe (separators were replaced). Hardened it anyway from a denylist to an **allowlist by construction** (`[A-Za-z0-9._-]`, leading dots stripped), so a snapshot can never escape `spec_maps/` regardless of `project`/`ref`/`key` input. Pinned by `snapshot_path_is_traversal_proof` + `safe_component_allowlist` tests. Note: the filename scheme changed slightly, so the first spec audit after upgrade re-baselines its snapshot. See ADR 031.
+
 ## [1.0.0] - 2026-07-03
 
 **Stability milestone.** The tool surface (99 tools: names, parameters, output shapes) is now a semver contract: additive changes bump minor, breaking changes bump major with a deprecation note. This release caps the v0.28→v0.38 hardening arc — architecture pass (one retry core, typed error classification, shared user resolution), fence-safe compact mode, Sentry hygiene, honest adoption metrics, project/member lifecycle, CI debugging, and toolset profiles — with all known defects fixed and the task backlog empty.

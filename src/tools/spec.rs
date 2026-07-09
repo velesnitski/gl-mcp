@@ -570,17 +570,39 @@ pub(crate) struct SpecSnapshot {
     undocumented: Vec<String>,
 }
 
-/// `~/.gl-mcp/spec_maps/{project}__{ref}[__{key}].json` (separators sanitized).
+/// Reduce a caller-controlled token to a single, traversal-proof filename
+/// component: keep only `[A-Za-z0-9._-]`, map everything else (path separators
+/// included) to `_`, and strip leading `.` so the result can neither carry a
+/// separator nor form a `.`/`..` dotfile. Allowlist by construction (CWE-22
+/// defense-in-depth) rather than a denylist of "known-bad" characters.
+fn safe_component(s: &str) -> String {
+    let mapped: String = s
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '_' })
+        .collect();
+    let trimmed = mapped.trim_start_matches('.');
+    if trimmed.is_empty() { "_".to_string() } else { trimmed.to_string() }
+}
+
+/// `~/.gl-mcp/spec_maps/{project}__{ref}[__{key}].json`. Every caller-controlled
+/// token is reduced to a safe filename component (see [`safe_component`]), so the
+/// snapshot always lands inside `spec_maps/` regardless of input — no path
+/// traversal is possible.
+///
 /// `map_key` disambiguates multiple specs audited against the same project+ref
 /// (e.g. Windows and macOS specs both targeting one desktop repo in a sweep), so
 /// their snapshots — and their "changes since last audit" history — don't collide.
 fn map_path(project_id: &str, ref_name: &str, map_key: &str) -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    let safe = |s: &str| s.replace(['/', '\\', ' '], "_");
     let name = if map_key.is_empty() {
-        format!("{}__{}.json", safe(project_id), safe(ref_name))
+        format!("{}__{}.json", safe_component(project_id), safe_component(ref_name))
     } else {
-        format!("{}__{}__{}.json", safe(project_id), safe(ref_name), safe(map_key))
+        format!(
+            "{}__{}__{}.json",
+            safe_component(project_id),
+            safe_component(ref_name),
+            safe_component(map_key)
+        )
     };
     std::path::PathBuf::from(home).join(".gl-mcp").join("spec_maps").join(name)
 }
@@ -2294,5 +2316,38 @@ short: abc123";
         assert!(masked.contains("chars"));
         assert_eq!(mask_secret(SecretKind::Email, "svc@example.com"), "s***@example.com");
         assert_eq!(mask_secret(SecretKind::Uuid, "12345678-90ab-cdef-1234-567890abcdef"), "12345678…");
+    }
+
+    #[test]
+    fn snapshot_path_is_traversal_proof() {
+        use std::path::PathBuf;
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+        let root = PathBuf::from(&home).join(".gl-mcp").join("spec_maps");
+
+        // Hostile inputs across all three caller-controlled tokens must still
+        // resolve to a flat file directly inside spec_maps/.
+        let cases = [
+            ("../../../etc/passwd", "..\\..\\windows", ".."),
+            ("/etc/shadow", "~/.ssh/id_rsa", "a/b/c"),
+            ("..", ".", ""),
+            ("normal-project", "main", "ios"),
+        ];
+        for (proj, refn, key) in cases {
+            let p = map_path(proj, refn, key);
+            assert_eq!(p.parent(), Some(root.as_path()), "escaped spec_maps for {proj:?}");
+            let fname = p.file_name().unwrap().to_str().unwrap();
+            assert!(!fname.contains('/') && !fname.contains('\\'), "separator in {fname:?}");
+            assert!(!fname.starts_with('.'), "dotfile/leading-dot in {fname:?}");
+            assert!(fname.ends_with(".json"));
+        }
+    }
+
+    #[test]
+    fn safe_component_allowlist() {
+        assert_eq!(safe_component("../../etc"), "_.._etc");
+        assert_eq!(safe_component(".."), "_");
+        assert_eq!(safe_component("main"), "main");
+        assert_eq!(safe_component("feature/x y"), "feature_x_y");
+        assert_eq!(safe_component(""), "_");
     }
 }
