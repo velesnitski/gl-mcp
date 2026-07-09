@@ -119,7 +119,7 @@ For HTTP transport: `gl-mcp --transport http --port 8000`
 
 ---
 
-## Tools (99)
+## Tools (100)
 
 ### Projects & Users
 | Tool | Description |
@@ -255,6 +255,7 @@ For HTTP transport: `gl-mcp --transport http --port 8000`
 | `generate_spec_audit_report` | HTML spec-drift report for a project |
 | `sweep_spec_audit` | Audit several specs concurrently |
 | `generate_sweep_report` | HTML cross-team spec-drift sweep report |
+| `audit_readmes` | Scan a group (with subgroups) for missing / small / Russian-Cyrillic READMEs |
 
 ---
 

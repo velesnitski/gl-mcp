@@ -545,6 +545,20 @@ pub struct GetGroupActivityParams {
     pub instance: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AuditReadmesParams {
+    #[schemars(description = "Group path to scan, including subgroups (e.g. 'my-org' or 'my-org/backend')")]
+    pub group_path: String,
+    #[schemars(description = "READMEs smaller than this many bytes are flagged as 'small' stubs (default: 300)")]
+    pub small_bytes: Option<usize>,
+    #[schemars(description = "READMEs whose alphabetic characters are at least this % Cyrillic are flagged as Russian/non-English (default: 20)")]
+    pub cyrillic_pct: Option<u8>,
+    #[schemars(description = "Also list repos with an OK README (default: false — only problems are listed)")]
+    pub include_ok: Option<bool>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
 // ─── Teams ───
 
 #[derive(Debug, Deserialize, JsonSchema)]

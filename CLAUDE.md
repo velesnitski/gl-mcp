@@ -1,6 +1,6 @@
 # gl-mcp
 
-GitLab MCP server. Rust, single binary, 99 tools.
+GitLab MCP server. Rust, single binary, 100 tools.
 
 ## Build & Test
 
@@ -26,6 +26,7 @@ src/
 └── tools/
     ├── mod.rs           # WRITE_TOOLS list, is_tool_enabled()
     ├── users.rs         # shared user resolution (hard/soft) + access-level parsing
+    ├── docs.rs          # audit_readmes: org-wide README coverage/quality scan
     ├── projects.rs      # list_projects, get_project, create/transfer/delete_project, list_members, list_branches, get_user, create/delete_branch
     ├── issues.rs        # search/get/create/update_issue, add_note (group-scoped search)
     ├── merge_requests.rs # list/get/create/update MRs, turnaround, dashboard, review depth, timeline, categories
