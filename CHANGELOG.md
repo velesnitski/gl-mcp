@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-09
+
+### Added
+- `audit_readmes` — scan a group (with subgroups) and classify each project's README as **missing**, **small/stub** (`< small_bytes`, default 300), or **Russian/Cyrillic** (alphabetic chars ≥ `cyrillic_pct`% Cyrillic, default 20), else ok. Fetches and classifies **server-side** (two calls per repo: root tree + raw README), so the caller gets a compact table + counts instead of N READMEs — the same shape as `get_ai_adoption`. Archived projects skipped; `include_ok` optionally lists healthy repos. First minor release under the 1.0 stability contract (additive). See ADR 032. 100 tools total.
+
 ## [1.0.1] - 2026-07-09
 
 ### Security (hardening — not a vulnerability fix)

@@ -897,6 +897,13 @@ impl GlMcpServer {
         )
     }
 
+    #[tool(description = "Audit README coverage/quality across a group (with subgroups): flags repos with a missing, small/stub, or Russian/Cyrillic README. Returns a compact table with counts — scanning happens server-side.")]
+    async fn audit_readmes(&self, Parameters(p): Parameters<AuditReadmesParams>) -> Result<CallToolResult, McpError> {
+        simple_tool!(self, p, "audit_readmes", "", |client|
+            tools::docs::audit_readmes(client, &p.group_path, p.small_bytes.unwrap_or(300), p.cyrillic_pct.unwrap_or(20), p.include_ok.unwrap_or(false)).await
+        )
+    }
+
     #[tool(description = "Get activity for all members of a GitLab group. Auto-discovers members, no config needed.")]
     async fn get_group_activity(&self, Parameters(p): Parameters<GetGroupActivityParams>) -> Result<CallToolResult, McpError> {
         let hours = parse_period(p.period.as_deref().unwrap_or("24"));
