@@ -81,6 +81,7 @@ pub async fn get_project(
     let open_issues = p["open_issues_count"].as_u64().unwrap_or(0);
     let created = p["created_at"].as_str().unwrap_or("?");
     let updated = p["last_activity_at"].as_str().unwrap_or("?");
+    let archived = p["archived"].as_bool().unwrap_or(false);
 
     let topics: Vec<&str> = p["topics"]
         .as_array()
@@ -90,6 +91,17 @@ pub async fn get_project(
     let mut parts = vec![
         format!("# {name}"),
         String::new(),
+    ];
+
+    // Archived projects are read-only: no pushes, no comments, no merges. Surface
+    // this first — it invalidates most write operations and GitLab does not
+    // reflect it in a merge request's merge_status.
+    if archived {
+        parts.push("⚠️ **ARCHIVED** — read-only. Pushes, comments, and merges are rejected.".to_string());
+        parts.push(String::new());
+    }
+
+    parts.extend([
         format!("**ID:** {id}"),
         format!("**Visibility:** {visibility}"),
         format!("**Default branch:** {default_branch}"),
@@ -97,7 +109,7 @@ pub async fn get_project(
         format!("**Stars:** {stars} | **Forks:** {forks} | **Open issues:** {open_issues}"),
         format!("**Created:** {created}"),
         format!("**Last activity:** {updated}"),
-    ];
+    ]);
 
     if !topics.is_empty() {
         parts.push(format!("**Topics:** {}", topics.join(", ")));
