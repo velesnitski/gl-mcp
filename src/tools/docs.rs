@@ -232,7 +232,7 @@ mod tests {
         assert_eq!(cyrillic_pct("Just plain English README text."), 0);
         assert_eq!(cyrillic_pct("Полностью русский текст"), 100);
         // Mixed but mostly Russian prose → flagged high.
-        assert!(cyrillic_pct("VPN сервер конфигурация нод") >= 70);
+        assert!(cyrillic_pct("API сервер конфигурация базы данных") >= 70);
         // Predominantly-English README with one short Russian note stays low.
         let mostly_english = "# Backend service\n\nInstall with cargo build and run the \
             server. Configure the database connection and the redis cache. \
