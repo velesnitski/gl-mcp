@@ -586,11 +586,11 @@ impl GlMcpServer {
         )
     }
 
-    #[tool(description = "Update a merge request's title, description, labels, or target branch. Only the fields you pass are changed.")]
+    #[tool(description = "Update a merge request's title, description, labels, target branch, or assignee. Only the fields you pass are changed. Assignee takes a username or id (or 'none' to unassign) and errors on an unknown username.")]
     async fn update_merge_request(&self, Parameters(p): Parameters<UpdateMergeRequestParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "update_merge_request");
         simple_tool!(self, p, "update_merge_request", &p.project_id, |client|
-            tools::merge_requests::update_merge_request(client, &p.project_id, p.mr_iid, p.title.as_deref().unwrap_or(""), p.description.as_deref().unwrap_or(""), p.labels.as_deref().unwrap_or(""), p.target_branch.as_deref().unwrap_or("")).await
+            tools::merge_requests::update_merge_request(client, &p.project_id, p.mr_iid, p.title.as_deref().unwrap_or(""), p.description.as_deref().unwrap_or(""), p.labels.as_deref().unwrap_or(""), p.target_branch.as_deref().unwrap_or(""), p.assignee.as_deref().unwrap_or("")).await
         )
     }
 

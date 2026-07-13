@@ -1400,6 +1400,10 @@ pub struct UpdateMergeRequestParams {
     pub labels: Option<String>,
     #[schemars(description = "New target branch (optional)")]
     pub target_branch: Option<String>,
+    #[schemars(
+        description = "Assignee: username (leading @ optional) or numeric user id. Use 'none' to unassign. Unknown username errors (optional)"
+    )]
+    pub assignee: Option<String>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }

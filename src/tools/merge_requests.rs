@@ -1279,6 +1279,7 @@ pub async fn update_merge_request(
     description: &str,
     labels: &str,
     target_branch: &str,
+    assignee: &str,
 ) -> Result<String> {
     let path = format!(
         "/projects/{}/merge_requests/{}",
@@ -1299,9 +1300,30 @@ pub async fn update_merge_request(
     if !target_branch.is_empty() {
         body.insert("target_branch".into(), serde_json::json!(target_branch));
     }
+
+    // Assignee resolves *hard* here, on purpose — the opposite of
+    // create_merge_request. There the assignee is optional enrichment and a bad
+    // username is silently dropped so the MR still gets created. Here, setting
+    // the assignee is the entire reason the call was made: a typo'd username must
+    // fail loudly, not report "Updated!" while changing nothing (the same
+    // "errors are half the story" trap that produced the Sentry false-pages).
+    if !assignee.is_empty() {
+        let a = assignee.trim();
+        if matches!(
+            a.to_lowercase().as_str(),
+            "none" | "unassign" | "unassigned" | "0"
+        ) {
+            // GitLab clears the assignee when assignee_id is 0.
+            body.insert("assignee_id".into(), serde_json::json!(0));
+        } else {
+            let (id, _) = super::users::resolve_user_id(client, a).await?;
+            body.insert("assignee_id".into(), serde_json::json!(id));
+        }
+    }
+
     if body.is_empty() {
         return Err(crate::error::Error::UserInput(
-            "Nothing to update — set at least one of title, description, labels, target_branch."
+            "Nothing to update — set at least one of title, description, labels, target_branch, assignee."
                 .into(),
         ));
     }
@@ -1311,6 +1333,13 @@ pub async fn update_merge_request(
     let new_title = mr["title"].as_str().unwrap_or("?");
     let web_url = mr["web_url"].as_str().unwrap_or("");
     let mut out = format!("Updated **!{mr_iid}** — {new_title}");
+    // Echo the resulting assignee so success is visible, not assumed.
+    if !assignee.is_empty() {
+        match mr["assignee"]["username"].as_str() {
+            Some(u) => out.push_str(&format!("\nAssignee: @{u}")),
+            None => out.push_str("\nAssignee: (none)"),
+        }
+    }
     if !web_url.is_empty() {
         out.push('\n');
         out.push_str(web_url);
