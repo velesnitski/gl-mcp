@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.4] - 2026-07-13
+
+### Added
+- **`get_merge_request` and `list_merge_requests` now show the assignee.** v1.1.3 added the ability to *set* an assignee but not to *see* one — the MR detail and list views never rendered the field, so "is this already assigned?" was unanswerable from the tool. Both views now show the assignee, and — deliberately — render `(unassigned)` explicitly rather than blank: once a field can be set, the *absence* of a value has to be visible or a "only assign where not assigned" workflow is just guessing. Reads the modern `assignees` array (joining multiple) and falls back to the deprecated single `assignee` field.
+
+See ADR 036.
+
 ## [1.1.3] - 2026-07-13
 
 ### Added
