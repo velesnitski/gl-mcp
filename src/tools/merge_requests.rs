@@ -23,6 +23,32 @@ fn mr_project_path(mr: &Value) -> Option<String> {
     Some(project_path.to_string())
 }
 
+/// The MR's assignee(s) as a display string: `@user` (comma-joined if there are
+/// several), or `(unassigned)` when there is none. Reads the modern `assignees`
+/// array and falls back to the deprecated single `assignee` field.
+///
+/// `(unassigned)` is returned explicitly rather than an empty string on purpose:
+/// once the tool can *set* an assignee, the absence of one has to be *visible*,
+/// or "is this already assigned?" stays unanswerable from the output.
+fn assignee_display(mr: &Value) -> String {
+    let assignees: Vec<String> = mr["assignees"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v["username"].as_str())
+                .map(|u| format!("@{u}"))
+                .collect()
+        })
+        .unwrap_or_default();
+    if !assignees.is_empty() {
+        return assignees.join(", ");
+    }
+    if let Some(u) = mr["assignee"]["username"].as_str() {
+        return format!("@{u}");
+    }
+    "(unassigned)".to_string()
+}
+
 /// List merge requests.
 pub async fn list_merge_requests(
     client: &GitLabClient,
@@ -86,7 +112,8 @@ pub async fn list_merge_requests(
             let author = mr["author"]["username"].as_str().unwrap_or("?");
             let project = mr["references"]["full"].as_str().unwrap_or("?");
             let draft = if mr["draft"].as_bool().unwrap_or(false) { "D" } else { "" };
-            lines.push(format!("{project}!{iid}|{state}{draft}|{author}|{title}"));
+            let assignee = assignee_display(mr);
+            lines.push(format!("{project}!{iid}|{state}{draft}|{author}|{assignee}|{title}"));
             if include_descriptions {
                 let desc = mr["description"].as_str().unwrap_or("").trim();
                 if !desc.is_empty() {
@@ -131,9 +158,10 @@ pub async fn list_merge_requests(
             .map(|a| a.iter().filter_map(|v| v["username"].as_str()).collect())
             .unwrap_or_default();
         let rev_str = if reviewers.is_empty() { String::new() } else { format!(" reviewers: {}", reviewers.iter().map(|r| format!("@{r}")).collect::<Vec<_>>().join(", ")) };
+        let asg_str = format!(" assignee: {}", assignee_display(mr));
 
         lines.push(format!(
-            "- **{project}** [{state}]{draft}{ci} {title} ({source} → {target}) by @{author} ({created_short}){rev_str}"
+            "- **{project}** [{state}]{draft}{ci} {title} ({source} → {target}) by @{author} ({created_short}){asg_str}{rev_str}"
         ));
     }
 
@@ -440,6 +468,7 @@ pub async fn get_merge_request(
         format!("**State:** {state}"),
         format!("**Branch:** {source} → {target}"),
         format!("**Author:** @{author}"),
+        format!("**Assignee:** {}", assignee_display(&mr)),
         format!("**Pipeline:** {pipeline_status}"),
         merge_status_line,
         format!("**Changes:** {changes} files"),
@@ -2004,6 +2033,33 @@ fn format_week_range(start: chrono::DateTime<chrono::Utc>, end: chrono::DateTime
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn assignee_display_prefers_the_assignees_array() {
+        let mr = json!({ "assignees": [{ "username": "alice" }] });
+        assert_eq!(assignee_display(&mr), "@alice");
+    }
+
+    #[test]
+    fn assignee_display_joins_multiple_assignees() {
+        let mr = json!({ "assignees": [{ "username": "alice" }, { "username": "bob" }] });
+        assert_eq!(assignee_display(&mr), "@alice, @bob");
+    }
+
+    #[test]
+    fn assignee_display_falls_back_to_the_single_field() {
+        // No `assignees` array, only the deprecated single `assignee`.
+        let mr = json!({ "assignee": { "username": "carol" } });
+        assert_eq!(assignee_display(&mr), "@carol");
+    }
+
+    /// The whole point of the fix: an unassigned MR must say so, not render blank.
+    #[test]
+    fn assignee_display_shows_unassigned_explicitly() {
+        assert_eq!(assignee_display(&json!({})), "(unassigned)");
+        assert_eq!(assignee_display(&json!({ "assignees": [] })), "(unassigned)");
+        assert_eq!(assignee_display(&json!({ "assignee": null })), "(unassigned)");
+    }
 
     /// Locks down `mr_project_path` behavior across the full surface of
     /// realistic inputs. This helper feeds 6 downstream tools — a regression
