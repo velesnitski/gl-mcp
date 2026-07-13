@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-07-10
+
+### Fixed
+- **`get_merge_request` reported a bogus `mergeable` for merge requests in archived projects.** GitLab keeps returning a normal `detailed_merge_status` (e.g. `mergeable`) even when the project is **archived** and therefore read-only — any merge, push, or comment is rejected. Acting on that status silently wastes work (we chased four "ready to merge" MRs, two of which were in archived repos and could never land). The MR API never exposes the project's archived flag, so `get_merge_request` now looks the project up — **only while the MR is open** (where the lie is harmful) and **cached** (60s, so repeated calls on one project don't refetch) — and replaces the status with an explicit `⚠️ BLOCKED — project is ARCHIVED` line that still shows what GitLab claimed.
+- `get_project` now surfaces **archived** state with a prominent warning. It was previously invisible, despite invalidating every write operation.
+
+See ADR 033.
+
 ## [1.1.0] - 2026-07-09
 
 ### Added
