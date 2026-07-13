@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-07-13
+
+### Added
+- **`update_merge_request` can now set (or clear) the assignee.** Previously only `create_merge_request` could assign, so an already-open MR could not be assigned to anyone through the tool at all. The new `assignee` parameter takes a username (leading `@` optional) or a numeric id, and accepts `none`/`unassigned` to clear the assignee. Unlike `create_merge_request` — where the assignee is optional enrichment and an unknown username is silently dropped so the MR still gets created — here the assignee **resolves hard**: an unknown username fails loudly rather than reporting success while changing nothing. The resulting assignee is echoed back so the outcome is visible instead of assumed.
+
+See ADR 035.
+
 ## [1.1.2] - 2026-07-13
 
 ### Fixed
