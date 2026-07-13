@@ -396,6 +396,34 @@ pub async fn get_merge_request(
     let merge_status = mr["detailed_merge_status"].as_str().unwrap_or("?");
     let changes = mr["changes_count"].as_str().unwrap_or("?");
 
+    // GitLab keeps reporting a normal detailed_merge_status (e.g. "mergeable") for
+    // merge requests in ARCHIVED projects — but archived projects are read-only, so
+    // the merge is rejected. Trusting merge_status alone silently wastes work. Only
+    // worth the lookup while the MR is open; cached so repeated calls on the same
+    // project don't refetch.
+    let archived = if state == "opened" {
+        let p: Value = client
+            .get_cached(
+                &format!("project_archived:{project_id}"),
+                &format!("/projects/{}", urlencoding::encode(project_id)),
+                &[],
+                60,
+            )
+            .await
+            .unwrap_or(Value::Null);
+        p["archived"].as_bool().unwrap_or(false)
+    } else {
+        false
+    };
+
+    let merge_status_line = if archived {
+        format!(
+            "**Merge status:** ⚠️ **BLOCKED — project is ARCHIVED** (read-only). GitLab reports `{merge_status}`, but any merge will be rejected."
+        )
+    } else {
+        format!("**Merge status:** {merge_status}")
+    };
+
     let reviewers: Vec<&str> = mr["reviewers"]
         .as_array()
         .map(|a| a.iter().filter_map(|v| v["username"].as_str()).collect())
@@ -413,7 +441,7 @@ pub async fn get_merge_request(
         format!("**Branch:** {source} → {target}"),
         format!("**Author:** @{author}"),
         format!("**Pipeline:** {pipeline_status}"),
-        format!("**Merge status:** {merge_status}"),
+        merge_status_line,
         format!("**Changes:** {changes} files"),
         format!("**Created:** {created}"),
         format!("**Updated:** {updated}"),
