@@ -319,6 +319,35 @@ pub async fn get_mr_approvals(
     Ok(lines.join("\n"))
 }
 
+/// Split a git-style commit message into an MR title and description.
+///
+/// Git convention is subject, blank line, body. GitLab caps MR titles at 255
+/// characters and rejects the *whole* request with 400 when that is exceeded —
+/// so passing the full commit message as the title means a properly written
+/// commit body silently costs you the merge request. The body belongs in the
+/// description anyway.
+///
+/// Truncation counts characters, not bytes: commit messages here are routinely
+/// Cyrillic, and slicing a UTF-8 string at byte 255 would panic.
+fn split_commit_message(msg: &str) -> (String, Option<String>) {
+    const MAX_TITLE: usize = 255;
+
+    let mut parts = msg.splitn(2, '\n');
+    let subject = parts.next().unwrap_or("").trim();
+    let body = parts.next().unwrap_or("").trim();
+
+    let title = if subject.chars().count() > MAX_TITLE {
+        let mut t: String = subject.chars().take(MAX_TITLE - 1).collect();
+        t.push('…');
+        t
+    } else {
+        subject.to_string()
+    };
+
+    let description = (!body.is_empty()).then(|| body.to_string());
+    (title, description)
+}
+
 /// Create or update a file in a GitLab repository.
 /// Always creates a new branch — never writes to main/master directly.
 pub async fn update_file(
@@ -403,12 +432,20 @@ pub async fn update_file(
     }
 
     if create_mr {
-        let mr_payload = serde_json::json!({
+        let (mut title, description) = split_commit_message(commit_message);
+        if title.is_empty() {
+            title = format!("Update {file_path}");
+        }
+
+        let mut mr_payload = serde_json::json!({
             "source_branch": branch,
             "target_branch": from_branch,
-            "title": commit_message,
+            "title": title,
             "remove_source_branch": true,
         });
+        if let Some(desc) = description {
+            mr_payload["description"] = serde_json::json!(desc);
+        }
 
         match client
             .post::<Value>(
@@ -429,6 +466,53 @@ pub async fn update_file(
     }
 
     Ok(lines.join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subject_only_message_has_no_description() {
+        let (title, desc) = split_commit_message("docs: add README");
+        assert_eq!(title, "docs: add README");
+        assert_eq!(desc, None);
+    }
+
+    #[test]
+    fn body_goes_to_description_not_title() {
+        let (title, desc) = split_commit_message(
+            "docs: rewrite README\n\nThe old one claimed Xcode 9.4.\nIt has been wrong for years.",
+        );
+        assert_eq!(title, "docs: rewrite README");
+        assert_eq!(
+            desc.unwrap(),
+            "The old one claimed Xcode 9.4.\nIt has been wrong for years."
+        );
+    }
+
+    #[test]
+    fn overlong_subject_is_truncated_to_gitlab_limit() {
+        let long = "x".repeat(400);
+        let (title, _) = split_commit_message(&long);
+        assert_eq!(title.chars().count(), 255, "GitLab rejects titles over 255");
+        assert!(title.ends_with('…'));
+    }
+
+    /// Byte-slicing a Cyrillic subject at 255 would land mid-codepoint and panic.
+    #[test]
+    fn overlong_cyrillic_subject_truncates_on_a_char_boundary() {
+        let long = "я".repeat(400);
+        let (title, _) = split_commit_message(&long);
+        assert_eq!(title.chars().count(), 255);
+        assert!(title.len() > 255, "sanity: this is multi-byte per char");
+    }
+
+    #[test]
+    fn empty_subject_yields_empty_title_for_caller_to_backfill() {
+        let (title, _) = split_commit_message("\n\nbody only");
+        assert!(title.is_empty());
+    }
 }
 
 /// List project environments (deployments).
