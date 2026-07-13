@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-07-13
+
+### Fixed
+- **`update_file` lost the merge request whenever the commit message had a body.** It passed the entire commit message through as the MR title, but GitLab caps titles at 255 characters and rejects the whole create call with `400 Bad Request`. The failure scaled with quality: a one-line message worked, while a properly written git message (subject, blank line, rationale) reliably exceeded the cap — so the commit landed and the MR silently did not. `update_file` now splits the message the way git defines it: **subject → title** (truncated to 255 *characters*, not bytes, so Cyrillic subjects cannot panic mid-codepoint) and **body → MR description**, which is where the rationale belonged in the first place. An empty subject is backfilled with `Update <file_path>` rather than sent blank.
+
+See ADR 034.
+
 ## [1.1.1] - 2026-07-10
 
 ### Fixed
