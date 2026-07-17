@@ -72,6 +72,12 @@ pub(crate) struct RepoMarkers {
     pub ai_tools: Vec<String>,
     /// Most recent AI-trailed commit as (short_sha, subject) — linkable evidence.
     pub ai_sample: Option<(String, String)>,
+    /// Distinct non-bot authors of AI-trailed commits in the window (uncapped —
+    /// feeds the people-based developer-adoption rate).
+    pub ai_author_set: Vec<String>,
+    /// Distinct non-bot authors of ANY commit in the window (the denominator
+    /// for the developer-adoption rate).
+    pub all_author_set: Vec<String>,
 }
 
 impl RepoMarkers {
@@ -445,6 +451,9 @@ async fn scan_repo(
 
     m.total_commits = commits.len();
     m.ai_commits = count_ai_commits(&commits);
+    let (ai_set, all_set) = collect_author_sets(&commits);
+    m.ai_author_set = ai_set;
+    m.all_author_set = all_set;
     if m.ai_commits > 0 {
         let (authors, tools, sample) = ai_usage_details(&commits);
         m.ai_authors = authors;
@@ -565,6 +574,43 @@ fn count_ai_commits(commits: &[Value]) -> usize {
         .iter()
         .filter(|c| is_ai_commit(c["message"].as_str().unwrap_or("")))
         .count()
+}
+
+/// True for automation identities that must not count as "developers" in the
+/// people-based adoption rate (industry practice excludes them: they inflate
+/// the denominator and can never "adopt"). Conservative: known automation
+/// names + the `[bot]` convention, NOT a bare "bot" substring — a human named
+/// e.g. "Abbott" must never be excluded.
+fn is_bot_author(name: &str) -> bool {
+    let l = name.trim().to_lowercase();
+    l.contains("[bot]")
+        || l.ends_with(" bot")
+        || l == "bot"
+        || l.contains("renovate")
+        || l.contains("dependabot")
+        || l.contains("semantic-release")
+        || l.contains("github actions")
+        || l.contains("gitlab-ci")
+}
+
+/// Distinct non-bot commit authors in the window: (ai_authors, all_authors).
+/// `ai_authors` ⊆ `all_authors` — authors of at least one AI-trailed commit.
+/// Feeds the developer-adoption rate: |union ai| / |union all| across repos.
+fn collect_author_sets(commits: &[Value]) -> (Vec<String>, Vec<String>) {
+    use std::collections::BTreeSet;
+    let mut all: BTreeSet<String> = BTreeSet::new();
+    let mut ai: BTreeSet<String> = BTreeSet::new();
+    for c in commits {
+        let name = c["author_name"].as_str().unwrap_or("").trim();
+        if name.is_empty() || is_bot_author(name) {
+            continue;
+        }
+        all.insert(name.to_string());
+        if is_ai_commit(c["message"].as_str().unwrap_or("")) {
+            ai.insert(name.to_string());
+        }
+    }
+    (ai.into_iter().collect(), all.into_iter().collect())
 }
 
 /// AI tool name from a Co-Authored-By trailer, e.g.
@@ -897,6 +943,13 @@ pub async fn get_ai_adoption(
         best_level: u8,
         adopting_ai_pcts: Vec<f64>,
         dormant: usize,
+        /// Distinct non-bot devs with ≥1 AI-trailed commit (union across repos).
+        ai_devs: std::collections::BTreeSet<String>,
+        /// Distinct non-bot devs with any commit (union across repos).
+        all_devs: std::collections::BTreeSet<String>,
+        /// Commit-weighted AI share inputs (Σ per repo).
+        ai_commit_sum: usize,
+        total_commit_sum: usize,
     }
 
     let mut teams: BTreeMap<String, TeamStats> = BTreeMap::new();
@@ -909,6 +962,10 @@ pub async fn get_ai_adoption(
             best_level: 0,
             adopting_ai_pcts: Vec::new(),
             dormant: 0,
+            ai_devs: Default::default(),
+            all_devs: Default::default(),
+            ai_commit_sum: 0,
+            total_commit_sum: 0,
         });
         stats.repos += 1;
         if level >= 1 {
@@ -923,7 +980,36 @@ pub async fn get_ai_adoption(
         if level > stats.best_level {
             stats.best_level = level;
         }
+        // People-based adoption inputs (industry headline): union of distinct
+        // non-bot authors, and commit-weighted AI share.
+        stats.ai_devs.extend(r.markers.ai_author_set.iter().cloned());
+        stats.all_devs.extend(r.markers.all_author_set.iter().cloned());
+        stats.ai_commit_sum += r.markers.ai_commits;
+        stats.total_commit_sum += r.markers.total_commits;
     }
+
+    // Org-wide people/commit headlines (union across ALL teams — a dev active
+    // in two teams counts once).
+    let mut org_ai_devs: std::collections::BTreeSet<String> = Default::default();
+    let mut org_all_devs: std::collections::BTreeSet<String> = Default::default();
+    let mut org_ai_commits = 0usize;
+    let mut org_total_commits = 0usize;
+    for s in teams.values() {
+        org_ai_devs.extend(s.ai_devs.iter().cloned());
+        org_all_devs.extend(s.all_devs.iter().cloned());
+        org_ai_commits += s.ai_commit_sum;
+        org_total_commits += s.total_commit_sum;
+    }
+    let org_dev_pct = if org_all_devs.is_empty() {
+        0.0
+    } else {
+        org_ai_devs.len() as f64 / org_all_devs.len() as f64 * 100.0
+    };
+    let org_share_pct = if org_total_commits == 0 {
+        0.0
+    } else {
+        org_ai_commits as f64 / org_total_commits as f64 * 100.0
+    };
 
     // Step 5: output
     if summary_only {
@@ -939,8 +1025,8 @@ pub async fn get_ai_adoption(
             format!(" | {} in-flight", in_flight.len())
         };
         return Ok(format!(
-            "{group_path}: {active_count} repos scanned, {dormant} dormant. {}{in_flight_part}",
-            team_parts.join(" | ")
+            "{group_path}: {active_count} repos scanned, {dormant} dormant. devs {}/{} ({org_dev_pct:.0}%) · AI share {org_share_pct:.0}%. {}{in_flight_part}",
+            org_ai_devs.len(), org_all_devs.len(), team_parts.join(" | ")
         ));
     }
 
@@ -956,6 +1042,10 @@ pub async fn get_ai_adoption(
                 best_level: 0,
                 adopting_ai_pcts: Vec::new(),
                 dormant: 0,
+                ai_devs: Default::default(),
+                all_devs: Default::default(),
+                ai_commit_sum: 0,
+                total_commit_sum: 0,
             })
             .dormant = count;
     }
@@ -965,10 +1055,18 @@ pub async fn get_ai_adoption(
             "## AI Adoption: {group_path} (last {days}d, {active_count} active repos, {dormant} dormant skipped)"
         ),
         String::new(),
+        // Industry-standard headlines: people-based adoption rate (distinct
+        // non-bot devs with ≥1 AI-trailed commit / distinct committers) and
+        // commit-weighted AI share. Both are telemetry lower bounds.
+        format!(
+            "**Developer adoption: {}/{} devs ({org_dev_pct:.0}%) · AI commit share: {org_share_pct:.0}% ({org_ai_commits}/{org_total_commits} commits)**",
+            org_ai_devs.len(), org_all_devs.len()
+        ),
+        String::new(),
         "### By Team".to_string(),
         String::new(),
-        "| Team | Repos | Active | Configured | Best level | AI commits % (avg of configured) | Dormant |".to_string(),
-        "|------|-------|--------|-----------|-----------|----------------------------------|---------|".to_string(),
+        "| Team | Repos | Active | Configured | Best level | Devs (AI/all) | AI commits % (avg of configured) | Dormant |".to_string(),
+        "|------|-------|--------|-----------|-----------|---------------|----------------------------------|---------|".to_string(),
     ];
 
     for (name, s) in &teams {
@@ -981,8 +1079,9 @@ pub async fn get_ai_adoption(
             )
         };
         out.push(format!(
-            "| {name} | {} | {} | {} | L{} | {avg_pct} | {} |",
-            s.repos, s.active, s.with_markers, s.best_level, s.dormant
+            "| {name} | {} | {} | {} | L{} | {}/{} | {avg_pct} | {} |",
+            s.repos, s.active, s.with_markers, s.best_level,
+            s.ai_devs.len(), s.all_devs.len(), s.dormant
         ));
     }
 
@@ -1446,6 +1545,12 @@ pub async fn generate_ai_adoption_report(
         down: usize,
         adopting_ai_pcts: Vec<f64>,
         dormant: usize,
+        /// Distinct non-bot devs with ≥1 AI-trailed commit (union across repos).
+        ai_devs: std::collections::BTreeSet<String>,
+        /// Distinct non-bot devs with any commit (union across repos).
+        all_devs: std::collections::BTreeSet<String>,
+        ai_commit_sum: usize,
+        total_commit_sum: usize,
     }
     let mut teams: BTreeMap<String, TeamStats> = BTreeMap::new();
     for r in results {
@@ -1468,11 +1573,38 @@ pub async fn generate_ai_adoption_report(
             "↓" => stats.down += 1,
             _ => {}
         }
+        stats.ai_devs.extend(r.markers.ai_author_set.iter().cloned());
+        stats.all_devs.extend(r.markers.all_author_set.iter().cloned());
+        stats.ai_commit_sum += r.markers.ai_commits;
+        stats.total_commit_sum += r.markers.total_commits;
     }
     // Teams with ONLY dormant repos still get a row (0 active, N dormant).
     for (team, count) in dormant_by_team(&scan.dormant) {
         teams.entry(team).or_default().dormant = count;
     }
+
+    // Org-wide people/commit headlines (industry-standard adoption metrics):
+    // union across teams so a dev committing in several teams counts once.
+    let mut org_ai_devs: std::collections::BTreeSet<String> = Default::default();
+    let mut org_all_devs: std::collections::BTreeSet<String> = Default::default();
+    let mut org_ai_commits = 0usize;
+    let mut org_total_commits = 0usize;
+    for s in teams.values() {
+        org_ai_devs.extend(s.ai_devs.iter().cloned());
+        org_all_devs.extend(s.all_devs.iter().cloned());
+        org_ai_commits += s.ai_commit_sum;
+        org_total_commits += s.total_commit_sum;
+    }
+    let org_dev_pct = if org_all_devs.is_empty() {
+        0.0
+    } else {
+        org_ai_devs.len() as f64 / org_all_devs.len() as f64 * 100.0
+    };
+    let org_share_pct = if org_total_commits == 0 {
+        0.0
+    } else {
+        org_ai_commits as f64 / org_total_commits as f64 * 100.0
+    };
 
     // ── HTML head + summary cards ──
 
@@ -1545,6 +1677,8 @@ window.addEventListener('hashchange',openTarget);openTarget();
 
 <!-- Summary Cards -->
 <div class="grid">
+  <div class="card"><div class="card-t">Developer Adoption</div><div class="card-v g"><a href="#by-team">{org_dev_pct:.0}%</a></div><div class="card-s">{org_ai_dev_count}/{org_all_dev_count} devs with AI-assisted commits</div></div>
+  <div class="card"><div class="card-t">AI Commit Share</div><div class="card-v g"><a href="#methodology">{org_share_pct:.0}%</a></div><div class="card-s">{org_ai_commits}/{org_total_commits} commits carry AI trailers</div></div>
   <div class="card"><div class="card-t">Active Repos</div><div class="card-v b"><a href="#by-team">{active_count}</a></div><div class="card-s">{dormant_skipped}</div></div>
   <div class="card"><div class="card-t">AI-Active</div><div class="card-v g"><a href="#by-team">{ai_active_count}</a></div><div class="card-s">{ai_active_pct:.0}% of active &middot; config or usage evidence</div></div>
   <div class="card"><div class="card-t">Configured (L1+)</div><div class="card-v b"><a href="#adopting">{adopting_count}</a></div><div class="card-s">{adopting_pct:.0}% of active &middot; marker-based</div></div>
@@ -1553,6 +1687,8 @@ window.addEventListener('hashchange',openTarget);openTarget();
   <div class="card"><div class="card-t">Attribution Rate</div><div class="card-v{attr_class}"><a href="#methodology">{attr_str}</a></div><div class="card-s">usage visible via commit trailers</div></div>
 </div>
 "##,
+        org_ai_dev_count = org_ai_devs.len(),
+        org_all_dev_count = org_all_devs.len(),
         l3 = level_counts[3],
         attr_class = match attr_rate {
             Some(p) if p < 50.0 => " y",
@@ -1603,7 +1739,7 @@ window.addEventListener('hashchange',openTarget);openTarget();
             Some(format!("{}://{host}", parsed.scheme()))
         });
 
-    html.push_str("<h2 id=\"by-team\">By Team</h2>\n<table>\n<tr><th>Team</th><th>Repos</th><th>AI-Active</th><th>Configured</th><th>Best Level</th><th>Trajectory</th><th>AI-visible Usage</th><th>Dormant</th></tr>\n");
+    html.push_str("<h2 id=\"by-team\">By Team</h2>\n<table>\n<tr><th>Team</th><th>Repos</th><th>Devs (AI/all)</th><th>AI-Active</th><th>Configured</th><th>Best Level</th><th>Trajectory</th><th>AI-visible Usage</th><th>Dormant</th></tr>\n");
     for (name, s) in &teams {
         let team_url = match &origin {
             Some(o) if name != "(root)" => format!("{o}/{group_path}/{name}"),
@@ -1656,8 +1792,17 @@ window.addEventListener('hashchange',openTarget);openTarget();
         } else {
             s.dormant.to_string()
         };
+        // People-based rate per team; green when every active committer has
+        // AI-assisted work in the window.
+        let devs_cell = if s.all_devs.is_empty() {
+            "&ndash;".to_string()
+        } else if s.ai_devs.len() == s.all_devs.len() {
+            format!("<span class=\"g\"><b>{}/{}</b></span>", s.ai_devs.len(), s.all_devs.len())
+        } else {
+            format!("{}/{}", s.ai_devs.len(), s.all_devs.len())
+        };
         html.push_str(&format!(
-            "<tr><td><b>{}</b></td><td>{}</td><td>{ai_active_cell}</td><td>{adopting_cell}</td><td class=\"{level_class}\"><b>L{}</b></td><td>{traj_str}</td><td>{avg_pct}</td><td>{dormant_cell}</td></tr>\n",
+            "<tr><td><b>{}</b></td><td>{}</td><td>{devs_cell}</td><td>{ai_active_cell}</td><td>{adopting_cell}</td><td class=\"{level_class}\"><b>L{}</b></td><td>{traj_str}</td><td>{avg_pct}</td><td>{dormant_cell}</td></tr>\n",
             link(&team_url, &esc(name)),
             s.repos,
             s.best_level,
@@ -1957,7 +2102,7 @@ window.addEventListener('hashchange',openTarget);openTarget();
     // ── Methodology footnote ──
 
     html.push_str(&format!(
-        "<details id=\"methodology\"><summary>Methodology</summary><p><b>AI-Active</b> counts repos with config markers <i>or</i> any usage evidence &mdash; an AI-trailed commit on any branch (squash-hidden feature-branch usage counts), recent <code>.tasks</code> activity, or an AI-marked MR &mdash; so real adoption is not gated on config presence; <b>Configured</b> is the marker-based count (L1+). Levels: <b>L0</b> no AI tooling markers; <b>L1 Exploring</b> any config marker (CLAUDE.md, AGENTS.md, .cursorrules, .mcp.json); <b>L2 Practicing</b> CLAUDE.md plus shared workflow assets (commands, settings, MCP config, hooks, or an ADR log) &mdash; or agents configured but not yet used; <b>L3 Scaling</b> agents plus measurable usage (&ge;10% AI-trailed commits, recent <code>.tasks</code> activity, or AI-marked MR descriptions). Usage is measured across <i>all</i> branches over the last {days} days because squash-merge strips commit trailers from the default branch; MR descriptions and <code>.tasks</code>/<code>.claude</code> path activity count as first-class evidence. <b>In-flight</b> repos have AI-named feature branches but no config merged yet. Trajectory: &uarr; actively building (live AI branches or recent config/ADR maintenance), &rarr; steady use, &darr; markers present but unused and unmaintained. Attribution rate = share of adopting repos with usage evidence whose usage is visible via Co-Authored-By trailers. &ldquo;Who&rdquo; names the commit authors of trailed commits (top 3) and the AI tool parsed from the trailer itself; sample commits link to the evidence. Repos with no activity in {dormant_days} days are skipped as dormant and listed as archive candidates.</p></details>\n"
+        "<details id=\"methodology\"><summary>Methodology</summary><p><b>Developer adoption</b> is the people-based industry headline: distinct non-bot commit authors with at least one AI-trailed commit in the window, divided by distinct non-bot commit authors overall (union across repos and teams &mdash; a developer active in several repos counts once). Automation identities (<code>[bot]</code>, renovate, dependabot, CI) are excluded from both sides. <b>AI commit share</b> is commit-weighted: total AI-trailed commits / total commits across all scanned repos &mdash; unlike the per-repo averages it cannot be skewed by tiny repos. Both are <i>telemetry lower bounds</i>: trailers are the only visible signal, and squash-merges or disabled attribution hide real usage. <b>AI-Active</b> counts repos with config markers <i>or</i> any usage evidence &mdash; an AI-trailed commit on any branch (squash-hidden feature-branch usage counts), recent <code>.tasks</code> activity, or an AI-marked MR &mdash; so real adoption is not gated on config presence; <b>Configured</b> is the marker-based count (L1+). Levels: <b>L0</b> no AI tooling markers; <b>L1 Exploring</b> any config marker (CLAUDE.md, AGENTS.md, .cursorrules, .mcp.json); <b>L2 Practicing</b> CLAUDE.md plus shared workflow assets (commands, settings, MCP config, hooks, or an ADR log) &mdash; or agents configured but not yet used; <b>L3 Scaling</b> agents plus measurable usage (&ge;10% AI-trailed commits, recent <code>.tasks</code> activity, or AI-marked MR descriptions). Usage is measured across <i>all</i> branches over the last {days} days because squash-merge strips commit trailers from the default branch; MR descriptions and <code>.tasks</code>/<code>.claude</code> path activity count as first-class evidence. <b>In-flight</b> repos have AI-named feature branches but no config merged yet. Trajectory: &uarr; actively building (live AI branches or recent config/ADR maintenance), &rarr; steady use, &darr; markers present but unused and unmaintained. Attribution rate = share of adopting repos with usage evidence whose usage is visible via Co-Authored-By trailers. &ldquo;Who&rdquo; names the commit authors of trailed commits (top 3) and the AI tool parsed from the trailer itself; sample commits link to the evidence. Repos with no activity in {dormant_days} days are skipped as dormant and listed as archive candidates.</p></details>\n"
     ));
 
     // ── Footer ──
@@ -1988,6 +2133,44 @@ mod tests {
         let m = empty();
         assert_eq!(adoption_level(&m), 0);
         assert!(quality_flags(&m).is_empty());
+    }
+
+    #[test]
+    fn test_bot_author_detection() {
+        assert!(is_bot_author("renovate[bot]"));
+        assert!(is_bot_author("Dependabot"));
+        assert!(is_bot_author("GitHub Actions"));
+        assert!(is_bot_author("release bot"));
+        // Humans whose names merely contain "bot" letters must NOT be excluded.
+        assert!(!is_bot_author("Abbott Costello"));
+        assert!(!is_bot_author("Jane Developer"));
+    }
+
+    #[test]
+    fn test_collect_author_sets_people_rate() {
+        let commits = vec![
+            serde_json::json!({"author_name": "Alice Dev",
+                "message": "feat: x\n\nCo-Authored-By: Claude <noreply@anthropic.com>"}),
+            serde_json::json!({"author_name": "Bob Dev", "message": "fix: y"}),
+            serde_json::json!({"author_name": "renovate[bot]", "message": "chore: bump deps"}),
+            // Alice again, non-AI — still one distinct dev, still AI-adopting.
+            serde_json::json!({"author_name": "Alice Dev", "message": "docs: z"}),
+        ];
+        let (ai, all) = collect_author_sets(&commits);
+        assert_eq!(all, vec!["Alice Dev".to_string(), "Bob Dev".to_string()]);
+        assert_eq!(ai, vec!["Alice Dev".to_string()]);
+        // The developer-adoption rate for this fixture: 1/2 devs.
+    }
+
+    #[test]
+    fn test_collect_author_sets_empty_and_missing_author() {
+        let commits = vec![
+            serde_json::json!({"message": "no author field"}),
+            serde_json::json!({"author_name": "", "message": "blank author"}),
+        ];
+        let (ai, all) = collect_author_sets(&commits);
+        assert!(ai.is_empty());
+        assert!(all.is_empty());
     }
 
     #[test]
