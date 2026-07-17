@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-07-17
+
+### Added
+- **People-based adoption headlines** in `get_ai_adoption` and `generate_ai_adoption_report` — the two metrics industry AI-adoption reporting leads with, computed from the commit data the scan already fetches (zero extra API calls):
+  - **Developer adoption rate** — distinct non-bot commit authors with ≥1 AI-trailed commit / distinct non-bot commit authors, union across repos and teams (a dev active in several repos counts once). Automation identities (`[bot]`, renovate, dependabot, CI) are excluded from both sides; the filter is deliberately conservative so a human named e.g. "Abbott" is never dropped.
+  - **AI commit share, commit-weighted** — Σ AI-trailed / Σ total commits across all scanned repos, immune to the tiny-repo skew of per-repo averages.
+  Surfaced as a bold markdown headline + `Devs (AI/all)` team-table column + `summary_only` suffix, and in the HTML report as two leading summary cards + a By-Team column (green when every active committer has AI-assisted work). Methodology documents both metrics and their telemetry-lower-bound caveat. Repo-centric maturity metrics are unchanged — config quality and people adoption are separate axes.
+
+See ADR 037.
+
 ## [1.1.4] - 2026-07-13
 
 ### Added
