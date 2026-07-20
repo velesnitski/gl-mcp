@@ -1229,7 +1229,34 @@ pub async fn merge_mr(
         }
     }
 
-    let mr: Value = client.put(&path, &body).await?;
+    // GitLab's merge endpoint fails with well-defined status codes; translate the
+    // bare HTTP status into something actionable rather than surfacing a raw
+    // "GitLab API error (405)" that the caller has to reverse-engineer.
+    let mr: Value = match client.put(&path, &body).await {
+        Ok(v) => v,
+        Err(crate::error::Error::GitLab { status, message }) => {
+            let hint = match status.as_u16() {
+                401 | 403 => Some(
+                    "you lack permission to merge here — Maintainer role is required on this project/group",
+                ),
+                405 => Some(
+                    "the MR is not in a mergeable state — its pipeline may still be running, required approvals may be missing, it may have merge conflicts, or it may still be a draft. Run `get_merge_request` to see the detailed merge status",
+                ),
+                406 => Some(
+                    "merge conflict — the source branch needs rebasing onto the target (see `rebase_mr`)",
+                ),
+                _ => None,
+            };
+            return Err(match hint {
+                Some(h) => crate::error::Error::UserInput(format!(
+                    "Cannot merge !{mr_iid}: {h}. (GitLab: {})",
+                    message.trim_matches('"')
+                )),
+                None => crate::error::Error::GitLab { status, message },
+            });
+        }
+        Err(e) => return Err(e),
+    };
 
     let title = mr["title"].as_str().unwrap_or("?");
     let state = mr["state"].as_str().unwrap_or("?");
