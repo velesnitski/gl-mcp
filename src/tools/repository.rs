@@ -363,15 +363,66 @@ pub async fn update_file(
     let encoded_project = urlencoding::encode(project_id);
     let encoded_file = urlencoding::encode(file_path);
 
-    // Safety: never write to main/master/develop directly
+    let from_branch = if source_branch.is_empty() { "main" } else { source_branch };
+
+    // Is this an *empty* repo — no commits, so no default branch yet? Such a repo
+    // can't be written the normal way: there is no `main` to branch a feature off,
+    // and `start_branch=main` is rejected because main doesn't exist. The first
+    // commit MUST create the default branch. Detect it via the project's
+    // `default_branch` (null/absent ⇒ empty).
+    let project: Value = client
+        .get(&format!("/projects/{encoded_project}"), &[])
+        .await
+        .unwrap_or(Value::Null);
+    let empty_repo = project.is_object()
+        && project["default_branch"]
+            .as_str()
+            .map(|s| s.is_empty())
+            .unwrap_or(true); // null default_branch ⇒ empty
+
+    // Safety: never write to main/master/develop directly — EXCEPT when the repo
+    // is empty, where creating the default branch (usually `main`) is the only way
+    // to initialize it. The guard's premise (a feature branch already exists to
+    // protect main from) is false for an uninitialized repo.
     let protected = ["main", "master", "develop", "release", "production"];
-    if protected.iter().any(|p| branch.eq_ignore_ascii_case(p)) {
+    if !empty_repo && protected.iter().any(|p| branch.eq_ignore_ascii_case(p)) {
         return Err(Error::UserInput(format!(
             "Cannot write directly to protected branch '{branch}'. Use a feature branch."
         )));
     }
 
-    let from_branch = if source_branch.is_empty() { "main" } else { source_branch };
+    if empty_repo {
+        // First commit into an empty repo: create the default branch (`from_branch`,
+        // normally `main`) directly. No `start_branch` (there is no base), and no MR
+        // (there is nothing to merge against — this IS the base).
+        let payload = serde_json::json!({
+            "branch": from_branch,
+            "commit_message": commit_message,
+            "actions": [{ "action": "create", "file_path": file_path, "content": content }]
+        });
+        let result: Value = client
+            .post(&format!("/projects/{encoded_project}/repository/commits"), &payload)
+            .await?;
+        let sha = result["id"].as_str().unwrap_or("?");
+        let short_sha = if sha.len() > 8 { &sha[..8] } else { sha };
+        let web_url = result["web_url"].as_str().unwrap_or("");
+
+        let mut lines = vec![
+            format!("**Initialized empty repo** — created `{file_path}` on new default branch `{from_branch}`"),
+            format!("**Commit:** `{short_sha}` — {commit_message}"),
+        ];
+        if !web_url.is_empty() {
+            lines.push(format!("**URL:** {web_url}"));
+        }
+        if create_mr {
+            lines.push(
+                "**Note:** MR skipped — the repo was empty, so this first commit created the \
+                 default branch itself; there is no base branch to open a merge request against."
+                    .to_string(),
+            );
+        }
+        return Ok(lines.join("\n"));
+    }
 
     // Does the target branch already exist? If so we commit straight onto it
     // (passing start_branch then makes GitLab reject with "branch already
