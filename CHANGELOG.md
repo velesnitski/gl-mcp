@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-07-17
+
+### Fixed
+- **`update_file` can now initialize an empty repository.** It previously assumed a repo already had history — it committed to a feature branch created with `start_branch=main`, which is impossible when the repo has no commits (no `main` to branch from, and `start_branch=main` is rejected). Empty repos are now detected via the project's `default_branch` (null ⇒ empty), the first commit creates the default branch directly (no `start_branch`), the protected-branch guard is bypassed for that one case (creating `main` is the only way to initialize), and the MR is skipped with a note (there is no base branch to merge against). Non-empty repos are unchanged. Fixes the "needs a human `git init`" dead-end. See ADR 038.
+- **`merge_mr` now interprets its failure codes instead of surfacing raw HTTP status.** A failed merge returned a bare `GitLab API error (401)`/`(405)` that had to be reverse-engineered. It now translates the merge endpoint's documented codes into actionable messages (401/403 → Maintainer role required here; 405 → not mergeable, check pipeline/approvals/conflicts/draft via `get_merge_request`; 406 → merge conflict, rebase) while preserving GitLab's original text. Success path and output shape unchanged. See ADR 039.
+
 ## [1.2.0] - 2026-07-17
 
 ### Added
