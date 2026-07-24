@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-07-24
+
+### Changed
+- **Benchmark footer adds [12-Factor Agents](https://github.com/humanlayer/12-factor-agents)** — a production-LLM engineering-principles reference (the "12-Factor App" of agents) — and drops the redundant Claude Code *docs* link (best-practices already covers it). Final list: Claude Code best practices · AGENTS.md · 12-Factor Agents · Pragmatic Engineer AI-tooling survey (2026) · DORA 2025. Both renderers; test pins the set.
+
+## [1.4.2] - 2026-07-24
+
+### Changed
+- **Benchmark reference links now cite substantive AI-adoption sources.** The "Benchmarks & practices" footer dropped `llms.txt` (llmstxt.org) — a repo file-format convention the scan already detects as a marker, not an adoption benchmark — and now links two current industry references with real data: the [Pragmatic Engineer AI-tooling survey](https://newsletter.pragmaticengineer.com/p/ai-tooling-2026) (900+ engineers on AI-tool adoption) and the [DORA 2025 State of AI-assisted Software Development](https://dora.dev/dora-report-2025/) report (replacing the generic DORA homepage). The `llms.txt` *detection* marker is unchanged. Both renderers updated; test pins the specific URLs. See ADR 041 addendum.
+
 ## [1.4.1] - 2026-07-24
 
 ### Fixed
