@@ -43,9 +43,16 @@ pub(crate) struct RepoMarkers {
     pub mcp_json: bool,
     pub agents_md: bool,
     pub cursor: bool,
-    /// `.codebase-memory/` — a committed code-graph index for AI retrieval
-    /// (nodes/edges graph, usually hook-reindexed). A power-user infra signal.
+    /// Committed **agent-memory infra**: a code-graph index (`.codebase-memory/`),
+    /// a Cline-style `memory-bank/`, or Serena's `.serena/`. Persistent AI memory
+    /// across sessions — a power-user signal.
     pub codebase_memory: bool,
+    /// `.claude/output-styles/` — customized Claude Code output styles.
+    pub output_styles: bool,
+    /// `.claude/plugins/` — Claude Code plugins.
+    pub plugins: bool,
+    /// `llms.txt` / `llms-full.txt` — the emerging LLM-readable-repo standard.
+    pub llms_txt: bool,
     /// Non-Claude AI-assistant configs found in the repo (copilot, aider,
     /// continue, windsurf, …). Capped, deduped. Makes the scan tool-agnostic so a
     /// Copilot- or Aider-only repo isn't reported as "no AI".
@@ -127,6 +134,9 @@ impl RepoMarkers {
             || self.hooks
             || self.tasks_dir
             || self.codebase_memory
+            || self.output_styles
+            || self.plugins
+            || self.llms_txt
             || !self.other_ai.is_empty()
     }
 
@@ -177,6 +187,30 @@ pub(crate) fn trajectory(m: &RepoMarkers) -> &'static str {
         return "↓";
     }
     "→"
+}
+
+/// Org-level maturity tier from the developer-adoption rate (%). Directional
+/// reference bands, not a cited statistic; the tier is a floor (squash-hidden and
+/// local-only usage sit above the measured rate).
+pub(crate) fn maturity_tier(dev_pct: f64) -> &'static str {
+    match dev_pct {
+        p if p >= 75.0 => "Leading",
+        p if p >= 50.0 => "Advanced",
+        p if p >= 30.0 => "Mainstream",
+        p if p >= 15.0 => "Emerging",
+        _ => "Nascent",
+    }
+}
+
+/// Config-coverage band from the share of active repos that are configured (%).
+pub(crate) fn coverage_band(cov_pct: f64) -> &'static str {
+    if cov_pct >= 60.0 {
+        "standardized"
+    } else if cov_pct >= 25.0 {
+        "partial"
+    } else {
+        "ad-hoc"
+    }
 }
 
 /// Compute the adoption level (0-3) for a repo from its markers.
@@ -300,8 +334,17 @@ impl RepoResult {
         if m.cursor {
             parts.push("cursor".into());
         }
+        if m.output_styles {
+            parts.push("output-styles".into());
+        }
+        if m.plugins {
+            parts.push("plugins".into());
+        }
         if m.codebase_memory {
-            parts.push("codebase-memory".into());
+            parts.push("agent-memory".into());
+        }
+        if m.llms_txt {
+            parts.push("llms.txt".into());
         }
         if !m.other_ai.is_empty() {
             parts.push(m.other_ai.join("+"));
@@ -406,9 +449,16 @@ async fn scan_repo(
             (".windsurfrules", false) | (".windsurf", true) => push_other(&mut m, "windsurf"),
             (".aider.conf.yml", false) | (".aiderignore", false) => push_other(&mut m, "aider"),
             (".continue", true) => push_other(&mut m, "continue"),
-            // A committed code-graph index (power-user infra), and hook-driven
-            // automation living in a root hooks dir under a few common names.
-            (".codebase-memory", true) => m.codebase_memory = true,
+            (".clinerules", false) => push_other(&mut m, "cline"),
+            (".junie", true) => push_other(&mut m, "junie"), // JetBrains agent
+            ("GEMINI.md", false) | (".gemini", true) => push_other(&mut m, "gemini"),
+            // Committed agent-memory infra (persistent across sessions): a code
+            // graph, a Cline memory-bank, or Serena's store.
+            (".codebase-memory", true) | ("memory-bank", true) | (".serena", true) => {
+                m.codebase_memory = true
+            }
+            ("llms.txt", false) | ("llms-full.txt", false) => m.llms_txt = true,
+            // Hook-driven automation living in a root hooks dir under a few names.
             ("githooks", true) | (".githooks", true) => m.hooks = true,
             (".github", true) => need_github_check = true,
             (".tasks", true) => m.tasks_dir = true,
@@ -455,6 +505,8 @@ async fn scan_repo(
                 ("skills", true) => has_skills = true,
                 ("commands", true) => m.commands = true,
                 ("hooks", true) => m.hooks = true,
+                ("output-styles", true) => m.output_styles = true,
+                ("plugins", true) => m.plugins = true,
                 ("settings.json", false) => m.shared_settings = true,
                 _ => {}
             }
@@ -1113,11 +1165,111 @@ pub async fn get_ai_adoption(
             org_ai_devs.len(), org_all_devs.len()
         ),
         String::new(),
-        "### By Team".to_string(),
-        String::new(),
-        "| Team | Repos | Active | Configured | Best level | Devs (AI/all) | AI commits % (avg of configured) | Dormant |".to_string(),
-        "|------|-------|--------|-----------|-----------|---------------|----------------------------------|---------|".to_string(),
     ];
+
+    // ── Industry benchmark: turn the headline metrics into a maturity tier +
+    // config coverage + depth, with directional reference bands and gap-driven
+    // suggestions. The grade is a FLOOR (squash-hidden and local-only usage sit
+    // above it) — stated so it's never read as a ceiling.
+    {
+        let configured_active = results.iter().filter(|r| r.markers.has_any_marker()).count();
+        let cov_pct = if active_count > 0 {
+            configured_active as f64 / active_count as f64 * 100.0
+        } else {
+            0.0
+        };
+        let tier = maturity_tier(org_dev_pct);
+        let cov_band = coverage_band(cov_pct);
+        let has_agents = results.iter().any(|r| r.markers.agents_count > 0);
+        let has_memory = results.iter().any(|r| r.markers.codebase_memory);
+        let max_level = results.iter().map(|r| r.level()).max().unwrap_or(0);
+        let depth = if has_agents {
+            "agentic (subagents in use)"
+        } else if has_memory {
+            "memory-backed"
+        } else if max_level >= 2 {
+            "structured"
+        } else if max_level >= 1 {
+            "exploratory"
+        } else {
+            "none"
+        };
+
+        out.push("### Industry Benchmark".to_string());
+        out.push(String::new());
+        out.push(format!(
+            "**Maturity: {tier}** (developer adoption {org_dev_pct:.0}%) · **Config coverage: {cov_band}** ({configured_active}/{active_count} active repos, {cov_pct:.0}%) · **Depth: {depth}**"
+        ));
+        out.push(String::new());
+        out.push(
+            "_Reference bands (directional, not a cited statistic): Nascent <15% · Emerging 15–29% · Mainstream 30–49% · Advanced 50–74% · Leading ≥75% developer adoption. The grade is a **floor** — squash-hidden and local-only usage sit above it._"
+                .to_string(),
+        );
+        out.push(String::new());
+
+        // Gap-driven suggestions, top 3 by leverage.
+        let mut sugg: Vec<String> = Vec::new();
+        let invisible = results
+            .iter()
+            .filter(|r| !r.markers.has_any_marker() && r.markers.has_usage_evidence())
+            .count();
+        if invisible > 0 {
+            sugg.push(format!(
+                "**{invisible} repo(s) have AI usage but no config** — add a `CLAUDE.md` (or the org template). Cheapest tier win, and it makes the usage visible."
+            ));
+        }
+        let squash_hidden = results
+            .iter()
+            .any(|r| quality_flags(&r.markers).iter().any(|f| f.contains("squash-hidden")));
+        if squash_hidden {
+            sugg.push(
+                "**Attribution is lost at merge** (squash-hidden usage) — disable trailer-stripping squash or standardize on MR-description attribution, so the dashboard stops under-reading real usage."
+                    .to_string(),
+            );
+        }
+        let next = if org_dev_pct < 15.0 {
+            Some((15.0, "Emerging"))
+        } else if org_dev_pct < 30.0 {
+            Some((30.0, "Mainstream"))
+        } else if org_dev_pct < 50.0 {
+            Some((50.0, "Advanced"))
+        } else if org_dev_pct < 75.0 {
+            Some((75.0, "Leading"))
+        } else {
+            None
+        };
+        if let Some((thr, name)) = next {
+            let target = (thr / 100.0 * org_all_devs.len() as f64).ceil() as usize;
+            let need = target.saturating_sub(org_ai_devs.len());
+            if need > 0 {
+                sugg.push(format!(
+                    "**Activate {need} more developer(s)** with AI to reach the **{name}** band ({thr:.0}%)."
+                ));
+            }
+        }
+        if cov_pct < 60.0 && configured_active > 0 && sugg.len() < 3 {
+            sugg.push(format!(
+                "**Config coverage is {cov_pct:.0}%** — make an AI config part of repo scaffolding to reach *standardized* (≥60%)."
+            ));
+        }
+        if !sugg.is_empty() {
+            out.push("**To advance:**".to_string());
+            for (i, s) in sugg.iter().take(3).enumerate() {
+                out.push(format!("{}. {s}", i + 1));
+            }
+            out.push(String::new());
+        }
+        out.push(
+            "_Benchmarks & practices: [Claude Code best practices](https://www.anthropic.com/engineering/claude-code-best-practices) · [Claude Code docs](https://docs.claude.com/en/docs/claude-code) · [AGENTS.md](https://agents.md/) · [llms.txt](https://llmstxt.org/) · [DORA](https://dora.dev/)._"
+                .to_string(),
+        );
+        out.push(String::new());
+    }
+
+    out.push("### By Team".to_string());
+    out.push(String::new());
+    out.push("| Team | Repos | Active | Configured | Best level | Devs (AI/all) | AI commits % (avg of configured) | Dormant |".to_string());
+    out.push("|------|-------|--------|-----------|-----------|---------------|----------------------------------|---------|".to_string());
 
     for (name, s) in &teams {
         let avg_pct = if s.adopting_ai_pcts.is_empty() {
@@ -1401,9 +1553,12 @@ pub async fn get_ai_adoption(
             .to_string(),
     );
     out.push(
-        "- **Tool-agnostic.** Markers cover Claude (`.claude/`, `CLAUDE.md`), plus Cursor, \
-         Copilot, Aider, Windsurf, Continue, `AGENTS.md`, `.mcp.json`, and hook/codebase-memory \
-         infra — so a non-Claude repo isn't misreported as \"no AI\"."
+        "- **Tool-agnostic.** Markers cover Claude (`.claude/` incl. agents, skills, commands, \
+         output-styles, plugins; `CLAUDE.md`), plus Cursor, Copilot, Aider, Windsurf, Continue, \
+         Cline, JetBrains Junie, Gemini (`AGENTS.md`, `.mcp.json`), agent-memory infra \
+         (`.codebase-memory/`, `memory-bank/`, `.serena/`), hooks, and `llms.txt` — so a \
+         non-Claude repo isn't misreported as \"no AI\". Known gap: only **root** `CLAUDE.md` is \
+         detected, so nested per-directory memory in a monorepo is undercounted."
             .to_string(),
     );
 
@@ -2242,6 +2397,9 @@ mod tests {
     fn marker_list_shows_new_markers() {
         let mut m = empty();
         m.codebase_memory = true;
+        m.output_styles = true;
+        m.plugins = true;
+        m.llms_txt = true;
         push_other(&mut m, "copilot");
         push_other(&mut m, "aider");
         let r = RepoResult {
@@ -2253,8 +2411,57 @@ mod tests {
             markers: m,
         };
         let list = r.marker_list();
-        assert!(list.contains("codebase-memory"), "got: {list}");
+        assert!(list.contains("agent-memory"), "got: {list}");
+        assert!(list.contains("output-styles"), "got: {list}");
+        assert!(list.contains("plugins"), "got: {list}");
+        assert!(list.contains("llms.txt"), "got: {list}");
         assert!(list.contains("copilot+aider"), "got: {list}");
+    }
+
+    /// JetBrains Junie / Gemini / Cline configs must register (tool-agnostic).
+    #[test]
+    fn jetbrains_and_other_assistants_count() {
+        for tool in ["junie", "gemini", "cline"] {
+            let mut m = empty();
+            push_other(&mut m, tool);
+            assert!(m.has_any_marker(), "{tool} should be a marker");
+            assert_eq!(adoption_level(&m), 1);
+        }
+    }
+
+    #[test]
+    fn maturity_tier_bands() {
+        assert_eq!(maturity_tier(0.0), "Nascent");
+        assert_eq!(maturity_tier(14.9), "Nascent");
+        assert_eq!(maturity_tier(15.0), "Emerging");
+        assert_eq!(maturity_tier(20.0), "Emerging"); // backend today
+        assert_eq!(maturity_tier(30.0), "Mainstream");
+        assert_eq!(maturity_tier(50.0), "Advanced");
+        assert_eq!(maturity_tier(75.0), "Leading");
+        assert_eq!(maturity_tier(100.0), "Leading");
+    }
+
+    #[test]
+    fn coverage_band_thresholds() {
+        assert_eq!(coverage_band(0.0), "ad-hoc");
+        assert_eq!(coverage_band(24.9), "ad-hoc");
+        assert_eq!(coverage_band(25.0), "partial");
+        assert_eq!(coverage_band(59.9), "partial");
+        assert_eq!(coverage_band(60.0), "standardized");
+    }
+
+    /// llms.txt and .claude depth (output-styles/plugins) each count as markers.
+    #[test]
+    fn llms_txt_and_claude_depth_count() {
+        let mut m = empty();
+        m.llms_txt = true;
+        assert!(m.has_any_marker());
+        let mut m2 = empty();
+        m2.output_styles = true;
+        assert!(m2.has_any_marker());
+        let mut m3 = empty();
+        m3.plugins = true;
+        assert!(m3.has_any_marker());
     }
 
     #[test]
