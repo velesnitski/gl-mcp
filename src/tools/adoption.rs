@@ -213,6 +213,181 @@ pub(crate) fn coverage_band(cov_pct: f64) -> &'static str {
     }
 }
 
+/// The industry-benchmark verdict: maturity tier + config coverage + depth,
+/// plus gap-driven advice. Computed once and rendered by BOTH the markdown
+/// (`get_ai_adoption`) and HTML (`generate_ai_adoption_report`) paths — the
+/// HTML path silently lacking this whole section was exactly a two-copies
+/// drift bug (ADR 042). One source of truth, thin per-format renderers.
+pub(crate) struct Benchmark {
+    pub tier: &'static str,
+    pub cov_band: &'static str,
+    pub depth: &'static str,
+    pub configured_active: usize,
+    pub active_count: usize,
+    pub cov_pct: f64,
+    pub dev_pct: f64,
+    /// Top-3 gap-driven suggestions, plain prose (each renderer adds its own
+    /// emphasis). Empty when nothing actionable applies.
+    pub suggestions: Vec<String>,
+}
+
+/// Build the benchmark from scan results + org-level people metrics. Pure.
+pub(crate) fn compute_benchmark(
+    results: &[RepoResult],
+    org_dev_pct: f64,
+    org_ai_dev_count: usize,
+    org_all_dev_count: usize,
+) -> Benchmark {
+    let active_count = results.len();
+    let configured_active = results.iter().filter(|r| r.markers.has_any_marker()).count();
+    let cov_pct = if active_count > 0 {
+        configured_active as f64 / active_count as f64 * 100.0
+    } else {
+        0.0
+    };
+    let has_agents = results.iter().any(|r| r.markers.agents_count > 0);
+    let has_memory = results.iter().any(|r| r.markers.codebase_memory);
+    let max_level = results.iter().map(|r| r.level()).max().unwrap_or(0);
+    let depth = if has_agents {
+        "agentic (subagents in use)"
+    } else if has_memory {
+        "memory-backed"
+    } else if max_level >= 2 {
+        "structured"
+    } else if max_level >= 1 {
+        "exploratory"
+    } else {
+        "none"
+    };
+
+    // Gap-driven suggestions, top 3 by leverage — selection logic lives here
+    // so both output formats agree on what to recommend.
+    let mut suggestions: Vec<String> = Vec::new();
+    let invisible = results
+        .iter()
+        .filter(|r| !r.markers.has_any_marker() && r.markers.has_usage_evidence())
+        .count();
+    if invisible > 0 {
+        suggestions.push(format!(
+            "{invisible} repo(s) have AI usage but no config — add a CLAUDE.md (or the org template). Cheapest tier win, and it makes the usage visible."
+        ));
+    }
+    let squash_hidden = results
+        .iter()
+        .any(|r| quality_flags(&r.markers).iter().any(|f| f.contains("squash-hidden")));
+    if squash_hidden {
+        suggestions.push(
+            "Attribution is lost at merge (squash-hidden usage) — disable trailer-stripping squash or standardize on MR-description attribution, so the dashboard stops under-reading real usage."
+                .to_string(),
+        );
+    }
+    let next = if org_dev_pct < 15.0 {
+        Some((15.0, "Emerging"))
+    } else if org_dev_pct < 30.0 {
+        Some((30.0, "Mainstream"))
+    } else if org_dev_pct < 50.0 {
+        Some((50.0, "Advanced"))
+    } else if org_dev_pct < 75.0 {
+        Some((75.0, "Leading"))
+    } else {
+        None
+    };
+    if let Some((thr, name)) = next {
+        let target = (thr / 100.0 * org_all_dev_count as f64).ceil() as usize;
+        let need = target.saturating_sub(org_ai_dev_count);
+        if need > 0 {
+            suggestions.push(format!(
+                "Activate {need} more developer(s) with AI to reach the {name} band ({thr:.0}%)."
+            ));
+        }
+    }
+    if cov_pct < 60.0 && configured_active > 0 && suggestions.len() < 3 {
+        suggestions.push(format!(
+            "Config coverage is {cov_pct:.0}% — make an AI config part of repo scaffolding to reach standardized (≥60%)."
+        ));
+    }
+    suggestions.truncate(3);
+
+    Benchmark {
+        tier: maturity_tier(org_dev_pct),
+        cov_band: coverage_band(cov_pct),
+        depth,
+        configured_active,
+        active_count,
+        cov_pct,
+        dev_pct: org_dev_pct,
+        suggestions,
+    }
+}
+
+/// Reference-band caption shared by both renderers (kept identical so the
+/// framing can't diverge between formats).
+const BENCH_BANDS: &str = "Reference bands (directional, not a cited statistic): Nascent <15% \u{b7} Emerging 15\u{2013}29% \u{b7} Mainstream 30\u{2013}49% \u{b7} Advanced 50\u{2013}74% \u{b7} Leading \u{2265}75% developer adoption. The grade is a floor \u{2014} squash-hidden and local-only usage sit above it.";
+
+/// Colour class (matches the report CSS: g/b/y/r) for a maturity tier.
+fn tier_css_class(tier: &str) -> &'static str {
+    match tier {
+        "Leading" | "Advanced" => "g",
+        "Mainstream" => "b",
+        "Emerging" => "y",
+        _ => "r",
+    }
+}
+
+/// Render the benchmark as markdown lines (for `get_ai_adoption`).
+pub(crate) fn render_benchmark_md(b: &Benchmark) -> Vec<String> {
+    let mut out = vec![
+        "### Industry Benchmark".to_string(),
+        String::new(),
+        format!(
+            "**Maturity: {}** (developer adoption {:.0}%) \u{b7} **Config coverage: {}** ({}/{} active repos, {:.0}%) \u{b7} **Depth: {}**",
+            b.tier, b.dev_pct, b.cov_band, b.configured_active, b.active_count, b.cov_pct, b.depth
+        ),
+        String::new(),
+        format!("_{BENCH_BANDS}_"),
+        String::new(),
+    ];
+    if !b.suggestions.is_empty() {
+        out.push("**To advance:**".to_string());
+        for (i, s) in b.suggestions.iter().enumerate() {
+            out.push(format!("{}. {s}", i + 1));
+        }
+        out.push(String::new());
+    }
+    out.push(
+        "_Benchmarks & practices: [Claude Code best practices](https://www.anthropic.com/engineering/claude-code-best-practices) \u{b7} [Claude Code docs](https://docs.claude.com/en/docs/claude-code) \u{b7} [AGENTS.md](https://agents.md/) \u{b7} [llms.txt](https://llmstxt.org/) \u{b7} [DORA](https://dora.dev/)._"
+            .to_string(),
+    );
+    out.push(String::new());
+    out
+}
+
+/// Render the benchmark as an HTML fragment (for the emailed report). Takes
+/// an html-escaper so it matches the report's escaping of dynamic text.
+pub(crate) fn render_benchmark_html(b: &Benchmark, esc: impl Fn(&str) -> String) -> String {
+    let cls = tier_css_class(b.tier);
+    let mut s = String::new();
+    s.push_str("<h2 id=\"benchmark\">Industry Benchmark</h2>\n");
+    s.push_str("<div class=\"bench\">\n");
+    s.push_str(&format!(
+        "  <div class=\"bench-tier {cls}\">{}</div>\n  <div class=\"bench-line\">Developer adoption <b>{:.0}%</b> &middot; Config coverage <b>{}</b> ({}/{} repos, {:.0}%) &middot; Depth <b>{}</b></div>\n",
+        b.tier, b.dev_pct, b.cov_band, b.configured_active, b.active_count, b.cov_pct, esc(b.depth)
+    ));
+    if !b.suggestions.is_empty() {
+        s.push_str("  <div class=\"bench-adv\">To advance:</div>\n  <ol class=\"bench-adv-list\">\n");
+        for sug in &b.suggestions {
+            s.push_str(&format!("    <li>{}</li>\n", esc(sug)));
+        }
+        s.push_str("  </ol>\n");
+    }
+    s.push_str(&format!("  <div class=\"bench-note\">{}</div>\n", esc(BENCH_BANDS)));
+    s.push_str(
+        "  <div class=\"bench-note\">Benchmarks &amp; practices: <a href=\"https://www.anthropic.com/engineering/claude-code-best-practices\">Claude Code best practices</a> &middot; <a href=\"https://docs.claude.com/en/docs/claude-code\">Claude Code docs</a> &middot; <a href=\"https://agents.md/\">AGENTS.md</a> &middot; <a href=\"https://llmstxt.org/\">llms.txt</a> &middot; <a href=\"https://dora.dev/\">DORA</a></div>\n",
+    );
+    s.push_str("</div>\n");
+    s
+}
+
 /// Compute the adoption level (0-3) for a repo from its markers.
 ///
 /// - L0 None: no markers at all
@@ -1167,104 +1342,15 @@ pub async fn get_ai_adoption(
         String::new(),
     ];
 
-    // ── Industry benchmark: turn the headline metrics into a maturity tier +
-    // config coverage + depth, with directional reference bands and gap-driven
-    // suggestions. The grade is a FLOOR (squash-hidden and local-only usage sit
-    // above it) — stated so it's never read as a ceiling.
-    {
-        let configured_active = results.iter().filter(|r| r.markers.has_any_marker()).count();
-        let cov_pct = if active_count > 0 {
-            configured_active as f64 / active_count as f64 * 100.0
-        } else {
-            0.0
-        };
-        let tier = maturity_tier(org_dev_pct);
-        let cov_band = coverage_band(cov_pct);
-        let has_agents = results.iter().any(|r| r.markers.agents_count > 0);
-        let has_memory = results.iter().any(|r| r.markers.codebase_memory);
-        let max_level = results.iter().map(|r| r.level()).max().unwrap_or(0);
-        let depth = if has_agents {
-            "agentic (subagents in use)"
-        } else if has_memory {
-            "memory-backed"
-        } else if max_level >= 2 {
-            "structured"
-        } else if max_level >= 1 {
-            "exploratory"
-        } else {
-            "none"
-        };
-
-        out.push("### Industry Benchmark".to_string());
-        out.push(String::new());
-        out.push(format!(
-            "**Maturity: {tier}** (developer adoption {org_dev_pct:.0}%) · **Config coverage: {cov_band}** ({configured_active}/{active_count} active repos, {cov_pct:.0}%) · **Depth: {depth}**"
-        ));
-        out.push(String::new());
-        out.push(
-            "_Reference bands (directional, not a cited statistic): Nascent <15% · Emerging 15–29% · Mainstream 30–49% · Advanced 50–74% · Leading ≥75% developer adoption. The grade is a **floor** — squash-hidden and local-only usage sit above it._"
-                .to_string(),
-        );
-        out.push(String::new());
-
-        // Gap-driven suggestions, top 3 by leverage.
-        let mut sugg: Vec<String> = Vec::new();
-        let invisible = results
-            .iter()
-            .filter(|r| !r.markers.has_any_marker() && r.markers.has_usage_evidence())
-            .count();
-        if invisible > 0 {
-            sugg.push(format!(
-                "**{invisible} repo(s) have AI usage but no config** — add a `CLAUDE.md` (or the org template). Cheapest tier win, and it makes the usage visible."
-            ));
-        }
-        let squash_hidden = results
-            .iter()
-            .any(|r| quality_flags(&r.markers).iter().any(|f| f.contains("squash-hidden")));
-        if squash_hidden {
-            sugg.push(
-                "**Attribution is lost at merge** (squash-hidden usage) — disable trailer-stripping squash or standardize on MR-description attribution, so the dashboard stops under-reading real usage."
-                    .to_string(),
-            );
-        }
-        let next = if org_dev_pct < 15.0 {
-            Some((15.0, "Emerging"))
-        } else if org_dev_pct < 30.0 {
-            Some((30.0, "Mainstream"))
-        } else if org_dev_pct < 50.0 {
-            Some((50.0, "Advanced"))
-        } else if org_dev_pct < 75.0 {
-            Some((75.0, "Leading"))
-        } else {
-            None
-        };
-        if let Some((thr, name)) = next {
-            let target = (thr / 100.0 * org_all_devs.len() as f64).ceil() as usize;
-            let need = target.saturating_sub(org_ai_devs.len());
-            if need > 0 {
-                sugg.push(format!(
-                    "**Activate {need} more developer(s)** with AI to reach the **{name}** band ({thr:.0}%)."
-                ));
-            }
-        }
-        if cov_pct < 60.0 && configured_active > 0 && sugg.len() < 3 {
-            sugg.push(format!(
-                "**Config coverage is {cov_pct:.0}%** — make an AI config part of repo scaffolding to reach *standardized* (≥60%)."
-            ));
-        }
-        if !sugg.is_empty() {
-            out.push("**To advance:**".to_string());
-            for (i, s) in sugg.iter().take(3).enumerate() {
-                out.push(format!("{}. {s}", i + 1));
-            }
-            out.push(String::new());
-        }
-        out.push(
-            "_Benchmarks & practices: [Claude Code best practices](https://www.anthropic.com/engineering/claude-code-best-practices) · [Claude Code docs](https://docs.claude.com/en/docs/claude-code) · [AGENTS.md](https://agents.md/) · [llms.txt](https://llmstxt.org/) · [DORA](https://dora.dev/)._"
-                .to_string(),
-        );
-        out.push(String::new());
-    }
+    // ── Industry benchmark: maturity tier + config coverage + depth +
+    // gap-driven advice. Computed once (compute_benchmark) and rendered by
+    // both output paths so the HTML report can't silently lack it (ADR 042).
+    out.extend(render_benchmark_md(&compute_benchmark(
+        &results,
+        org_dev_pct,
+        org_ai_devs.len(),
+        org_all_devs.len(),
+    )));
 
     out.push("### By Team".to_string());
     out.push(String::new());
@@ -1877,6 +1963,12 @@ h2{{color:#58a6ff;margin:36px 0 16px;font-size:18px;border-bottom:1px solid #212
 .card-v{{font-size:28px;font-weight:700}}
 .card-s{{color:#8b949e;font-size:12px;margin-top:4px}}
 .g{{color:#3fb950}}.r{{color:#f85149}}.y{{color:#d29922}}.b{{color:#58a6ff}}.gr{{color:#8b949e}}
+.bench{{background:#161b22;border:1px solid #21262d;border-radius:8px;padding:20px 22px;margin:16px 0}}
+.bench-tier{{font-size:22px;font-weight:700;margin-bottom:6px}}
+.bench-line{{color:#c9d1d9;font-size:14px}}
+.bench-adv{{color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin:14px 0 6px}}
+.bench-adv-list{{margin:0 0 4px 20px;font-size:14px}}.bench-adv-list li{{margin:4px 0}}
+.bench-note{{color:#8b949e;font-size:12px;margin-top:10px;max-width:900px}}
 table{{width:100%;border-collapse:collapse;margin:12px 0}}
 th{{background:#161b22;color:#8b949e;text-align:left;padding:10px 14px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid #21262d}}
 td{{padding:10px 14px;border-bottom:1px solid #21262d;font-size:14px}}
@@ -1926,6 +2018,14 @@ window.addEventListener('hashchange',openTarget);openTarget();
             None => "",
         },
     );
+
+    // ── Industry Benchmark ──
+    // Same verdict the markdown path renders, from the same compute_benchmark
+    // (ADR 042). Placed right after the headline cards, before the funnel.
+    html.push_str(&render_benchmark_html(
+        &compute_benchmark(results, org_dev_pct, org_ai_devs.len(), org_all_devs.len()),
+        esc,
+    ));
 
     // ── Level Funnel ──
 
@@ -2448,6 +2548,65 @@ mod tests {
         assert_eq!(coverage_band(25.0), "partial");
         assert_eq!(coverage_band(59.9), "partial");
         assert_eq!(coverage_band(60.0), "standardized");
+    }
+
+    fn bench_repo(markers: RepoMarkers) -> RepoResult {
+        RepoResult {
+            path: "g/r".into(),
+            team: "t".into(),
+            last_activity: String::new(),
+            web_url: String::new(),
+            default_branch: "main".into(),
+            markers,
+        }
+    }
+
+    /// compute_benchmark reflects coverage + the invisible-usage suggestion:
+    /// one configured repo + one usage-but-no-config repo → 50% coverage and
+    /// a "1 repo(s) have AI usage but no config" advice line.
+    #[test]
+    fn benchmark_coverage_and_invisible_suggestion() {
+        let mut configured = RepoMarkers::default();
+        configured.claude_md = true; // a marker → counts as configured
+        let mut invisible = RepoMarkers::default();
+        invisible.ai_commits = 7; // usage evidence, no config marker
+        let results = vec![bench_repo(configured), bench_repo(invisible)];
+
+        // org dev rate 20% (1 of 5) → Emerging band, one dev short of Mainstream.
+        let b = compute_benchmark(&results, 20.0, 1, 5);
+        assert_eq!(b.tier, "Emerging");
+        assert_eq!(b.configured_active, 1);
+        assert_eq!(b.active_count, 2);
+        assert!((b.cov_pct - 50.0).abs() < 1e-9, "cov {}", b.cov_pct);
+        assert_eq!(b.cov_band, "partial");
+        assert!(
+            b.suggestions.iter().any(|s| s.contains("1 repo(s) have AI usage but no config")),
+            "suggestions: {:?}",
+            b.suggestions
+        );
+        // Plain prose only — no markdown emphasis leaks into the shared strings.
+        assert!(b.suggestions.iter().all(|s| !s.contains("**")));
+    }
+
+    /// The drift guard: BOTH renderers must emit the section and the tier.
+    /// The HTML path silently lacking the whole benchmark was the ADR-042 bug;
+    /// pin both formats so a future refactor can't drop one again.
+    #[test]
+    fn benchmark_rendered_by_both_paths() {
+        let mut m = RepoMarkers::default();
+        m.claude_md = true;
+        let b = compute_benchmark(&[bench_repo(m)], 55.0, 6, 11); // Advanced
+
+        let md = render_benchmark_md(&b).join("\n");
+        assert!(md.contains("### Industry Benchmark"));
+        assert!(md.contains("Maturity: Advanced"));
+
+        let html = render_benchmark_html(&b, |s| s.to_string());
+        assert!(html.contains("Industry Benchmark"));
+        assert!(html.contains(">Advanced<"));
+        assert!(html.contains("class=\"bench-tier g\"")); // Advanced → green
+        // No raw markdown emphasis in HTML output.
+        assert!(!html.contains("**"));
     }
 
     /// llms.txt and .claude depth (output-styles/plugins) each count as markers.
