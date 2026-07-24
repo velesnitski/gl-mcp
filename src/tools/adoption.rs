@@ -355,7 +355,7 @@ pub(crate) fn render_benchmark_md(b: &Benchmark) -> Vec<String> {
         out.push(String::new());
     }
     out.push(
-        "_Benchmarks & practices: [Claude Code best practices](https://www.anthropic.com/engineering/claude-code-best-practices) \u{b7} [Claude Code docs](https://docs.claude.com/en/docs/claude-code) \u{b7} [AGENTS.md](https://agents.md/) \u{b7} [llms.txt](https://llmstxt.org/) \u{b7} [DORA](https://dora.dev/)._"
+        "_Benchmarks & practices: [Claude Code best practices](https://www.anthropic.com/engineering/claude-code-best-practices) \u{b7} [Claude Code docs](https://docs.claude.com/en/docs/claude-code) \u{b7} [AGENTS.md](https://agents.md/) \u{b7} [Pragmatic Engineer: AI tooling survey](https://newsletter.pragmaticengineer.com/p/ai-tooling-2026) \u{b7} [DORA 2025: State of AI-assisted development](https://dora.dev/dora-report-2025/)._"
             .to_string(),
     );
     out.push(String::new());
@@ -382,7 +382,7 @@ pub(crate) fn render_benchmark_html(b: &Benchmark, esc: impl Fn(&str) -> String)
     }
     s.push_str(&format!("  <div class=\"bench-note\">{}</div>\n", esc(BENCH_BANDS)));
     s.push_str(
-        "  <div class=\"bench-note\">Benchmarks &amp; practices: <a href=\"https://www.anthropic.com/engineering/claude-code-best-practices\">Claude Code best practices</a> &middot; <a href=\"https://docs.claude.com/en/docs/claude-code\">Claude Code docs</a> &middot; <a href=\"https://agents.md/\">AGENTS.md</a> &middot; <a href=\"https://llmstxt.org/\">llms.txt</a> &middot; <a href=\"https://dora.dev/\">DORA</a></div>\n",
+        "  <div class=\"bench-note\">Benchmarks &amp; practices: <a href=\"https://www.anthropic.com/engineering/claude-code-best-practices\">Claude Code best practices</a> &middot; <a href=\"https://docs.claude.com/en/docs/claude-code\">Claude Code docs</a> &middot; <a href=\"https://agents.md/\">AGENTS.md</a> &middot; <a href=\"https://newsletter.pragmaticengineer.com/p/ai-tooling-2026\">Pragmatic Engineer: AI tooling survey</a> &middot; <a href=\"https://dora.dev/dora-report-2025/\">DORA 2025: State of AI-assisted development</a></div>\n",
     );
     s.push_str("</div>\n");
     s
@@ -2607,6 +2607,17 @@ mod tests {
         assert!(html.contains("class=\"bench-tier g\"")); // Advanced → green
         // No raw markdown emphasis in HTML output.
         assert!(!html.contains("**"));
+
+        // Reference footer cites substantive AI-adoption sources — the
+        // Pragmatic Engineer AI-tooling survey and the DORA 2025 AI report —
+        // not homepages, and not the llms.txt file-format convention (which
+        // stays only as a detection marker).
+        for r in [md.as_str(), html.as_str()] {
+            assert!(r.contains("Pragmatic Engineer"));
+            assert!(r.contains("/p/ai-tooling-2026"));
+            assert!(r.contains("dora.dev/dora-report-2025/"));
+            assert!(!r.contains("llmstxt.org"));
+        }
     }
 
     /// llms.txt and .claude depth (output-styles/plugins) each count as markers.
