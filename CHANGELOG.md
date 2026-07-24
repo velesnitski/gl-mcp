@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-07-24
+
+### Changed
+- **Benchmark footer adds [12-Factor Agents](https://github.com/humanlayer/12-factor-agents)** — a production-LLM engineering-principles reference (the "12-Factor App" of agents) — and drops the redundant Claude Code *docs* link (best-practices already covers it). Final list: Claude Code best practices · AGENTS.md · 12-Factor Agents · Pragmatic Engineer AI-tooling survey (2026) · DORA 2025. Both renderers; test pins the set.
+
 ## [1.4.2] - 2026-07-24
 
 ### Changed
