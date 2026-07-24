@@ -67,3 +67,17 @@ alongside Claude Code best-practices/docs and AGENTS.md. The `llms.txt` *detecti
 the reference link moved. Both renderers carry the same list (shared intent,
 per ADR 042); a test pins that both cite The Pragmatic Engineer and neither
 cites llmstxt.org.
+
+## Addendum (2026-07-24, v1.4.3): practices reference from field-vetted sources
+
+Added **12-Factor Agents** (github.com/humanlayer/12-factor-agents) — a
+production-LLM engineering-principles reference, the "12-Factor App" of
+agents — to the footer, and dropped the redundant Claude Code *docs* link
+(the best-practices link already covers tool docs). Rationale over chasing
+a "2026 report" date: the current crop of 2026 AI-adoption "benchmark
+reports" surfaced in search are SEO/marketing content, not citable primary
+research, whereas 12-Factor Agents is a widely-adopted methodology
+reference. The one solid 2026 primary source (Pragmatic Engineer AI-tooling
+survey) and the authoritative DORA 2025 report are retained. Final list:
+Claude Code best practices, AGENTS.md, 12-Factor Agents, Pragmatic Engineer
+AI-tooling survey, DORA 2025.
