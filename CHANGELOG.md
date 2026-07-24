@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-07-17
+
+### Added
+- **`get_ai_adoption` / `generate_ai_adoption_report` are now tool-agnostic and more honest.** The scan was effectively Claude-centric and missed several markers, so a team using another assistant — or maintaining AI infra outside `.claude/` — was reported as **L0 "no AI."** It now also detects **GitHub Copilot** (`.github/copilot-instructions.md`), **Aider** (`.aider.conf.yml`/`.aiderignore`), **Continue** (`.continue/`), a committed **code-graph index** (`.codebase-memory/`), and hook-driven automation in a root `githooks/`/`.githooks/` (previously only `.claude/hooks`). Non-Claude configs are collected, deduped, and surfaced in the marker list; any of them now counts as a marker (≥ L1 Exploring instead of L0). Copilot's nested file costs one extra tree read, gated on `.github/` existing.
+- **A "How to read this" methodology footer** that states the three axes explicitly — **config ≠ usage ≠ visibility** — and that the commit share is a **lower bound**: squash-merge strips attribution, teams disable trailers, and a developer's local-only tooling (uncommitted `.codebase-memory/`, hooks, commands) is invisible to any repo scan. Prevents reading "has `.claude/`" as "adopting" or the commit share as total AI usage.
+
+See ADR 040.
+
 ## [1.2.1] - 2026-07-17
 
 ### Fixed

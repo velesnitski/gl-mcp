@@ -43,6 +43,13 @@ pub(crate) struct RepoMarkers {
     pub mcp_json: bool,
     pub agents_md: bool,
     pub cursor: bool,
+    /// `.codebase-memory/` — a committed code-graph index for AI retrieval
+    /// (nodes/edges graph, usually hook-reindexed). A power-user infra signal.
+    pub codebase_memory: bool,
+    /// Non-Claude AI-assistant configs found in the repo (copilot, aider,
+    /// continue, windsurf, …). Capped, deduped. Makes the scan tool-agnostic so a
+    /// Copilot- or Aider-only repo isn't reported as "no AI".
+    pub other_ai: Vec<String>,
     pub tasks_dir: bool,
     pub adr_count: usize,
     /// AI-trailed commits across ALL branches in the scan window.
@@ -119,6 +126,8 @@ impl RepoMarkers {
             || self.shared_settings
             || self.hooks
             || self.tasks_dir
+            || self.codebase_memory
+            || !self.other_ai.is_empty()
     }
 
     /// Any usage evidence, regardless of the 10% threshold used for the L3
@@ -291,6 +300,12 @@ impl RepoResult {
         if m.cursor {
             parts.push("cursor".into());
         }
+        if m.codebase_memory {
+            parts.push("codebase-memory".into());
+        }
+        if !m.other_ai.is_empty() {
+            parts.push(m.other_ai.join("+"));
+        }
         if m.tasks_dir {
             parts.push("tasks".into());
         }
@@ -349,6 +364,13 @@ async fn count_skills(client: &GitLabClient, project_id: u64) -> usize {
 
 /// Detect all AI adoption markers for a single repo. Never fails — a broken
 /// repo just yields default (empty) markers so the group scan continues.
+/// Record a non-Claude AI-assistant tool, deduped and capped at 4.
+fn push_other(m: &mut RepoMarkers, tool: &str) {
+    if m.other_ai.len() < 4 && !m.other_ai.iter().any(|t| t == tool) {
+        m.other_ai.push(tool.to_string());
+    }
+}
+
 async fn scan_repo(
     client: &GitLabClient,
     project_id: u64,
@@ -368,6 +390,7 @@ async fn scan_repo(
 
     let mut has_claude_dir = false;
     let mut need_docs_check = false;
+    let mut need_github_check = false;
 
     for entry in &root {
         let name = entry["name"].as_str().unwrap_or("");
@@ -378,10 +401,37 @@ async fn scan_repo(
             (".claude", true) => has_claude_dir = true,
             (".mcp.json", false) => m.mcp_json = true,
             (".cursorrules", false) | (".cursor", true) => m.cursor = true,
-            (".windsurfrules", false) => m.cursor = true, // other AI assistant config
+            // Tool-agnostic: non-Claude assistants leave their own configs. Detect
+            // them so a Copilot-/Aider-/Windsurf-only repo isn't scored "no AI".
+            (".windsurfrules", false) | (".windsurf", true) => push_other(&mut m, "windsurf"),
+            (".aider.conf.yml", false) | (".aiderignore", false) => push_other(&mut m, "aider"),
+            (".continue", true) => push_other(&mut m, "continue"),
+            // A committed code-graph index (power-user infra), and hook-driven
+            // automation living in a root hooks dir under a few common names.
+            (".codebase-memory", true) => m.codebase_memory = true,
+            ("githooks", true) | (".githooks", true) => m.hooks = true,
+            (".github", true) => need_github_check = true,
             (".tasks", true) => m.tasks_dir = true,
             ("docs", true) => need_docs_check = true,
             _ => {}
+        }
+    }
+
+    // Copilot's instructions live nested under `.github/`; one cheap tree read,
+    // only when a `.github/` dir exists.
+    if need_github_check {
+        let gh_tree: Vec<Value> = client
+            .get(
+                &format!("/projects/{project_id}/repository/tree"),
+                &[("path", ".github"), ("per_page", "100")],
+            )
+            .await
+            .unwrap_or_default();
+        if gh_tree
+            .iter()
+            .any(|e| e["name"].as_str() == Some("copilot-instructions.md"))
+        {
+            push_other(&mut m, "copilot");
         }
     }
 
@@ -1332,6 +1382,31 @@ pub async fn get_ai_adoption(
         }
     }
 
+    // Reading-the-report caveats: the three axes are distinct, and the numbers are
+    // a lower bound. Stated so a reader never mistakes "configured" for "used" or
+    // treats the commit share as total AI usage.
+    out.push(String::new());
+    out.push("### How to read this".to_string());
+    out.push(
+        "- **Config, usage, and visibility are three separate axes.** A repo can be fully \
+         configured yet unused (setup present, 0 AI commits — flagged), or heavily used with no \
+         config (invisible-usage section). Don't read \"has `.claude/`\" as \"adopting\"."
+            .to_string(),
+    );
+    out.push(
+        "- **The commit share is a lower bound.** Squash-merge strips Co-Authored-By trailers \
+         (flagged as squash-hidden), teams disable attribution, and local-only tooling \
+         (a dev's own `.codebase-memory/`, hooks, or commands that are never committed) is \
+         invisible to any repo scan. Real usage is ≥ what's shown."
+            .to_string(),
+    );
+    out.push(
+        "- **Tool-agnostic.** Markers cover Claude (`.claude/`, `CLAUDE.md`), plus Cursor, \
+         Copilot, Aider, Windsurf, Continue, `AGENTS.md`, `.mcp.json`, and hook/codebase-memory \
+         infra — so a non-Claude repo isn't misreported as \"no AI\"."
+            .to_string(),
+    );
+
     Ok(out.join("\n"))
 }
 
@@ -2133,6 +2208,53 @@ mod tests {
         let m = empty();
         assert_eq!(adoption_level(&m), 0);
         assert!(quality_flags(&m).is_empty());
+    }
+
+    #[test]
+    fn push_other_dedupes_and_caps() {
+        let mut m = empty();
+        for t in ["aider", "aider", "copilot", "windsurf", "continue", "extra"] {
+            push_other(&mut m, t);
+        }
+        // deduped ("aider" once) and capped at 4
+        assert_eq!(m.other_ai, vec!["aider", "copilot", "windsurf", "continue"]);
+    }
+
+    /// A Copilot-/Aider-only repo must not read as L0 "no AI" — tool-agnostic.
+    #[test]
+    fn non_claude_tool_counts_as_a_marker() {
+        let mut m = empty();
+        push_other(&mut m, "copilot");
+        assert!(m.has_any_marker());
+        assert_eq!(adoption_level(&m), 1); // Exploring, not None
+    }
+
+    /// A committed code-graph index is a marker too.
+    #[test]
+    fn codebase_memory_counts_as_a_marker() {
+        let mut m = empty();
+        m.codebase_memory = true;
+        assert!(m.has_any_marker());
+        assert_eq!(adoption_level(&m), 1);
+    }
+
+    #[test]
+    fn marker_list_shows_new_markers() {
+        let mut m = empty();
+        m.codebase_memory = true;
+        push_other(&mut m, "copilot");
+        push_other(&mut m, "aider");
+        let r = RepoResult {
+            path: "x".into(),
+            team: "t".into(),
+            last_activity: String::new(),
+            web_url: String::new(),
+            default_branch: "main".into(),
+            markers: m,
+        };
+        let list = r.marker_list();
+        assert!(list.contains("codebase-memory"), "got: {list}");
+        assert!(list.contains("copilot+aider"), "got: {list}");
     }
 
     #[test]
