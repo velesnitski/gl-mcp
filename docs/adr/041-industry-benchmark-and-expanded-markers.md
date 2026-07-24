@@ -51,3 +51,19 @@ tested functions.
 - The bands are a deliberate judgement call, labelled as such. If an org disagrees,
   the thresholds live in two small functions and are trivial to adjust — better to
   ship a transparent, tunable default than no benchmark at all.
+
+## Addendum (2026-07-24, v1.4.2): reference-link curation
+
+The "Benchmarks & practices" footer originally listed `llms.txt`
+(llmstxt.org). That is a repo file-format convention the scan already
+detects as a *marker* — it is not an adoption benchmark, so citing it in
+the industry-reference footer conflated the "what we detect" and "how to
+benchmark yourself" axes. Replaced with two current, substantive references: the **Pragmatic
+Engineer AI-tooling survey** (newsletter.pragmaticengineer.com/p/ai-tooling-2026,
+900+ engineers on AI-tool adoption) and the **DORA 2025 State of
+AI-assisted Software Development** report (dora.dev/dora-report-2025/ —
+the generic DORA homepage was also upgraded to this AI-specific report),
+alongside Claude Code best-practices/docs and AGENTS.md. The `llms.txt` *detection* marker is unchanged; only
+the reference link moved. Both renderers carry the same list (shared intent,
+per ADR 042); a test pins that both cite The Pragmatic Engineer and neither
+cites llmstxt.org.
