@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-07-17
+
+### Added
+- **Industry Benchmark section in the adoption report.** Turns the two headline metrics into a verdict + roadmap: a **maturity tier** from the developer-adoption rate (Nascent <15% · Emerging 15–29% · Mainstream 30–49% · Advanced 50–74% · Leading ≥75%), a **config-coverage** band (ad-hoc / partial / standardized — share of active repos configured), a **depth** read (agentic / memory-backed / structured / …), and **top-3 gap-driven suggestions** generated from the actual data (invisible usage, squash-hidden attribution, devs-to-next-tier, coverage), plus reference links (Claude Code best practices/docs, AGENTS.md, llms.txt, DORA). Stated inline: the bands are directional reference points (not a cited statistic) and the grade is a **floor** — squash-hidden and local-only usage sit above it.
+- **More AI-tool markers.** JetBrains **Junie** (`.junie/`), **Gemini** (`GEMINI.md`/`.gemini/`), **Cline** (`.clinerules`), an **agent-memory** signal folding `.codebase-memory/` + Cline's `memory-bank/` + Serena's `.serena/`, Claude Code **`.claude/output-styles`** and **`.claude/plugins`**, and **`llms.txt`**. A team on any of these no longer reads as "no AI". Known gap noted in the methodology: only root `CLAUDE.md` is detected (nested per-directory memory is undercounted).
+
+See ADR 041.
+
 ## [1.3.0] - 2026-07-17
 
 ### Added
