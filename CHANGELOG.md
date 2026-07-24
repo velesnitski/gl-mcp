@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-07-24
+
+### Fixed
+- **Industry Benchmark now appears in the HTML adoption report.** The section shipped in 1.4.0 (ADR 041) was only ever emitted by the markdown `get_ai_adoption` path — the HTML `generate_ai_adoption_report` (what `--adoption-report` and the emailed weekly report use) never rendered it, so leadership saw the metrics without the verdict. Root cause was two divergent copies of the section; fixed by extracting one `compute_benchmark()` + two thin renderers (`render_benchmark_md` / `render_benchmark_html`) that both paths call, with a test pinning that **both** formats emit the section and tier. See ADR 042.
+
 ## [1.4.0] - 2026-07-17
 
 ### Added
