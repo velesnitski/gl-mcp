@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.4] - 2026-07-27
+
+### Fixed
+- **Benchmark "To advance" bullets invisible in email dark mode.** The suggestion `<li>`s (and the tier fallback) had no explicit text color — they relied on inheriting the report's light body color. In a browser that cascades fine, but email clients rendering the dark design don't propagate the body color into un-styled elements, so the bullets fell back to the client's default dark color → dark-on-dark, invisible. Added explicit `color:#c9d1d9` to `.bench`, `.bench-adv-list`, and the `li` so every benchmark text node is self-colored and email-robust. Tier colour classes (g/b/y/r) unchanged.
+
 ## [1.4.3] - 2026-07-24
 
 ### Changed

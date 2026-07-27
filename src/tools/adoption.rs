@@ -1963,11 +1963,11 @@ h2{{color:#58a6ff;margin:36px 0 16px;font-size:18px;border-bottom:1px solid #212
 .card-v{{font-size:28px;font-weight:700}}
 .card-s{{color:#8b949e;font-size:12px;margin-top:4px}}
 .g{{color:#3fb950}}.r{{color:#f85149}}.y{{color:#d29922}}.b{{color:#58a6ff}}.gr{{color:#8b949e}}
-.bench{{background:#161b22;border:1px solid #21262d;border-radius:8px;padding:20px 22px;margin:16px 0}}
+.bench{{background:#161b22;border:1px solid #21262d;border-radius:8px;padding:20px 22px;margin:16px 0;color:#c9d1d9}}
 .bench-tier{{font-size:22px;font-weight:700;margin-bottom:6px}}
 .bench-line{{color:#c9d1d9;font-size:14px}}
 .bench-adv{{color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin:14px 0 6px}}
-.bench-adv-list{{margin:0 0 4px 20px;font-size:14px}}.bench-adv-list li{{margin:4px 0}}
+.bench-adv-list{{margin:0 0 4px 20px;font-size:14px;color:#c9d1d9}}.bench-adv-list li{{margin:4px 0;color:#c9d1d9}}
 .bench-note{{color:#8b949e;font-size:12px;margin-top:10px;max-width:900px}}
 table{{width:100%;border-collapse:collapse;margin:12px 0}}
 th{{background:#161b22;color:#8b949e;text-align:left;padding:10px 14px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid #21262d}}

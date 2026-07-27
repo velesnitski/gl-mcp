@@ -59,3 +59,17 @@ the original omission.
 
 - ADR 041 — the benchmark this makes reachable in HTML
 - ADR 034 — prior instance of the same "one path updated, others not" class
+
+## Addendum (2026-07-27, v1.4.4): email dark-mode contrast
+
+The benchmark's "To advance" `<li>` bullets had no explicit `color` — they
+inherited the report's light body color. Browsers cascade that fine, but
+email clients rendering the dark design don't propagate body color into
+un-styled descendants, so the bullets fell back to the client default
+(dark) and vanished on the dark `.bench` box. Fix: explicit `color:#c9d1d9`
+on `.bench` (container fallback for any inherited child) and on
+`.bench-adv-list` + its `li`. Deliberately NOT on `.bench-tier` — a direct
+color there would beat the g/b/y/r tier classes on a source-order
+specificity tie. Lesson: in a dark-themed report that is also emailed, every
+text node must be self-colored; inheritance is not portable across mail
+clients.
