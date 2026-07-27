@@ -1061,10 +1061,19 @@ impl GlMcpServer {
 
     // ─── Repository ───
 
-    #[tool(description = "Search code in a project. Returns matching file paths, line numbers, and code snippets.")]
+    #[tool(description = "Search code in one project, or across every non-archived project in a group via group_path — for org-wide sweeps (renames, leaked strings). Returns matching file paths, line numbers, and code snippets.")]
     async fn search_code(&self, Parameters(p): Parameters<SearchCodeParams>) -> Result<CallToolResult, McpError> {
-        simple_tool!(self, p, "search_code", &p.project_id, |client|
-            tools::repository::search_code(client, &p.project_id, &p.query, p.ref_name.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
+        let project = p.project_id.clone().unwrap_or_default();
+        let group = p.group_path.clone().unwrap_or_default();
+        if project.is_empty() && group.is_empty() {
+            return Ok(CallToolResult::error(vec![Content::text(
+                "search_code needs either project_id (one repo) or group_path (sweep the whole group).".to_string(),
+            )]));
+        }
+        // Scope drives instance resolution + analytics: the group when sweeping.
+        let scope = if group.is_empty() { project.clone() } else { group.clone() };
+        simple_tool!(self, p, "search_code", &scope, |client|
+            tools::repository::search_code(client, &project, &group, &p.query, p.ref_name.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
         )
     }
 
@@ -1203,14 +1212,14 @@ impl GlMcpServer {
 
     // ─── AI Adoption ───
 
-    #[tool(description = "Scan a GitLab group for AI-assisted development adoption: CLAUDE.md, .claude/agents, skills, MCP configs, ADR practice, and Co-Authored-By AI commits. Returns per-team scorecard with adoption levels (L0-L3) and quality flags.")]
+    #[tool(description = "Scan a GitLab group — or a single project — for AI-assisted development adoption: CLAUDE.md, .claude/agents, skills, MCP configs, other assistants (Copilot/Cursor/Aider/Junie/Gemini/Cline), agent-memory, ADR practice, and Co-Authored-By AI commits. Returns an industry benchmark (maturity tier, config coverage, suggestions) plus per-team scorecard with adoption levels (L0-L3) and quality flags.")]
     async fn get_ai_adoption(&self, Parameters(p): Parameters<GetAiAdoptionParams>) -> Result<CallToolResult, McpError> {
         simple_tool!(self, p, "get_ai_adoption", &p.group_path, |client|
             tools::adoption::get_ai_adoption(client, &p.group_path, p.days.unwrap_or(30), p.dormant_days.unwrap_or(tools::adoption::DORMANT_DAYS), p.summary_only.unwrap_or(false)).await
         )
     }
 
-    #[tool(description = "Generate an HTML AI adoption report for a GitLab group: level funnel, per-team scorecard, trajectories, in-flight pipeline, quality flags, recommendations. Dark theme with Export PDF. Save to file and open in browser.")]
+    #[tool(description = "Generate an HTML AI adoption report for a GitLab group (or a single project): industry benchmark, level funnel, per-team scorecard, trajectories, in-flight pipeline, quality flags, recommendations. Dark theme with Export PDF. Save to file and open in browser.")]
     async fn generate_ai_adoption_report(&self, Parameters(p): Parameters<GenerateAiAdoptionReportParams>) -> Result<CallToolResult, McpError> {
         simple_tool!(self, p, "generate_ai_adoption_report", &p.group_path, |client|
             tools::adoption::generate_ai_adoption_report(client, &p.group_path, p.days.unwrap_or(30), p.dormant_days.unwrap_or(tools::adoption::DORMANT_DAYS)).await

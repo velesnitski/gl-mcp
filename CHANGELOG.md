@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-07-27
+
+### Added
+- **`get_ai_adoption` / `generate_ai_adoption_report` now scan a single repo.** Both were group-only, so "how is *this* repo doing?" could not be answered by the tool at all — it had to be done by hand. The existing path argument now accepts a **project path** as well as a group: when the group listing yields nothing, the path is resolved as a project and scanned as a one-element list, with every downstream step (markers, commits, benchmark, flags) unchanged. No new parameter; if the path is neither, the original error is preserved. See ADR 043.
+- **`search_code` gains `group_path` — org-wide code sweeps.** Searching for a string across an org (a rename, a stale identifier) previously had to be run repo by repo, so coverage was whatever repos someone remembered. Now one call sweeps every non-archived project in the group. Implemented as a **per-project fan-out** (bounded concurrency, most-recently-active first), *not* GitLab's `/groups/:id/search`: group-level blob search requires advanced search (Elasticsearch), and without it that endpoint returns an empty list — indistinguishable from "no matches", i.e. it reports "clean" without searching. A per-repo failure yields no hits for that repo instead of aborting the sweep, and the 60-repo cap is **always disclosed** when it truncates. `project_id` is now optional (either it or `group_path` is required); existing calls are unaffected. See ADR 043.
+
 ## [1.4.4] - 2026-07-27
 
 ### Fixed

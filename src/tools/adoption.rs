@@ -1052,8 +1052,15 @@ pub(crate) async fn scan_group(
 ) -> Result<AdoptionScan> {
     let encoded = urlencoding::encode(group_path);
 
-    // Step 1: list group projects (max 3 pages = 300 repos)
-    let projects: Vec<Value> = client
+    // Step 1: list group projects (max 3 pages = 300 repos).
+    //
+    // If that yields nothing, the path may be a SINGLE PROJECT rather than a
+    // group — "how is this one repo doing?" is the most common real question, and
+    // without this it could not be answered by the tool at all. Resolving the path
+    // as a project and scanning the one-element list makes every downstream step
+    // (markers, commits, benchmark) work unchanged. The original error is
+    // preserved if the path is neither a group nor a project.
+    let group_listing = client
         .get_all_pages(
             &format!("/groups/{encoded}/projects"),
             &[
@@ -1064,7 +1071,18 @@ pub(crate) async fn scan_group(
             ],
             3,
         )
-        .await?;
+        .await;
+
+    let projects: Vec<Value> = match group_listing {
+        Ok(p) if !p.is_empty() => p,
+        other => match client
+            .get::<Value>(&format!("/projects/{encoded}"), &[])
+            .await
+        {
+            Ok(p) if p["id"].as_u64().is_some() => vec![p],
+            _ => other?,
+        },
+    };
 
     if projects.is_empty() {
         return Ok(AdoptionScan {
@@ -1179,7 +1197,9 @@ pub async fn get_ai_adoption(
 
     if scan.active.is_empty() {
         if scan.dormant_count() == 0 {
-            return Ok(format!("No projects found in group '{group_path}'."));
+            return Ok(format!(
+                "No projects found for '{group_path}' — not a group with projects, and not a project path."
+            ));
         }
         return Ok(format!(
             "Group '{group_path}': all {} repos dormant (no activity in {dormant_days}d). Nothing to scan.",
@@ -1790,7 +1810,9 @@ pub async fn generate_ai_adoption_report(
 
     if scan.active.is_empty() {
         if scan.dormant_count() == 0 {
-            return Ok(format!("No projects found in group '{group_path}'."));
+            return Ok(format!(
+                "No projects found for '{group_path}' — not a group with projects, and not a project path."
+            ));
         }
         return Ok(format!(
             "Group '{group_path}': all {} repos dormant (no activity in {dormant_days}d). Nothing to scan.",

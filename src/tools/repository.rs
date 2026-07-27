@@ -7,16 +7,23 @@ use std::collections::BTreeMap;
 use crate::tools::commits::detect_language;
 
 /// Search code across a project (GitLab blobs search).
-pub async fn search_code(
+/// Repos searched concurrently during a group-wide sweep.
+const SEARCH_CONCURRENCY: usize = 12;
+/// Cap on repos visited in one group sweep. Truncation is always disclosed —
+/// a partial sweep reported as complete is worse than no sweep.
+const SEARCH_MAX_REPOS: usize = 60;
+
+/// Blob search within one project. Returns raw hits (empty on any error, so one
+/// unreachable repo cannot abort a group sweep).
+async fn search_project_blobs(
     client: &GitLabClient,
-    project_id: &str,
+    project: &str,
     query: &str,
     ref_name: &str,
     per_page: u32,
-) -> Result<String> {
-    let encoded = urlencoding::encode(project_id);
+) -> Vec<Value> {
+    let encoded = urlencoding::encode(project);
     let per_page_str = per_page.to_string();
-
     let mut params: Vec<(&str, &str)> = vec![
         ("scope", "blobs"),
         ("search", query),
@@ -25,11 +32,109 @@ pub async fn search_code(
     if !ref_name.is_empty() {
         params.push(("ref", ref_name));
     }
-
-    let results: Vec<Value> = client
-        .get(&format!("/projects/{encoded}/search"), &params)
+    client
+        .get::<Vec<Value>>(&format!("/projects/{encoded}/search"), &params)
         .await
-        ?;
+        .unwrap_or_default()
+}
+
+/// Search code across every project in a group.
+///
+/// Deliberately a per-project fan-out rather than GitLab's `/groups/:id/search`:
+/// group-level *blob* search requires advanced search (Elasticsearch), and on an
+/// instance without it the endpoint answers with an empty list — indistinguishable
+/// from "no matches". A confident empty on an unsupported query is the worst
+/// possible answer for a rename or leak sweep, so this walks the projects instead,
+/// which works on every instance.
+async fn search_code_group(
+    client: &GitLabClient,
+    group_path: &str,
+    query: &str,
+    ref_name: &str,
+    per_page: u32,
+) -> Result<String> {
+    let encoded = urlencoding::encode(group_path);
+    let projects: Vec<Value> = client
+        .get_all_pages(
+            &format!("/groups/{encoded}/projects"),
+            &[
+                ("include_subgroups", "true"),
+                ("archived", "false"),
+                ("order_by", "last_activity_at"),
+                ("sort", "desc"),
+            ],
+            3,
+        )
+        .await?;
+
+    if projects.is_empty() {
+        return Ok(format!("No (non-archived) projects found in group `{group_path}`."));
+    }
+
+    let total_repos = projects.len();
+    let scanned: Vec<&Value> = projects.iter().take(SEARCH_MAX_REPOS).collect();
+    let scanned_count = scanned.len();
+
+    // (repo path, hits) for repos with at least one match.
+    let mut hits: Vec<(String, Vec<Value>)> = Vec::new();
+    for chunk in scanned.chunks(SEARCH_CONCURRENCY) {
+        let futs = chunk.iter().map(|p| async move {
+            let path = p["path_with_namespace"].as_str().unwrap_or("?").to_string();
+            let found = search_project_blobs(client, &path, query, ref_name, per_page).await;
+            (path, found)
+        });
+        for (path, found) in futures::future::join_all(futs).await {
+            if !found.is_empty() {
+                hits.push((path, found));
+            }
+        }
+    }
+
+    let match_count: usize = hits.iter().map(|(_, v)| v.len()).sum();
+    let mut lines = vec![format!(
+        "**Search '{query}' across `{group_path}`: {match_count} matches in {} of {scanned_count} repos**\n",
+        hits.len()
+    )];
+    if scanned_count < total_repos {
+        lines.push(format!(
+            "> ⚠️ Partial sweep — searched the {scanned_count} most recently active of {total_repos} repos (cap {SEARCH_MAX_REPOS}). Narrow to a subgroup for full coverage.\n"
+        ));
+    }
+    if hits.is_empty() {
+        lines.push("No matches.".to_string());
+        return Ok(lines.join("\n"));
+    }
+
+    hits.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    for (path, found) in &hits {
+        lines.push(format!("### {path} ({} matches)", found.len()));
+        for r in found.iter().take(10) {
+            let file = r["path"].as_str().unwrap_or("?");
+            let startline = r["startline"].as_u64().unwrap_or(0);
+            lines.push(format!("- `{file}:{startline}`"));
+        }
+        if found.len() > 10 {
+            lines.push(format!("- _…{} more in this repo_", found.len() - 10));
+        }
+        lines.push(String::new());
+    }
+
+    Ok(lines.join("\n"))
+}
+
+pub async fn search_code(
+    client: &GitLabClient,
+    project_id: &str,
+    group_path: &str,
+    query: &str,
+    ref_name: &str,
+    per_page: u32,
+) -> Result<String> {
+    if !group_path.is_empty() {
+        return search_code_group(client, group_path, query, ref_name, per_page).await;
+    }
+
+    let results: Vec<Value> = search_project_blobs(client, project_id, query, ref_name, per_page).await;
 
     if results.is_empty() {
         return Ok(format!("No results for '{query}' in {project_id}."));

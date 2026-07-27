@@ -594,8 +594,13 @@ pub struct GenerateDevReportParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchCodeParams {
-    #[schemars(description = "Project ID or path")]
-    pub project_id: String,
+    #[schemars(description = "Project ID or path. Omit when using group_path.")]
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[schemars(
+        description = "Group path — search every (non-archived) project in the group instead of one repo. Use for org-wide sweeps (renames, leaked strings)."
+    )]
+    pub group_path: Option<String>,
     #[schemars(description = "Search query (regex supported)")]
     pub query: String,
     #[schemars(description = "Branch/tag to search in (optional)")]
@@ -1294,7 +1299,9 @@ pub struct GenerateProjectReportParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GenerateAiAdoptionReportParams {
-    #[schemars(description = "Group path (e.g., 'my-org'). Scans all projects including subgroups.")]
+    #[schemars(
+        description = "Group path (e.g., 'my-org') — scans all projects including subgroups. A single project path also works, to report on just that repo."
+    )]
     pub group_path: String,
     #[schemars(description = "Days of commit history to scan for AI co-authorship (default: 30)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
@@ -1308,7 +1315,9 @@ pub struct GenerateAiAdoptionReportParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetAiAdoptionParams {
-    #[schemars(description = "Group path (e.g., 'my-org'). Scans all projects including subgroups.")]
+    #[schemars(
+        description = "Group path (e.g., 'my-org') — scans all projects including subgroups. A single project path also works, to scan just that repo."
+    )]
     pub group_path: String,
     #[schemars(description = "Days of commit history to scan for AI co-authorship (default: 30)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
