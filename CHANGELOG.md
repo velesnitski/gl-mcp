@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-07-30
+
+### Fixed
+- **`list_merge_requests` (`summary_only`) duplicated the MR IID** — lines read `group/project!42!42|…`. The compact line appended `!{iid}` to GitLab's `references.full`, which is the *full* reference and already contains the IID; the verbose path (which prints the reference as-is) was always correct, so the two modes disagreed. Besides reading wrong, the duplicated form isn't a valid GitLab reference, so anything parsing the summary line to recover project + IID got a malformed value. Extracted a tested `mr_reference()` helper with a bare-`!iid` fallback. Long-standing defect, found in a post-upgrade smoke test — not an upgrade regression. See ADR 044.
+
 ## [1.5.0] - 2026-07-27
 
 ### Added
