@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-07-30
+
+### Added
+- **`analyze_pipeline_failures`** — pipeline health + root-cause clustering for a project or a whole group. Where infra is provisioned by API-triggered pipelines, a red pipeline is a *customer resource that failed to provision*, but two populations were being conflated: a shared CI-template repo can show every recent run failed while production is healthy, because those are all `merge_request_event`/`push` runs. The tool **splits by source** (`trigger|api|schedule|pipeline|web|external` = production signal; `push|merge_request_event` = dev CI, excluded from the success rate, with the full source mix printed so the split is auditable), reports success rate and median duration, then **clusters recent automated failures by root cause** from their job logs — preferring the first specific error over the generic `ERROR: Job failed: exit code N` trailer, and normalizing UUIDs/hashes/numbers so repeats of one fault group together. Each cluster is triaged **transient** (retry likely works), **config/state** (the same run will fail identically), or **unknown** — conservatively, so anything unrecognized is never advertised as retryable, plus a warning against blind retries of plans containing destroys. See ADR 046.
+- **Trigger variables in `get_pipeline`, default-deny redacted.** For trigger/API pipelines these are often the only link from a CI failure back to the business object it was acting on. Values render only when the key is not secret-ish **and** identifier-shaped **and** the value is short and plain; everything else shows `<redacted>`. Key names are always listed. The secret-ish check runs first, so `..._CLIENT_ID` is denied despite ending in `_ID`. Needs elevated scope; a 403 omits the section. Tests pin that secret-ish keys never render values.
+
 ## [1.5.2] - 2026-07-30
 
 Documents three fixes whose **code shipped in 1.5.1** alongside an unrelated

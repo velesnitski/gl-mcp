@@ -392,6 +392,27 @@ pub struct GetPipelineParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct AnalyzePipelineFailuresParams {
+    #[schemars(description = "Project ID or path. Omit when using group_path.")]
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[schemars(
+        description = "Group path — analyze every non-archived project in the group (incl. subgroups)."
+    )]
+    pub group_path: Option<String>,
+    #[schemars(description = "Days of pipeline history to analyze (default: 30)")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    pub days: Option<u32>,
+    #[schemars(
+        description = "Max failed pipelines whose job logs are fetched for root-cause clustering (default: 20)"
+    )]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    pub max_logs: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetJobLogParams {
     #[schemars(description = "Project ID or path")]
     pub project_id: String,

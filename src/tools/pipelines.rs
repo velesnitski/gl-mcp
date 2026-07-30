@@ -67,6 +67,422 @@ pub async fn list_pipelines(
 }
 
 /// Get pipeline details with jobs.
+/// Repos/pipelines inspected concurrently by `analyze_pipeline_failures`.
+const ANALYZE_CONCURRENCY: usize = 8;
+
+/// UUIDs, long numbers and hashes are collapsed so the *same* failure clusters
+/// together instead of splitting per run.
+static VOLATILE_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(
+        // Note: the numeric arm is deliberately NOT \b-anchored — durations and
+        // sizes arrive glued to units ("1234ms", "512MB"), and a word-boundary
+        // form silently fails to mask them, so the same fault would not cluster.
+        r"(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\b[0-9a-f]{7,}\b|\d{2,}",
+    )
+    .unwrap()
+});
+
+/// Sources meaning "something automated or an operator ran this" — the product
+/// triggering infra work, a schedule, an API call, a Run-pipeline click.
+///
+/// The rest (`push`, `merge_request_event`) is development CI. Keeping them apart
+/// is the whole point: a template repo whose MR pipelines are all red looks like a
+/// total outage while production provisioning is perfectly healthy.
+fn is_automated_source(source: &str) -> bool {
+    matches!(
+        source,
+        "trigger" | "api" | "schedule" | "pipeline" | "web" | "external"
+    )
+}
+
+/// Collapse a raw error line into a stable, clusterable signature.
+fn normalize_signature(s: &str) -> String {
+    let collapsed = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let masked = VOLATILE_RE.replace_all(&collapsed, "…");
+    let mut out: String = masked.chars().take(140).collect();
+    if masked.chars().count() > 140 {
+        out.push('…');
+    }
+    out
+}
+
+/// Best-effort root-cause line from a job log.
+///
+/// Prefers the first *specific* error over the generic `ERROR: Job failed: exit
+/// code N` trailer, which every failed job ends with and which says nothing.
+fn error_signature(log: &str) -> Option<String> {
+    let clean = strip_ansi(log);
+    let mut fallback: Option<String> = None;
+    for line in clean.lines() {
+        let lower = line.to_ascii_lowercase();
+        let Some(pos) = ["error:", "fatal:", "panic:"]
+            .iter()
+            .filter_map(|m| lower.find(m))
+            .min()
+        else {
+            continue;
+        };
+        let sig = normalize_signature(line[pos..].trim());
+        if sig.is_empty() {
+            continue;
+        }
+        if sig.to_ascii_lowercase().starts_with("error: job failed") {
+            fallback.get_or_insert(sig);
+            continue;
+        }
+        return Some(sig);
+    }
+    fallback
+}
+
+/// Triage a failure as retryable or not. Deliberately conservative: anything not
+/// clearly transient is **not** advertised as safe to retry.
+fn failure_class(signature: &str, failure_reason: &str) -> &'static str {
+    let r = failure_reason.to_ascii_lowercase();
+    if r.contains("runner_system_failure")
+        || r.contains("stuck_or_timeout")
+        || r.contains("scheduler_failure")
+        || r.contains("api_failure")
+    {
+        return "transient";
+    }
+    let s = signature.to_ascii_lowercase();
+    const TRANSIENT: &[&str] = &[
+        "timeout", "timed out", "connection reset", "temporarily unavailable", "rate limit",
+        "too many requests", "tls handshake", "no space left", "i/o timeout", "unexpected eof",
+        "could not resolve host", "connection refused", "502", "503", "504", "deadline exceeded",
+    ];
+    const CONFIG: &[&str] = &[
+        "missing required", "must be set", "not found", "no such file", "invalid", "unauthorized",
+        "forbidden", "permission denied", "undefined", "does not exist", "unknown variable",
+        "parse error", "syntax", "already exists", "conflict",
+    ];
+    if TRANSIENT.iter().any(|m| s.contains(m)) {
+        return "transient";
+    }
+    if CONFIG.iter().any(|m| s.contains(m)) {
+        return "config";
+    }
+    "unknown"
+}
+
+/// Analyze pipeline health and cluster failures for a project or a whole group.
+///
+/// Separates **automated/operator runs** (the real signal) from development CI,
+/// then pulls the log of each recent automated failure, extracts a root-cause
+/// signature, clusters identical causes and triages each as transient (safe to
+/// retry) or config/state (retrying just burns cycles).
+pub async fn analyze_pipeline_failures(
+    client: &GitLabClient,
+    project_id: &str,
+    group_path: &str,
+    days: u32,
+    max_logs: usize,
+) -> Result<String> {
+    let since = (chrono::Utc::now() - chrono::Duration::days(days as i64))
+        .format("%Y-%m-%dT00:00:00Z")
+        .to_string();
+
+    // Resolve the scope to a concrete project list.
+    let projects: Vec<(u64, String)> = if !group_path.is_empty() {
+        let enc = urlencoding::encode(group_path);
+        let list: Vec<Value> = client
+            .get_all_pages(
+                &format!("/groups/{enc}/projects"),
+                &[
+                    ("include_subgroups", "true"),
+                    ("archived", "false"),
+                    ("order_by", "last_activity_at"),
+                    ("sort", "desc"),
+                ],
+                3,
+            )
+            .await?;
+        list.iter()
+            .filter_map(|p| {
+                Some((
+                    p["id"].as_u64()?,
+                    p["path_with_namespace"].as_str()?.to_string(),
+                ))
+            })
+            .collect()
+    } else {
+        let enc = urlencoding::encode(project_id);
+        let p: Value = client.get(&format!("/projects/{enc}"), &[]).await?;
+        vec![(
+            p["id"].as_u64().unwrap_or_default(),
+            p["path_with_namespace"]
+                .as_str()
+                .unwrap_or(project_id)
+                .to_string(),
+        )]
+    };
+
+    if projects.is_empty() {
+        return Ok(format!("No projects found for '{group_path}{project_id}'."));
+    }
+
+    struct Run {
+        project: String,
+        project_id: u64,
+        id: u64,
+        status: String,
+        automated: bool,
+        source: String,
+        duration: f64,
+        web_url: String,
+    }
+
+    // Fetch each project's recent pipelines, bounded concurrency.
+    let mut runs: Vec<Run> = Vec::new();
+    for chunk in projects.chunks(ANALYZE_CONCURRENCY) {
+        let futs = chunk.iter().map(|(pid, path)| {
+            let since = since.clone();
+            async move {
+                let list: Vec<Value> = client
+                    .get(
+                        &format!("/projects/{pid}/pipelines"),
+                        &[("updated_after", since.as_str()), ("per_page", "100")],
+                    )
+                    .await
+                    .unwrap_or_default();
+                (*pid, path.clone(), list)
+            }
+        });
+        for (pid, path, list) in futures::future::join_all(futs).await {
+            for p in &list {
+                let source = p["source"].as_str().unwrap_or("unknown").to_string();
+                runs.push(Run {
+                    project: path.clone(),
+                    project_id: pid,
+                    id: p["id"].as_u64().unwrap_or(0),
+                    status: p["status"].as_str().unwrap_or("?").to_string(),
+                    automated: is_automated_source(&source),
+                    source,
+                    duration: p["duration"].as_f64().unwrap_or(0.0),
+                    web_url: p["web_url"].as_str().unwrap_or("").to_string(),
+                });
+            }
+        }
+    }
+
+    if runs.is_empty() {
+        return Ok(format!(
+            "No pipelines in the last {days}d for {} project(s).",
+            projects.len()
+        ));
+    }
+
+    let tally = |auto: bool, st: &str| {
+        runs.iter()
+            .filter(|r| r.automated == auto && r.status == st)
+            .count()
+    };
+    let (a_total, d_total) = (
+        runs.iter().filter(|r| r.automated).count(),
+        runs.iter().filter(|r| !r.automated).count(),
+    );
+    let (a_ok, a_fail) = (tally(true, "success"), tally(true, "failed"));
+    let (_d_ok, d_fail) = (tally(false, "success"), tally(false, "failed"));
+    let finished = a_ok + a_fail;
+    let rate = if finished > 0 {
+        a_ok as f64 / finished as f64 * 100.0
+    } else {
+        0.0
+    };
+    let mut durs: Vec<f64> = runs
+        .iter()
+        .filter(|r| r.automated && r.status == "success" && r.duration > 0.0)
+        .map(|r| r.duration)
+        .collect();
+    durs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let median = durs.get(durs.len() / 2).copied().unwrap_or(0.0);
+
+    let scope = if group_path.is_empty() { project_id } else { group_path };
+    let mut out = vec![
+        format!("# Pipeline failure analysis: `{scope}` (last {days}d)"),
+        String::new(),
+        format!(
+            "**Automated / operator runs — the production signal:** {a_total} runs · ✅ {a_ok} · ❌ {a_fail} · success rate **{rate:.0}%** · median {median:.0}s"
+        ),
+        format!(
+            "**Development CI (push / merge_request):** {d_total} runs · ❌ {d_fail} — *excluded from the numbers above; branch/MR failures are not customer impact*"
+        ),
+        String::new(),
+    ];
+
+    // Source mix — makes the signal/noise split auditable rather than asserted.
+    let mut by_source: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for r in &runs {
+        *by_source.entry(r.source.as_str()).or_default() += 1;
+    }
+    out.push(format!(
+        "_Sources: {}_",
+        by_source
+            .iter()
+            .map(|(s, n)| format!("{s} {n}"))
+            .collect::<Vec<_>>()
+            .join(" · ")
+    ));
+    out.push(String::new());
+
+    // Cluster the automated failures by root cause.
+    let mut failures: Vec<&Run> = runs
+        .iter()
+        .filter(|r| r.automated && r.status == "failed")
+        .collect();
+    failures.sort_by(|a, b| b.id.cmp(&a.id));
+    let analyzed: Vec<&&Run> = failures.iter().take(max_logs).collect();
+
+    if failures.is_empty() {
+        out.push("No automated-run failures in the window. ✅".to_string());
+        return Ok(out.join("\n"));
+    }
+
+    // (signature, class) -> (count, example run)
+    let mut clusters: std::collections::BTreeMap<(String, String), (usize, String, String)> =
+        std::collections::BTreeMap::new();
+
+    for chunk in analyzed.chunks(ANALYZE_CONCURRENCY) {
+        let futs = chunk.iter().map(|r| async move {
+            let jobs: Vec<Value> = client
+                .get(
+                    &format!("/projects/{}/pipelines/{}/jobs", r.project_id, r.id),
+                    &[("per_page", "100")],
+                )
+                .await
+                .unwrap_or_default();
+            let failed = jobs
+                .iter()
+                .find(|j| j["status"].as_str() == Some("failed"))
+                .cloned();
+            let (reason, sig) = match failed {
+                Some(j) => {
+                    let reason = j["failure_reason"].as_str().unwrap_or("").to_string();
+                    let job_id = j["id"].as_u64().unwrap_or(0);
+                    let log = client
+                        .get_text(
+                            &format!("/projects/{}/jobs/{job_id}/trace", r.project_id),
+                            &[],
+                        )
+                        .await
+                        .unwrap_or_default();
+                    (reason.clone(), error_signature(&log))
+                }
+                None => (String::new(), None),
+            };
+            (r, reason, sig)
+        });
+        for (r, reason, sig) in futures::future::join_all(futs).await {
+            let signature = sig.unwrap_or_else(|| {
+                if reason.is_empty() {
+                    "(no error line found in log)".to_string()
+                } else {
+                    format!("({reason})")
+                }
+            });
+            let class = failure_class(&signature, &reason).to_string();
+            let e = clusters
+                .entry((class, signature))
+                .or_insert((0, r.project.clone(), r.web_url.clone()));
+            e.0 += 1;
+        }
+    }
+
+    out.push(format!(
+        "## Failure clusters ({} of {a_fail} automated failures analyzed)",
+        analyzed.len()
+    ));
+    out.push(String::new());
+    out.push("| # | Class | Root cause | Example |".to_string());
+    out.push("|---|-------|-----------|---------|".to_string());
+    let mut rows: Vec<_> = clusters.iter().collect();
+    rows.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+    for ((class, sig), (count, project, url)) in &rows {
+        let icon = match class.as_str() {
+            "transient" => "🔁",
+            "config" => "🛠",
+            _ => "❔",
+        };
+        let link = if url.is_empty() {
+            project.clone()
+        } else {
+            format!("[{project}]({url})")
+        };
+        out.push(format!("| {count} | {icon} {class} | `{sig}` | {link} |"));
+    }
+
+    let transient: usize = rows
+        .iter()
+        .filter(|((c, _), _)| c == "transient")
+        .map(|(_, (n, _, _))| n)
+        .sum();
+    let config: usize = rows
+        .iter()
+        .filter(|((c, _), _)| c == "config")
+        .map(|(_, (n, _, _))| n)
+        .sum();
+
+    out.push(String::new());
+    out.push("## Retry guidance".to_string());
+    out.push(format!(
+        "- 🔁 **{transient} transient** — infrastructure/network noise; retrying is likely to succeed."
+    ));
+    out.push(format!(
+        "- 🛠 **{config} config/state** — **do not retry**: the same run will fail identically until the cause is fixed."
+    ));
+    out.push(
+        "- ❔ **unknown** — inspect with `get_job_log` before deciding; not classified as retryable."
+            .to_string(),
+    );
+    out.push(String::new());
+    out.push(
+        "> ⚠️ Before retrying infra pipelines, check the plan for **destroy** operations — a partial apply can leave state inconsistent, and a blind retry can make it worse."
+            .to_string(),
+    );
+
+    Ok(out.join("\n"))
+}
+
+/// Key substrings whose values are **never** rendered. Checked first, so a key
+/// like `<vendor>_CLIENT_ID` is denied even though it ends in `_ID`.
+const SECRETISH: &[&str] = &[
+    "SECRET", "TOKEN", "PASSWORD", "PASSWD", "PASS", "KEY", "CREDENTIAL", "PRIVATE", "AUTH",
+    "CERT", "SALT", "SIGNATURE", "WEBHOOK", "DSN", "CLIENT_ID", "SESSION", "COOKIE",
+];
+
+/// Render one pipeline variable, **default-deny** on the value.
+///
+/// Trigger variables routinely carry credentials next to harmless identifiers, so
+/// a value is shown only when all three hold: the key is not secret-ish, it looks
+/// like a plain identifier, and the value itself is short and boring. Everything
+/// else shows the key with `<redacted>` — the key name alone is useful for
+/// debugging and low-risk, the value is not.
+fn render_variable(key: &str, value: &str) -> String {
+    let k = key.to_ascii_uppercase();
+    let secretish = SECRETISH.iter().any(|m| k.contains(m));
+    let identifier_shaped = k.ends_with("_UUID")
+        || k.ends_with("_ID")
+        || k.ends_with("_TYPE")
+        || k.ends_with("_ACTION")
+        || k.ends_with("_REGION")
+        || k.ends_with("_NAME")
+        || k == "ENVIRONMENT"
+        || k == "REGION"
+        || k == "TIER";
+    let value_is_boring = value.len() <= 80
+        && !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':' | '/'));
+
+    if !secretish && identifier_shaped && value_is_boring {
+        format!("- `{key}` = `{value}`")
+    } else {
+        format!("- `{key}` = `<redacted>`")
+    }
+}
+
 pub async fn get_pipeline(
     client: &GitLabClient,
     project_id: &str,
@@ -153,6 +569,26 @@ pub async fn get_pipeline(
                 }
                 parts.push(line);
             }
+        }
+    }
+
+    // Trigger variables. For `trigger`/`api` pipelines these are often the only
+    // link from a CI failure back to the business object it was acting on (which
+    // org, which network), so they turn "pipeline failed" into "customer X's
+    // provisioning failed". Values are default-deny redacted — see
+    // `render_variable`. Needs elevated scope; a 403/404 just omits the section.
+    let vars: Vec<Value> = client
+        .get(&format!("{path}/variables"), &[])
+        .await
+        .unwrap_or_default();
+    if !vars.is_empty() {
+        parts.push(String::new());
+        parts.push(format!("## Trigger variables ({})", vars.len()));
+        parts.push("_Values shown only for plain identifiers; everything else redacted._".into());
+        for v in &vars {
+            let key = v["key"].as_str().unwrap_or("?");
+            let value = v["value"].as_str().unwrap_or("");
+            parts.push(render_variable(key, value));
         }
     }
 
@@ -481,7 +917,10 @@ pub async fn get_ci_variables(
 
 #[cfg(test)]
 mod tests {
-    use super::strip_ansi;
+    use super::{
+        error_signature, failure_class, is_automated_source, normalize_signature, render_variable,
+        strip_ansi,
+    };
 
     #[test]
     fn strips_csi_color_and_erase_codes() {
@@ -495,5 +934,104 @@ mod tests {
         assert_eq!(strip_ansi("plain log line"), "plain log line");
         // A lone ESC drops only the following byte, not real content.
         assert_eq!(strip_ansi("a\u{1b}Xb"), "ab");
+    }
+
+    // ── Trigger-variable redaction (security-critical: default-deny) ──
+
+    #[test]
+    fn identifier_values_are_shown() {
+        assert!(render_variable("ORG_UUID", "b1e2c3d4-0000-4a5b-8c9d-1234567890ab")
+            .contains("b1e2c3d4"));
+        assert!(render_variable("NODE_TYPE", "gateway").contains("`gateway`"));
+        assert!(render_variable("ENVIRONMENT", "prod").contains("`prod`"));
+    }
+
+    #[test]
+    fn secretish_keys_are_always_redacted() {
+        // Every one of these is short and identifier-shaped, so only the
+        // secret-ish check can save them.
+        for key in [
+            "VAULT_CLIENT_SECRET",
+            "VAULT_CLIENT_ID", // half a credential pair — denied despite _ID
+            "CI_JOB_TOKEN",
+            "TF_VAR_api_key",
+            "DB_PASSWORD",
+            "PRIVATE_KEY",
+            "SESSION_ID",
+        ] {
+            let out = render_variable(key, "abc123");
+            assert!(out.contains("<redacted>"), "{key} leaked: {out}");
+            assert!(!out.contains("abc123"), "{key} leaked its value: {out}");
+        }
+    }
+
+    #[test]
+    fn unknown_or_odd_shaped_values_are_redacted() {
+        // Not identifier-shaped → redacted even though the key looks harmless.
+        assert!(render_variable("SOMETHING", "whatever").contains("<redacted>"));
+        // Identifier-shaped key but a long/odd value → still redacted.
+        let long = "x".repeat(200);
+        assert!(render_variable("ORG_UUID", &long).contains("<redacted>"));
+        assert!(render_variable("ORG_UUID", "has spaces and $ymbols").contains("<redacted>"));
+    }
+
+    // ── Failure triage ──
+
+    #[test]
+    fn terraform_config_error_is_extracted_and_not_retryable() {
+        let log = "\
+2026-01-01T00:00:00Z 01O Plan: 5 to add, 0 to change, 3 to destroy.
+2026-01-01T00:00:00Z 01E │ Error: Missing required configuration
+2026-01-01T00:00:00Z 01E │ The 'server_url' must be set (via EXAMPLE_SERVER_URL).
+2026-01-01T00:00:00Z 00O ERROR: Job failed: exit code 1";
+        let sig = error_signature(log).expect("signature");
+        assert!(sig.starts_with("Error: Missing required configuration"), "got: {sig}");
+        // The generic trailer must not win over the specific cause.
+        assert!(!sig.to_lowercase().contains("job failed"));
+        assert_eq!(failure_class(&sig, "script_failure"), "config");
+    }
+
+    #[test]
+    fn generic_trailer_is_only_a_fallback() {
+        let log = "some output\nERROR: Job failed: exit code 137";
+        let sig = error_signature(log).expect("signature");
+        assert!(sig.to_lowercase().contains("job failed"));
+    }
+
+    #[test]
+    fn transient_failures_are_classified_retryable() {
+        assert_eq!(failure_class("", "runner_system_failure"), "transient");
+        assert_eq!(failure_class("", "stuck_or_timeout_failure"), "transient");
+        assert_eq!(
+            failure_class("Error: dial tcp: i/o timeout", "script_failure"),
+            "transient"
+        );
+        assert_eq!(
+            failure_class("Error: 429 too many requests", "script_failure"),
+            "transient"
+        );
+    }
+
+    #[test]
+    fn unrecognized_failures_are_not_advertised_as_retryable() {
+        assert_eq!(failure_class("Error: something novel exploded", "script_failure"), "unknown");
+    }
+
+    /// Volatile IDs collapse so repeated instances of one fault cluster together.
+    #[test]
+    fn signatures_cluster_across_runs() {
+        let a = normalize_signature("Error: node 7f3a1b2c-0000-4111-8222-333344445555 failed after 1234ms");
+        let b = normalize_signature("Error: node 9c8d7e6f-1111-4222-8333-444455556666 failed after 987ms");
+        assert_eq!(a, b, "same fault should normalize identically");
+    }
+
+    #[test]
+    fn source_classification_splits_production_from_dev_ci() {
+        for s in ["trigger", "api", "schedule", "web", "pipeline"] {
+            assert!(is_automated_source(s), "{s} should count as automated");
+        }
+        for s in ["push", "merge_request_event"] {
+            assert!(!is_automated_source(s), "{s} should count as dev CI");
+        }
     }
 }

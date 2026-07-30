@@ -610,10 +610,25 @@ impl GlMcpServer {
         )
     }
 
-    #[tool(description = "Get pipeline details including all jobs grouped by stage")]
+    #[tool(description = "Get pipeline details including all jobs grouped by stage, plus trigger variables (secret-ish values redacted) — for trigger/API pipelines these link a CI run to the business object it was acting on.")]
     async fn get_pipeline(&self, Parameters(p): Parameters<GetPipelineParams>) -> Result<CallToolResult, McpError> {
         simple_tool!(self, p, "get_pipeline", "", |client|
             tools::pipelines::get_pipeline(client, &p.project_id, p.pipeline_id).await
+        )
+    }
+
+    #[tool(description = "Analyze pipeline health for a project or whole group: separates automated/operator runs (trigger, api, schedule, web — the production signal) from development CI (push/MR noise), reports success rate and median duration, then clusters recent automated failures by root cause from their job logs and triages each as transient (safe to retry) or config/state (retrying will fail identically).")]
+    async fn analyze_pipeline_failures(&self, Parameters(p): Parameters<AnalyzePipelineFailuresParams>) -> Result<CallToolResult, McpError> {
+        let project = p.project_id.clone().unwrap_or_default();
+        let group = p.group_path.clone().unwrap_or_default();
+        if project.is_empty() && group.is_empty() {
+            return Ok(CallToolResult::error(vec![Content::text(
+                "analyze_pipeline_failures needs either project_id (one repo) or group_path (whole group).".to_string(),
+            )]));
+        }
+        let scope = if group.is_empty() { project.clone() } else { group.clone() };
+        simple_tool!(self, p, "analyze_pipeline_failures", &scope, |client|
+            tools::pipelines::analyze_pipeline_failures(client, &project, &group, p.days.unwrap_or(30), p.max_logs.unwrap_or(20) as usize).await
         )
     }
 
