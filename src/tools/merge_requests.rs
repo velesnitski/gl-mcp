@@ -23,6 +23,19 @@ fn mr_project_path(mr: &Value) -> Option<String> {
     Some(project_path.to_string())
 }
 
+/// The MR's full reference, e.g. `group/project!42`.
+///
+/// GitLab's `references.full` **already includes the `!iid`**, so appending the iid
+/// again yields `group/project!42!42`. Falls back to a bare `!iid` when the
+/// reference is absent.
+fn mr_reference(mr: &Value, iid: u64) -> String {
+    mr["references"]["full"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("!{iid}"))
+}
+
 /// The MR's assignee(s) as a display string: `@user` (comma-joined if there are
 /// several), or `(unassigned)` when there is none. Reads the modern `assignees`
 /// array and falls back to the deprecated single `assignee` field.
@@ -110,10 +123,10 @@ pub async fn list_merge_requests(
             let title = mr["title"].as_str().unwrap_or("?");
             let state = mr["state"].as_str().unwrap_or("?");
             let author = mr["author"]["username"].as_str().unwrap_or("?");
-            let project = mr["references"]["full"].as_str().unwrap_or("?");
+            let reference = mr_reference(mr, iid);
             let draft = if mr["draft"].as_bool().unwrap_or(false) { "D" } else { "" };
             let assignee = assignee_display(mr);
-            lines.push(format!("{project}!{iid}|{state}{draft}|{author}|{assignee}|{title}"));
+            lines.push(format!("{reference}|{state}{draft}|{author}|{assignee}|{title}"));
             if include_descriptions {
                 let desc = mr["description"].as_str().unwrap_or("").trim();
                 if !desc.is_empty() {
@@ -2060,6 +2073,19 @@ fn format_week_range(start: chrono::DateTime<chrono::Utc>, end: chrono::DateTime
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// `references.full` already carries the `!iid` — it must not be appended twice.
+    #[test]
+    fn mr_reference_does_not_duplicate_the_iid() {
+        let mr = json!({ "references": { "full": "group/project!42" } });
+        assert_eq!(mr_reference(&mr, 42), "group/project!42");
+    }
+
+    #[test]
+    fn mr_reference_falls_back_when_missing() {
+        assert_eq!(mr_reference(&json!({}), 7), "!7");
+        assert_eq!(mr_reference(&json!({ "references": { "full": "" } }), 7), "!7");
+    }
 
     #[test]
     fn assignee_display_prefers_the_assignees_array() {

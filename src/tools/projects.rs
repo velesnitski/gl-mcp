@@ -484,7 +484,34 @@ pub async fn check_branch_protection(
     let pb = match result {
         Ok(v) => v,
         Err(crate::error::Error::GitLab { status, .. }) if status.as_u16() == 404 => {
-            return Ok(format!("Branch '{branch}' is not protected."));
+            // A 404 here means "no protection RULE for this name" — which is
+            // also what you get for a branch that does not exist at all. The
+            // two are very different answers: reporting a typo'd or deleted
+            // branch as "not protected" reads as a real compliance gap and
+            // invites someone to "fix" a branch that was never there. Probe
+            // the branch itself before answering (ADR 044).
+            let branch_path = format!(
+                "/projects/{}/repository/branches/{}",
+                urlencoding::encode(project_id),
+                urlencoding::encode(branch)
+            );
+            let exists: std::result::Result<Value, _> = client.get(&branch_path, &[]).await;
+            return match exists {
+                Ok(_) => Ok(format!("Branch '{branch}' exists but is NOT protected.")),
+                Err(crate::error::Error::GitLab { status, .. }) if status.as_u16() == 404 => Ok(
+                    format!(
+                        "Branch '{branch}' does not exist in this project — so there is \
+                         nothing to protect. Check the name (the default branch is not \
+                         always 'main')."
+                    ),
+                ),
+                // Probe failed for some other reason: report the protection
+                // fact we do know, and say the existence check was unavailable.
+                Err(_) => Ok(format!(
+                    "Branch '{branch}' has no protection rule (could not verify whether \
+                     the branch exists)."
+                )),
+            };
         }
         Err(e) => return Err(e),
     };

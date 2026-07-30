@@ -691,6 +691,28 @@ pub async fn list_environments(
         return Ok(format!("No environments found for {project_id}."));
     }
 
+    // `last_deployment` is NOT part of the environments LIST payload — only the
+    // single-environment endpoint carries it. Reading it off the list made every
+    // row report "no deployments", including live environments with a URL, so
+    // the tool's own promise of deploy info was never kept. Resolve it from the
+    // deployments feed instead: one extra request for the whole project rather
+    // than one per environment (ADR 044).
+    let mut latest: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+    let deployments: std::result::Result<Vec<Value>, _> = client
+        .get(
+            &format!("/projects/{encoded}/deployments"),
+            &[("order_by", "created_at"), ("sort", "desc"), ("per_page", "100")],
+        )
+        .await;
+    if let Ok(list) = deployments {
+        for d in list {
+            if let Some(env_name) = d["environment"]["name"].as_str() {
+                // Feed is newest-first, so the first sighting per environment wins.
+                latest.entry(env_name.to_string()).or_insert(d);
+            }
+        }
+    }
+
     let mut lines = vec![format!("**{project_id} — {} environments**\n", envs.len())];
 
     for env in &envs {
@@ -698,7 +720,14 @@ pub async fn list_environments(
         let state = env["state"].as_str().unwrap_or("?");
         let url = env["external_url"].as_str().unwrap_or("");
 
-        let deploy = &env["last_deployment"];
+        // Prefer the list payload if a future GitLab does include it; else the
+        // deployments feed we just resolved.
+        let fallback = Value::Null;
+        let deploy = if env["last_deployment"].is_null() {
+            latest.get(name).unwrap_or(&fallback)
+        } else {
+            &env["last_deployment"]
+        };
         let deploy_info = if deploy.is_null() {
             "no deployments".to_string()
         } else {
@@ -736,30 +765,38 @@ pub async fn get_contributors(
     }
 
     let total_commits: u64 = contributors.iter().map(|c| c["commits"].as_u64().unwrap_or(0)).sum();
-    let total_add: u64 = contributors.iter().map(|c| c["additions"].as_u64().unwrap_or(0)).sum();
-    let total_del: u64 = contributors.iter().map(|c| c["deletions"].as_u64().unwrap_or(0)).sum();
 
+    // Commits only — no Additions/Deletions columns. GitLab's contributors
+    // endpoint reports both as 0 regardless of history, so rendering them
+    // produced a table whose every line ended "+0 -0" and a header reading
+    // "Total: N commits, +0 -0". That is not "this project changed nothing",
+    // it is "the API does not supply this", and the two must not look alike.
+    // Line counts require walking commit diffs — see get_commit_diff for a
+    // single commit, or the dev-report tools for aggregated churn (ADR 044).
     let mut lines = vec![
         format!("**{project_id} — {} contributors**", contributors.len()),
-        format!("**Total:** {total_commits} commits, +{total_add} -{total_del}\n"),
-        format!("| Contributor | Commits | Additions | Deletions | % |"),
-        format!("|------------|---------|-----------|-----------|---|"),
+        format!("**Total:** {total_commits} commits\n"),
+        format!("| Contributor | Commits | % |"),
+        format!("|------------|---------|---|"),
     ];
 
     for c in contributors.iter().take(20) {
         let name = c["name"].as_str().unwrap_or("?");
         let email = c["email"].as_str().unwrap_or("?");
         let commits = c["commits"].as_u64().unwrap_or(0);
-        let additions = c["additions"].as_u64().unwrap_or(0);
-        let deletions = c["deletions"].as_u64().unwrap_or(0);
         let pct = if total_commits > 0 { commits as f64 / total_commits as f64 * 100.0 } else { 0.0 };
 
-        lines.push(format!("| {name} ({email}) | {commits} | +{additions} | -{deletions} | {pct:.0}% |"));
+        lines.push(format!("| {name} ({email}) | {commits} | {pct:.0}% |"));
     }
 
     if contributors.len() > 20 {
-        lines.push(format!("| ...and {} more | | | | |", contributors.len() - 20));
+        lines.push(format!("| ...and {} more | | |", contributors.len() - 20));
     }
+
+    lines.push(String::from(
+        "\n_Line-count columns omitted: the GitLab contributors endpoint returns \
+         additions/deletions as 0 for every entry._",
+    ));
 
     Ok(lines.join("\n"))
 }
