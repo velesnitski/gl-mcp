@@ -489,7 +489,7 @@ pub async fn check_branch_protection(
             // two are very different answers: reporting a typo'd or deleted
             // branch as "not protected" reads as a real compliance gap and
             // invites someone to "fix" a branch that was never there. Probe
-            // the branch itself before answering (ADR 044).
+            // the branch itself before answering (ADR 045).
             let branch_path = format!(
                 "/projects/{}/repository/branches/{}",
                 urlencoding::encode(project_id),

@@ -696,7 +696,7 @@ pub async fn list_environments(
     // row report "no deployments", including live environments with a URL, so
     // the tool's own promise of deploy info was never kept. Resolve it from the
     // deployments feed instead: one extra request for the whole project rather
-    // than one per environment (ADR 044).
+    // than one per environment (ADR 045).
     let mut latest: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
     let deployments: std::result::Result<Vec<Value>, _> = client
         .get(
@@ -772,7 +772,7 @@ pub async fn get_contributors(
     // "Total: N commits, +0 -0". That is not "this project changed nothing",
     // it is "the API does not supply this", and the two must not look alike.
     // Line counts require walking commit diffs — see get_commit_diff for a
-    // single commit, or the dev-report tools for aggregated churn (ADR 044).
+    // single commit, or the dev-report tools for aggregated churn (ADR 045).
     let mut lines = vec![
         format!("**{project_id} — {} contributors**", contributors.len()),
         format!("**Total:** {total_commits} commits\n"),

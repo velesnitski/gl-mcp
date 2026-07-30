@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-07-30
+
+Documents three fixes whose **code shipped in 1.5.1** alongside an unrelated
+change, without their rationale. This release supplies it and corrects the
+in-code ADR references, which pointed at 044 (a different decision).
+
+All three shared one failure mode: **an absent value rendered as a real one.**
+Each returned well-formed output that did not mean what it appeared to mean, and
+none of them errored. Found by spot-checking the read surface after a GitLab
+upgrade; two are long-standing defects rather than upgrade regressions.
+
+### Fixed
+- **`check_branch_protection` reported a nonexistent branch as "not protected".** `GET /protected_branches/:branch` returns 404 both when a branch has no protection rule *and* when the branch isn't there — the handler assumed the former, so an invented branch name produced the same sentence as a real unprotected one. This is the expensive direction of wrong for a compliance check: "not protected" reads as a genuine gap, inviting protection on a branch that never existed, or a finding against a repo that is fine, while an actual typo passes unnoticed (asking about `main` on a project whose default branch is something else hit exactly this). Now probes the branch on 404 and answers the question asked — *exists but NOT protected* / *does not exist* / *unverified* if the probe itself fails. One extra request, only on the 404 path. See ADR 045.
+- **`get_contributors` rendered Additions/Deletions columns that are always 0.** GitLab's contributors endpoint reports both as `0` for every entry on every project; the tool read them anyway, so each row ended `+0 -0` and the header read `Total: N commits, +0 -0`. Verified across multiple projects — the zeros are structural, not a quiet repository. "This project changed no lines" and "the API does not supply this" are opposite claims and the output made them identical. The columns are gone; the table reports commits and share, with one line stating why line counts are absent and where to get them. **Output shape changed** — anything parsing this table positionally needs a look. See ADR 045.
+- **`list_environments` never showed the deploy info it advertises.** `last_deployment` is not in the environments *list* payload (only the single-environment endpoint carries it), so reading it off each list entry always yielded null and printed `no deployments` — including for live environments with an external URL. The tool's own description promises SHA, branch, status and deployer. Now resolved from the project's deployments feed, newest-first, taking the first sighting per environment: **one** extra request for the whole project rather than one per environment. The list payload still wins when present, so a future GitLab that includes the field needs no change. See ADR 045.
+
 ## [1.5.1] - 2026-07-30
 
 ### Fixed
