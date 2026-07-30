@@ -96,11 +96,18 @@ fn is_automated_source(source: &str) -> bool {
 }
 
 /// Collapse a raw error line into a stable, clusterable signature.
+///
+/// Masking volatile IDs is what makes repeats cluster, but on a message that is
+/// mostly numbers it eats the whole thing and yields a useless `error: …`. When
+/// the masked form retains almost no words, keep the original text instead —
+/// a slightly over-specific cluster beats an empty one.
 fn normalize_signature(s: &str) -> String {
     let collapsed = s.split_whitespace().collect::<Vec<_>>().join(" ");
     let masked = VOLATILE_RE.replace_all(&collapsed, "…");
-    let mut out: String = masked.chars().take(140).collect();
-    if masked.chars().count() > 140 {
+    let words_left = masked.chars().filter(|c| c.is_alphabetic()).count();
+    let chosen: &str = if words_left < 8 { &collapsed } else { &masked };
+    let mut out: String = chosen.chars().take(140).collect();
+    if chosen.chars().count() > 140 {
         out.push('…');
     }
     out
@@ -153,9 +160,10 @@ fn failure_class(signature: &str, failure_reason: &str) -> &'static str {
         "could not resolve host", "connection refused", "502", "503", "504", "deadline exceeded",
     ];
     const CONFIG: &[&str] = &[
-        "missing required", "must be set", "not found", "no such file", "invalid", "unauthorized",
-        "forbidden", "permission denied", "undefined", "does not exist", "unknown variable",
-        "parse error", "syntax", "already exists", "conflict",
+        "missing", "must be set", "not found", "no such file", "invalid", "unauthorized",
+        "forbidden", "permission denied", "undefined", "undeclared", "does not exist",
+        "unknown variable", "parse error", "syntax", "already exists", "conflict",
+        "not set", "required", "unsupported",
     ];
     if TRANSIENT.iter().any(|m| s.contains(m)) {
         return "transient";
@@ -296,14 +304,19 @@ pub async fn analyze_pipeline_failures(
         .map(|r| r.duration)
         .collect();
     durs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let median = durs.get(durs.len() / 2).copied().unwrap_or(0.0);
+    // Bridge/child pipelines report a null duration, so this can legitimately be
+    // empty — say so rather than printing a confident "0s".
+    let median = match durs.get(durs.len() / 2) {
+        Some(d) => format!("{d:.0}s"),
+        None => "n/a".to_string(),
+    };
 
     let scope = if group_path.is_empty() { project_id } else { group_path };
     let mut out = vec![
         format!("# Pipeline failure analysis: `{scope}` (last {days}d)"),
         String::new(),
         format!(
-            "**Automated / operator runs — the production signal:** {a_total} runs · ✅ {a_ok} · ❌ {a_fail} · success rate **{rate:.0}%** · median {median:.0}s"
+            "**Automated / operator runs — the production signal:** {a_total} runs · ✅ {a_ok} · ❌ {a_fail} · success rate **{rate:.0}%** · median {median}"
         ),
         format!(
             "**Development CI (push / merge_request):** {d_total} runs · ❌ {d_fail} — *excluded from the numbers above; branch/MR failures are not customer impact*"
@@ -1023,6 +1036,35 @@ mod tests {
         let a = normalize_signature("Error: node 7f3a1b2c-0000-4111-8222-333344445555 failed after 1234ms");
         let b = normalize_signature("Error: node 9c8d7e6f-1111-4222-8333-444455556666 failed after 987ms");
         assert_eq!(a, b, "same fault should normalize identically");
+    }
+
+    /// Real clusters that landed in "unknown" on the first live run.
+    #[test]
+    fn real_world_config_errors_are_recognized() {
+        for sig in [
+            "Error: Missing Hypervisor API Endpoint",
+            "Error: Reference to undeclared resource",
+            "Error: ttl must be set to 1 when `proxied` is true",
+            "Error: Not Found for url: https://example/api/v3/secrets/raw",
+        ] {
+            assert_eq!(
+                failure_class(sig, "script_failure"),
+                "config",
+                "should be config: {sig}"
+            );
+        }
+    }
+
+    /// A message that is mostly digits must not be masked into oblivion —
+    /// the first live run produced a useless `error: …` cluster this way.
+    #[test]
+    fn numeric_heavy_messages_keep_their_text() {
+        let sig = normalize_signature("error: 5432109876");
+        assert_ne!(sig, "error: …", "masker ate the whole message");
+        assert!(sig.contains("5432109876"), "got: {sig}");
+        // A wordy message still masks its volatile parts.
+        let wordy = normalize_signature("Error: node 12345678 unreachable after retry");
+        assert!(wordy.contains('…') && wordy.contains("unreachable"), "got: {wordy}");
     }
 
     #[test]

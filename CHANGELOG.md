@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-07-30
+
+### Fixed
+- **`analyze_pipeline_failures` classifier calibrated against real failures.** Its first live run (309 automated runs, 65 failures) exposed three defects invisible to synthetic tests: (a) **17 of 20 clusters fell to `unknown`** because the config markers matched `"missing required"` but not a bare `"Missing …"`, and `"undefined"` but not `"undeclared"` — real provider/Terraform config errors went unrecognized; (b) one cluster rendered as **`error: …`** because the volatile-value masker ate a mostly-numeric message whole; (c) **median duration printed `0s`** when bridge/child pipelines report null durations and the sample was empty. Now: config markers broadened, the masker keeps the original text when masking would leave almost no words, and an absent duration sample reports `n/a` instead of a fabricated `0s`. Recurring secret-store folder errors deliberately stay `unknown` — undeterminable from the log line, and the tool refuses to guess. See ADR 047.
+
 ## [1.6.0] - 2026-07-30
 
 ### Added
