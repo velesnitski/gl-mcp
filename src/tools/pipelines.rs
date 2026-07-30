@@ -142,9 +142,18 @@ fn error_signature(log: &str) -> Option<String> {
     fallback
 }
 
-/// Triage a failure as retryable or not. Deliberately conservative: anything not
-/// clearly transient is **not** advertised as safe to retry.
-fn failure_class(signature: &str, failure_reason: &str) -> &'static str {
+/// Triage a failure. Deliberately conservative: anything not clearly transient is
+/// **not** advertised as safe to retry.
+///
+/// Classified against the **whole log**, not just the cluster signature: the
+/// decisive evidence ("already exists", `status-code=404`) is usually a few lines
+/// below the `Error:` header that names the cluster.
+///
+/// `state` is separate from `config` on purpose. Both mean "do not retry", but the
+/// remediation is unrelated — state drift is reconciled (import, state rm, delete
+/// ordering), configuration is edited. Reporting drift as config sends people to
+/// the wrong fix.
+fn failure_class(signature: &str, failure_reason: &str, log: &str) -> &'static str {
     let r = failure_reason.to_ascii_lowercase();
     if r.contains("runner_system_failure")
         || r.contains("stuck_or_timeout")
@@ -154,6 +163,27 @@ fn failure_class(signature: &str, failure_reason: &str) -> &'static str {
         return "transient";
     }
     let s = signature.to_ascii_lowercase();
+    let hay = format!("{s} {}", log.to_ascii_lowercase());
+
+    // State drift: the provider's view and reality disagree.
+    const STATE: &[&str] = &[
+        "already exists", "already managed", "duplicate key", "state lock",
+        "resource already", "currently in use",
+    ];
+    if STATE.iter().any(|m| hay.contains(m)) {
+        return "state";
+    }
+    // A delete/destroy that 404s: the object is already gone — also drift, and the
+    // desired end state is in fact reached.
+    let removing = ["deleting", "destroying", "destroy", "removing"]
+        .iter()
+        .any(|m| hay.contains(m));
+    let missing = ["not found", "status-code=404", "404", "no longer exists"]
+        .iter()
+        .any(|m| hay.contains(m));
+    if removing && missing {
+        return "state";
+    }
     const TRANSIENT: &[&str] = &[
         "timeout", "timed out", "connection reset", "temporarily unavailable", "rate limit",
         "too many requests", "tls handshake", "no space left", "i/o timeout", "unexpected eof",
@@ -238,6 +268,8 @@ pub async fn analyze_pipeline_failures(
         automated: bool,
         source: String,
         duration: f64,
+        /// created→finished; the only measure bridge pipelines always report.
+        wall: Option<f64>,
         web_url: String,
     }
 
@@ -268,6 +300,10 @@ pub async fn analyze_pipeline_failures(
                     automated: is_automated_source(&source),
                     source,
                     duration: p["duration"].as_f64().unwrap_or(0.0),
+                    wall: wall_clock_secs(
+                        p["created_at"].as_str().unwrap_or(""),
+                        p["finished_at"].as_str().unwrap_or(""),
+                    ),
                     web_url: p["web_url"].as_str().unwrap_or("").to_string(),
                 });
             }
@@ -298,16 +334,18 @@ pub async fn analyze_pipeline_failures(
     } else {
         0.0
     };
+    // Wall clock, not job time: it answers "how long until this was done" and it
+    // exists for bridge pipelines, whose `duration` is null.
     let mut durs: Vec<f64> = runs
         .iter()
-        .filter(|r| r.automated && r.status == "success" && r.duration > 0.0)
-        .map(|r| r.duration)
+        .filter(|r| r.automated && r.status == "success")
+        .filter_map(|r| r.wall.or(if r.duration > 0.0 { Some(r.duration) } else { None }))
         .collect();
     durs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     // Bridge/child pipelines report a null duration, so this can legitimately be
     // empty — say so rather than printing a confident "0s".
     let median = match durs.get(durs.len() / 2) {
-        Some(d) => format!("{d:.0}s"),
+        Some(d) => format!("{} wall clock", human_secs(*d)),
         None => "n/a".to_string(),
     };
 
@@ -369,7 +407,7 @@ pub async fn analyze_pipeline_failures(
                 .iter()
                 .find(|j| j["status"].as_str() == Some("failed"))
                 .cloned();
-            let (reason, sig) = match failed {
+            let (reason, sig, log_tail) = match failed {
                 Some(j) => {
                     let reason = j["failure_reason"].as_str().unwrap_or("").to_string();
                     let job_id = j["id"].as_u64().unwrap_or(0);
@@ -380,13 +418,17 @@ pub async fn analyze_pipeline_failures(
                         )
                         .await
                         .unwrap_or_default();
-                    (reason.clone(), error_signature(&log))
+                    // Keep a bounded tail for classification — the decisive
+                    // evidence sits below the Error: header that names the cluster.
+                    let tail: String = log.chars().rev().take(4000).collect::<String>()
+                        .chars().rev().collect();
+                    (reason.clone(), error_signature(&log), tail)
                 }
-                None => (String::new(), None),
+                None => (String::new(), None, String::new()),
             };
-            (r, reason, sig)
+            (r, reason, sig, log_tail)
         });
-        for (r, reason, sig) in futures::future::join_all(futs).await {
+        for (r, reason, sig, log_tail) in futures::future::join_all(futs).await {
             let signature = sig.unwrap_or_else(|| {
                 if reason.is_empty() {
                     "(no error line found in log)".to_string()
@@ -394,7 +436,7 @@ pub async fn analyze_pipeline_failures(
                     format!("({reason})")
                 }
             });
-            let class = failure_class(&signature, &reason).to_string();
+            let class = failure_class(&signature, &reason, &log_tail).to_string();
             let e = clusters
                 .entry((class, signature))
                 .or_insert((0, r.project.clone(), r.web_url.clone()));
@@ -415,6 +457,7 @@ pub async fn analyze_pipeline_failures(
         let icon = match class.as_str() {
             "transient" => "🔁",
             "config" => "🛠",
+            "state" => "🧭",
             _ => "❔",
         };
         let link = if url.is_empty() {
@@ -436,13 +479,22 @@ pub async fn analyze_pipeline_failures(
         .map(|(_, (n, _, _))| n)
         .sum();
 
+    let state: usize = rows
+        .iter()
+        .filter(|((c, _), _)| c == "state")
+        .map(|(_, (n, _, _))| n)
+        .sum();
+
     out.push(String::new());
     out.push("## Retry guidance".to_string());
     out.push(format!(
         "- 🔁 **{transient} transient** — infrastructure/network noise; retrying is likely to succeed."
     ));
     out.push(format!(
-        "- 🛠 **{config} config/state** — **do not retry**: the same run will fail identically until the cause is fixed."
+        "- 🧭 **{state} state drift** — **do not retry**: the recorded state and reality disagree (object already exists, or a delete found nothing). Reconcile instead — import the existing object, drop it from state, or fix delete ordering."
+    ));
+    out.push(format!(
+        "- 🛠 **{config} config** — **do not retry**: the same run will fail identically until the configuration is fixed."
     ));
     out.push(
         "- ❔ **unknown** — inspect with `get_job_log` before deciding; not classified as retryable."
@@ -455,6 +507,31 @@ pub async fn analyze_pipeline_failures(
     );
 
     Ok(out.join("\n"))
+}
+
+/// Seconds between two RFC-3339 timestamps.
+///
+/// GitLab's `duration` counts only job execution, so a run that waited an hour for
+/// a runner reports the same number as one that started instantly. For provisioning
+/// the customer-facing figure is created→finished, and bridge/child pipelines report
+/// a null `duration` entirely — wall clock is the only measure that always exists.
+fn wall_clock_secs(created: &str, finished: &str) -> Option<f64> {
+    let c = chrono::DateTime::parse_from_rfc3339(created).ok()?;
+    let f = chrono::DateTime::parse_from_rfc3339(finished).ok()?;
+    let secs = (f - c).num_seconds();
+    (secs >= 0).then_some(secs as f64)
+}
+
+/// Human duration: `1h 37m` / `4m 12s` / `26s`.
+fn human_secs(s: f64) -> String {
+    let s = s as u64;
+    if s >= 3600 {
+        format!("{}h {}m", s / 3600, (s % 3600) / 60)
+    } else if s >= 60 {
+        format!("{}m {}s", s / 60, s % 60)
+    } else {
+        format!("{s}s")
+    }
 }
 
 /// Key substrings whose values are **never** rendered. Checked first, so a key
@@ -527,11 +604,32 @@ pub async fn get_pipeline(
         format!("**Ref:** {ref_name}"),
         format!("**Source:** {source}"),
         format!("**Triggered by:** @{user}"),
-        format!("**Duration:** {duration_str}"),
+        format!("**Duration:** {duration_str} (job time)"),
+    ];
+
+    // Wall clock and queue time. `duration` counts execution only, so a run that
+    // waited hours for a runner looks identical to one that started at once —
+    // misleading wherever the question is "how long until this was done".
+    if let Some(wall) = wall_clock_secs(created, finished) {
+        let queued = p["queued_duration"].as_f64().unwrap_or(0.0);
+        let mut line = format!("**Wall clock:** {} (created → finished)", human_secs(wall));
+        if queued >= 1.0 {
+            line.push_str(&format!(" · **queued {}**", human_secs(queued)));
+        }
+        // Long idle with little execution is the signature of runner starvation.
+        if wall > 300.0 && duration > 0.0 && wall > duration * 10.0 {
+            line.push_str(&format!(
+                " ⚠️ only {duration:.0}s executing — the rest was waiting"
+            ));
+        }
+        parts.push(line);
+    }
+
+    parts.extend([
         format!("**Created:** {created}"),
         format!("**Finished:** {finished}"),
         format!("**URL:** {web_url}"),
-    ];
+    ]);
 
     // Fetch jobs
     let jobs_path = format!("/projects/{encoded}/pipelines/{pipeline_id}/jobs");
@@ -581,6 +679,48 @@ pub async fn get_pipeline(
                     }
                 }
                 parts.push(line);
+            }
+        }
+    }
+
+    // Downstream (multi-project) pipelines. A provisioning run commonly spans
+    // several projects via bridge jobs, so the failure that matters is often two
+    // hops below the pipeline you're looking at; without this the parent is just
+    // red with no explanation.
+    //
+    // `trigger_jobs` superseded `bridges` in GitLab 19.2 — try the current route
+    // first and fall back, so this works across instance versions.
+    let mut bridges: Vec<Value> = client
+        .get(&format!("{path}/trigger_jobs"), &[("per_page", "100")])
+        .await
+        .unwrap_or_default();
+    if bridges.is_empty() {
+        bridges = client
+            .get(&format!("{path}/bridges"), &[("per_page", "100")])
+            .await
+            .unwrap_or_default();
+    }
+    if !bridges.is_empty() {
+        parts.push(String::new());
+        parts.push(format!("## Downstream pipelines ({})", bridges.len()));
+        for b in &bridges {
+            let name = b["name"].as_str().unwrap_or("?");
+            let b_status = b["status"].as_str().unwrap_or("?");
+            let d = &b["downstream_pipeline"];
+            match d["id"].as_u64() {
+                Some(did) => {
+                    let d_status = d["status"].as_str().unwrap_or("?");
+                    let d_url = d["web_url"].as_str().unwrap_or("");
+                    let icon = if d_status == "failed" { "❌" } else { "•" };
+                    parts.push(format!(
+                        "- {icon} **{name}** [{b_status}] → pipeline #{did} [{d_status}] {d_url}"
+                    ));
+                }
+                // A bridge with no downstream never spawned one — usually the
+                // trigger itself failed, which is worth seeing.
+                None => parts.push(format!(
+                    "- ⚠️ **{name}** [{b_status}] → no downstream pipeline created"
+                )),
             }
         }
     }
@@ -931,8 +1071,8 @@ pub async fn get_ci_variables(
 #[cfg(test)]
 mod tests {
     use super::{
-        error_signature, failure_class, is_automated_source, normalize_signature, render_variable,
-        strip_ansi,
+        error_signature, failure_class, human_secs, is_automated_source, normalize_signature,
+        render_variable, strip_ansi, wall_clock_secs,
     };
 
     #[test]
@@ -1001,7 +1141,7 @@ mod tests {
         assert!(sig.starts_with("Error: Missing required configuration"), "got: {sig}");
         // The generic trailer must not win over the specific cause.
         assert!(!sig.to_lowercase().contains("job failed"));
-        assert_eq!(failure_class(&sig, "script_failure"), "config");
+        assert_eq!(failure_class(&sig, "script_failure", ""), "config");
     }
 
     #[test]
@@ -1013,21 +1153,21 @@ mod tests {
 
     #[test]
     fn transient_failures_are_classified_retryable() {
-        assert_eq!(failure_class("", "runner_system_failure"), "transient");
-        assert_eq!(failure_class("", "stuck_or_timeout_failure"), "transient");
+        assert_eq!(failure_class("", "runner_system_failure", ""), "transient");
+        assert_eq!(failure_class("", "stuck_or_timeout_failure", ""), "transient");
         assert_eq!(
-            failure_class("Error: dial tcp: i/o timeout", "script_failure"),
+            failure_class("Error: dial tcp: i/o timeout", "script_failure", ""),
             "transient"
         );
         assert_eq!(
-            failure_class("Error: 429 too many requests", "script_failure"),
+            failure_class("Error: 429 too many requests", "script_failure", ""),
             "transient"
         );
     }
 
     #[test]
     fn unrecognized_failures_are_not_advertised_as_retryable() {
-        assert_eq!(failure_class("Error: something novel exploded", "script_failure"), "unknown");
+        assert_eq!(failure_class("Error: something novel exploded", "script_failure", ""), "unknown");
     }
 
     /// Volatile IDs collapse so repeated instances of one fault cluster together.
@@ -1048,11 +1188,52 @@ mod tests {
             "Error: Not Found for url: https://example/api/v3/secrets/raw",
         ] {
             assert_eq!(
-                failure_class(sig, "script_failure"),
+                failure_class(sig, "script_failure", ""),
                 "config",
                 "should be config: {sig}"
             );
         }
+    }
+
+    /// Both halves of a real state-drift loop: a create that collides with an
+    /// existing object, and a delete that finds nothing. Same "don't retry"
+    /// verdict as config, but a different fix — so they get their own class.
+    #[test]
+    fn state_drift_is_distinguished_from_config() {
+        let create_collision = "Error: Error creating project secret folder\n\
+            Unsuccessful response [POST /api/v1/folders] [status-code=400] \
+            [message=\"Folder with name 'abc' already exists in path '/x/y'\"]";
+        assert_eq!(
+            failure_class("Error: Error creating project secret folder", "script_failure", create_collision),
+            "state"
+        );
+
+        let delete_missing = "module.x.thing: Destroying... [id=1]\n\
+            Error: Error deleting secret folder\n\
+            Unsuccessful response [DELETE /api/v2/folders/1] [status-code=404] \
+            [message=\"Folder with path '/x/y' not found\"]";
+        assert_eq!(
+            failure_class("Error: Error deleting secret folder", "script_failure", delete_missing),
+            "state"
+        );
+
+        // A genuine config error must NOT be swept into the state bucket.
+        assert_eq!(
+            failure_class("Error: Missing Hypervisor API Endpoint", "script_failure", "endpoint must be set"),
+            "config"
+        );
+    }
+
+    #[test]
+    fn wall_clock_and_human_duration() {
+        // The real shape that motivated this: ~1h37m elapsed, seconds of work.
+        let wall = wall_clock_secs("2026-05-27T10:28:57Z", "2026-05-27T12:06:16Z").unwrap();
+        assert_eq!(human_secs(wall), "1h 37m");
+        assert_eq!(human_secs(26.0), "26s");
+        assert_eq!(human_secs(252.0), "4m 12s");
+        // Unparseable or reversed timestamps yield nothing rather than a bogus number.
+        assert!(wall_clock_secs("", "").is_none());
+        assert!(wall_clock_secs("2026-05-27T12:00:00Z", "2026-05-27T10:00:00Z").is_none());
     }
 
     /// A message that is mostly digits must not be masked into oblivion —

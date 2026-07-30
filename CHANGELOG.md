@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-07-30
+
+### Added
+- **Downstream pipeline tracing in `get_pipeline`.** A provisioning run spans several projects via bridge jobs, and in a live sample **half of all runs** were `source=pipeline` children analyzed in isolation — a failure two hops down showed only as a red parent. `get_pipeline` now lists bridge jobs with each downstream pipeline's id, status and URL, and explicitly flags a bridge that spawned **no** downstream (the trigger itself failed — otherwise invisible). Uses `trigger_jobs` (superseded `bridges` in GitLab 19.2) with a `bridges` fallback for older instances. See ADR 048.
+- **Wall-clock and queue timing.** GitLab's `duration` counts job execution only: one observed run was created 10:28 and finished 12:06 — **1h37m elapsed for 27s of execution** — and bridge pipelines report a *null* duration, so aggregate timing had no sample. `get_pipeline` now shows created→finished plus `queued_duration`, and flags runs that spent an order of magnitude longer waiting than executing (runner starvation). `analyze_pipeline_failures` medians on wall clock, which every pipeline has.
+
+### Changed
+- **`state` is now a distinct failure class from `config`.** Create → `400 already exists` and delete → `404 not found` were both bucketed as config. They share "do not retry" but nothing else: config is *edited*, drift is *reconciled* (import, state rm, delete ordering) — and in practice the two shapes are halves of one loop, where a partial destroy leaves an orphan the next apply collides with. Classification now reads the **whole log**, not just the cluster signature, because the decisive evidence sits below the `Error:` header. Retry guidance names the reconciliation actions. See ADR 048.
+
 ## [1.6.1] - 2026-07-30
 
 ### Fixed
