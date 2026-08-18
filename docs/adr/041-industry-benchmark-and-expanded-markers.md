@@ -8,7 +8,7 @@ Accepted (2026-07-17)
 
 The adoption report gave raw metrics — developer-adoption rate and AI commit share —
 but left the reader to judge whether the numbers were good, and what to do next.
-"20% developer adoption" means nothing without a reference point. Leads need a
+A developer-adoption percentage on its own means nothing without a reference point. Leads need a
 verdict and a roadmap, not just percentages.
 
 Separately, the marker set — even after the tool-agnostic pass (ADR 040) — still

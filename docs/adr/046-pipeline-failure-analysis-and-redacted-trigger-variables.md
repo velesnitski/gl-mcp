@@ -18,7 +18,7 @@ dashboard that teams learn to ignore, and hides the failures that matter.
 
 **2. A failed pipeline could not be tied to what it was acting on.** Trigger
 variables (org/network identifiers passed by the calling system) were not exposed at
-all, so "pipeline 4785 failed" could not become "customer X's network failed".
+all, so "pipeline N failed" could not become "customer X's network failed".
 
 There was also no way to answer "is this worth retrying?" without opening each job
 log by hand.

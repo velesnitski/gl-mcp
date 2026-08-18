@@ -11,13 +11,13 @@ real provisioning fleet.
 
 **1. Child pipelines were analyzed blind.** In a multi-project setup, a provisioning
 run spans several projects via bridge jobs (`strategy: depend`). In one live sample
-**half of all runs** had `source=pipeline` — they *were* children — yet each was
+**a large share of runs** had `source=pipeline` — they *were* children — yet each was
 reported in isolation. A failure two hops down surfaced only as a red parent with no
 explanation, and the tool offered no way to follow the chain.
 
 **2. `duration` is the wrong clock.** GitLab's `duration` counts job execution only.
-One observed run was created at `10:28` and finished at `12:06` — **1h37m** elapsed
-for **27s** of execution. Reporting 27s answers "how much CPU did this consume", not
+One observed run showed well over an hour of elapsed time for a handful of seconds
+of execution. Reporting job time answers "how much CPU did this consume", not
 "how long until the customer's resource existed". Worse, bridge/child pipelines
 report a **null** duration, so aggregate timing had no sample at all.
 

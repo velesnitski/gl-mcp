@@ -1226,7 +1226,7 @@ mod tests {
 
     #[test]
     fn wall_clock_and_human_duration() {
-        // The real shape that motivated this: ~1h37m elapsed, seconds of work.
+        // The shape that motivated this: long elapsed time, seconds of work.
         let wall = wall_clock_secs("2026-05-27T10:28:57Z", "2026-05-27T12:06:16Z").unwrap();
         assert_eq!(human_secs(wall), "1h 37m");
         assert_eq!(human_secs(26.0), "26s");

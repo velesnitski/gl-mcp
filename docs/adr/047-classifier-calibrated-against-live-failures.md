@@ -7,11 +7,10 @@ Accepted (2026-07-30)
 ## Context
 
 `analyze_pipeline_failures` (ADR 046) was built from first principles and its unit
-tests used synthetic log lines. The first run against a real infrastructure group —
-309 automated runs, 65 failures — showed the classifier was under-calibrated in three
-concrete ways:
+tests used synthetic log lines. The first run against a live infrastructure group
+showed the classifier was under-calibrated in three concrete ways:
 
-1. **17 of 20 clusters fell to `unknown`.** Two were unambiguous misses: the config
+1. **Most clusters fell to `unknown`.** Two were unambiguous misses: the config
    list matched `"missing required"` but not a bare `"Missing …"`, and `"undefined"`
    but not `"undeclared"` — so real Terraform/provider configuration errors were not
    recognized as config.
