@@ -603,10 +603,10 @@ impl GlMcpServer {
 
     // ─── Pipelines ───
 
-    #[tool(description = "List CI/CD pipelines for a project")]
+    #[tool(description = "List CI/CD pipelines for a project, optionally filtered by status, ref, or trigger source (source=pipeline excludes/selects child pipelines, which otherwise inflate counts).")]
     async fn list_pipelines(&self, Parameters(p): Parameters<ListPipelinesParams>) -> Result<CallToolResult, McpError> {
         simple_tool!(self, p, "list_pipelines", "", |client|
-            tools::pipelines::list_pipelines(client, &p.project_id, p.status.as_deref().unwrap_or(""), p.ref_name.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
+            tools::pipelines::list_pipelines(client, &p.project_id, p.status.as_deref().unwrap_or(""), p.ref_name.as_deref().unwrap_or(""), p.source.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
         )
     }
 
@@ -632,10 +632,10 @@ impl GlMcpServer {
         )
     }
 
-    #[tool(description = "Get CI job log output. Returns last N lines (tail). Critical for debugging failed jobs.")]
+    #[tool(description = "Get CI job log output. Returns the last N lines (tail), or — with `pattern` — only the lines matching a regex, searched across the whole log. Critical for debugging failed jobs.")]
     async fn get_job_log(&self, Parameters(p): Parameters<GetJobLogParams>) -> Result<CallToolResult, McpError> {
         simple_tool!(self, p, "get_job_log", "", |client|
-            tools::pipelines::get_job_log(client, &p.project_id, p.job_id, p.tail.unwrap_or(100)).await
+            tools::pipelines::get_job_log(client, &p.project_id, p.job_id, p.tail.unwrap_or(100), p.pattern.as_deref().unwrap_or("")).await
         )
     }
 

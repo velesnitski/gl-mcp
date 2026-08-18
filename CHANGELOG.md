@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-08-18
+
+### Added
+- **`source` filter on `list_pipelines`.** ADR 048 established that child pipelines (`source=pipeline`) must not be counted as independent runs, but no tool let a caller act on that — the correction lived inside `analyze_pipeline_failures` and nowhere else. Child pipelines can now be excluded or selected deliberately, and the applied filter is echoed in the response header so a filtered count is never mistaken for a total. See ADR 049.
+- **`pattern` search on `get_job_log`.** A case-insensitive regex that scans the **whole** log and returns only matching lines, numbered, capped at `tail` matches and keeping the last ones. Previously, an error above the tail window could only be reached by paying for a larger tail — thousands of lines to read one. The response reports matches against total lines, so a truncated result cannot look complete; an invalid regex is reported as such rather than surfacing as a tool error.
+
+### Fixed
+- **Status-code markers could never fire.** `failure_class` listed `502`/`503`/`504` as transient markers tested against the cluster signature — but signatures come from `normalize_signature`, which masks runs of two or more digits so identical faults cluster together. The codes were erased before they were tested, leaving the markers inert except on the short-signature fallback path. Status codes are now read from the log itself and triaged: 408/425/429/500/502/503/504 transient, 400/401/403/404/405/409/422 config. A bare three-digit number is not accepted as evidence — a code counts only beside a status word or with its canonical reason phrase, so "took 403 ms" is not read as a permission error. State-drift checks still run first, so a delete that 404s remains reconciliation rather than misconfiguration. See ADR 049.
+
 ## [1.7.0] - 2026-07-30
 
 ### Added

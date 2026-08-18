@@ -10,6 +10,7 @@ pub async fn list_pipelines(
     project_id: &str,
     status: &str,
     ref_name: &str,
+    source: &str,
     per_page: u32,
 ) -> Result<String> {
     let per_page_str = per_page.to_string();
@@ -29,6 +30,9 @@ pub async fn list_pipelines(
     if !ref_name.is_empty() {
         params.push(("ref", ref_name));
     }
+    if !source.is_empty() {
+        params.push(("source", source));
+    }
 
     let pipelines: Vec<Value> = client
         .get(&path, &params)
@@ -39,7 +43,15 @@ pub async fn list_pipelines(
         return Ok("No pipelines found.".to_string());
     }
 
-    let mut lines = vec![format!("**Found: {} pipelines**\n", pipelines.len())];
+    let filter_note = if source.is_empty() {
+        String::new()
+    } else {
+        format!(" (source={source})")
+    };
+    let mut lines = vec![format!(
+        "**Found: {} pipelines**{filter_note}\n",
+        pipelines.len()
+    )];
 
     for p in &pipelines {
         let id = p["id"].as_u64().unwrap_or(0);
@@ -142,6 +154,30 @@ fn error_signature(log: &str) -> Option<String> {
     fallback
 }
 
+/// The first HTTP status code in a failure log, if one is stated.
+///
+/// Read from the **log** rather than the cluster signature: `normalize_signature`
+/// masks runs of digits so that identical faults cluster together, which also erases
+/// the codes — numeric markers tested against the signature could only ever fire on
+/// the short-signature fallback path, and silently missed every other case.
+///
+/// A bare three-digit number is not evidence ("took 403 ms"), so a code counts only
+/// when it sits next to a status word or carries its canonical reason phrase.
+static HTTP_STATUS_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(
+        r"(?i)(?:status[ _-]?code|statuscode|status|https?|response|returned|code)\D{0,4}(\d{3})\b|\b(\d{3})\s+(?:unauthorized|forbidden|not\s+found|unprocessable|too\s+many|bad\s+gateway|service\s+unavailable|gateway\s+time)",
+    )
+    .expect("HTTP_STATUS_RE is a valid regex")
+});
+
+fn http_status(hay: &str) -> Option<u16> {
+    HTTP_STATUS_RE
+        .captures_iter(hay)
+        .filter_map(|c| c.get(1).or_else(|| c.get(2)))
+        .filter_map(|m| m.as_str().parse::<u16>().ok())
+        .find(|c| (400..600).contains(c))
+}
+
 /// Triage a failure. Deliberately conservative: anything not clearly transient is
 /// **not** advertised as safe to retry.
 ///
@@ -184,10 +220,21 @@ fn failure_class(signature: &str, failure_reason: &str, log: &str) -> &'static s
     if removing && missing {
         return "state";
     }
+
+    // A status code states the verdict that the surrounding prose often leaves out.
+    // Checked before the word lists so that "403 Forbidden" is read as permission
+    // rather than matching some unrelated word elsewhere in the log.
+    if let Some(code) = http_status(&hay) {
+        match code {
+            408 | 425 | 429 | 500 | 502 | 503 | 504 => return "transient",
+            400 | 401 | 403 | 404 | 405 | 409 | 422 => return "config",
+            _ => {}
+        }
+    }
     const TRANSIENT: &[&str] = &[
         "timeout", "timed out", "connection reset", "temporarily unavailable", "rate limit",
         "too many requests", "tls handshake", "no space left", "i/o timeout", "unexpected eof",
-        "could not resolve host", "connection refused", "502", "503", "504", "deadline exceeded",
+        "could not resolve host", "connection refused", "deadline exceeded",
     ];
     const CONFIG: &[&str] = &[
         "missing", "must be set", "not found", "no such file", "invalid", "unauthorized",
@@ -778,11 +825,29 @@ fn strip_ansi(s: &str) -> String {
 }
 
 /// Get CI job log (trace).
+/// Lines of `log` matching `re`, 1-indexed, keeping at most `limit` — the **last**
+/// matches, since the decisive error in a CI log sits near the end.
+///
+/// Returns the total number of matches alongside the kept ones, so a truncated
+/// result can say how much it left out instead of looking complete.
+fn grep_lines<'a>(log: &'a str, re: &regex::Regex, limit: usize) -> (usize, Vec<(usize, &'a str)>) {
+    let hits: Vec<(usize, &str)> = log
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| re.is_match(l))
+        .map(|(i, l)| (i + 1, l))
+        .collect();
+    let total = hits.len();
+    let start = total.saturating_sub(limit);
+    (total, hits[start..].to_vec())
+}
+
 pub async fn get_job_log(
     client: &GitLabClient,
     project_id: &str,
     job_id: u64,
     tail: usize,
+    pattern: &str,
 ) -> Result<String> {
     let encoded = urlencoding::encode(project_id);
 
@@ -816,6 +881,41 @@ pub async fn get_job_log(
         return Ok(format!(
             "## Job #{job_id}: {name}\n{meta}\n\n*(log is empty — the job may be pending/created, or its trace was erased)*"
         ));
+    }
+
+    // Pattern search scans the whole log, not the tail window — reaching the lines
+    // the tail cuts off is the entire point of searching.
+    if !pattern.is_empty() {
+        let re = match regex::RegexBuilder::new(pattern)
+            .case_insensitive(true)
+            .build()
+        {
+            Ok(re) => re,
+            Err(e) => {
+                return Ok(format!(
+                    "## Job #{job_id}: {name}\n{meta}\n\n**Invalid pattern** `{pattern}`: {e}"
+                ));
+            }
+        };
+        let total_lines = log_text.lines().count();
+        let (total, hits) = grep_lines(&log_text, &re, tail);
+        if total == 0 {
+            return Ok(format!(
+                "## Job #{job_id}: {name}\n{meta}\n\n*No line matches `{pattern}` ({total_lines} lines searched).*"
+            ));
+        }
+        let note = if hits.len() < total {
+            format!("*`{pattern}`: {total} matching lines of {total_lines}, showing last {}*", hits.len())
+        } else {
+            format!("*`{pattern}`: {total} matching lines of {total_lines}*")
+        };
+        let mut parts = vec![format!("## Job #{job_id}: {name}"), meta, note, String::new()];
+        parts.push("```".to_string());
+        for (n, l) in hits {
+            parts.push(format!("{n}: {l}"));
+        }
+        parts.push("```".to_string());
+        return Ok(parts.join("\n"));
     }
 
     // Tail: take last N lines
@@ -1071,9 +1171,82 @@ pub async fn get_ci_variables(
 #[cfg(test)]
 mod tests {
     use super::{
-        error_signature, failure_class, human_secs, is_automated_source, normalize_signature,
-        render_variable, strip_ansi, wall_clock_secs,
+        error_signature, failure_class, grep_lines, http_status, human_secs,
+        is_automated_source, normalize_signature, render_variable, strip_ansi, wall_clock_secs,
     };
+
+    #[test]
+    fn http_status_needs_context_not_a_bare_number() {
+        // Status words, in the forms CI logs actually use.
+        assert_eq!(http_status("Error: status code 401 from provider"), Some(401));
+        assert_eq!(http_status("HTTP 503 while calling the API"), Some(503));
+        assert_eq!(http_status("request returned 422"), Some(422));
+        assert_eq!(http_status("status-code=404"), Some(404));
+        // Canonical reason phrase carries a code with no status word at all.
+        assert_eq!(http_status("got 403 Forbidden from the registry"), Some(403));
+        // A bare number is not a status: durations and counts must not be read as one.
+        assert_eq!(http_status("provisioning took 403 ms"), None);
+        assert_eq!(http_status("wrote 5024 bytes"), None);
+        // 2xx/3xx are not failures.
+        assert_eq!(http_status("HTTP 200 OK"), None);
+    }
+
+    #[test]
+    fn classifies_by_http_status() {
+        // Auth/permission/validation: retrying repeats the identical failure.
+        assert_eq!(failure_class("", "script_failure", "HTTP 401 unauthorized"), "config");
+        assert_eq!(failure_class("", "script_failure", "status code 403"), "config");
+        assert_eq!(failure_class("", "script_failure", "response 422 unprocessable"), "config");
+        // Server-side and throttling: worth another attempt.
+        assert_eq!(failure_class("", "script_failure", "HTTP 429 too many requests"), "transient");
+        assert_eq!(failure_class("", "script_failure", "status 503 service unavailable"), "transient");
+    }
+
+    #[test]
+    fn numeric_codes_survive_signature_masking() {
+        // Regression: signatures are normalized before classification, and
+        // normalization masks digit runs — so a code tested against the signature
+        // is already gone. It has to be read from the log.
+        let sig = normalize_signature("Error: upstream call failed with a bad gateway response");
+        assert!(!sig.contains("502"), "precondition: signature carries no code");
+        assert_eq!(
+            failure_class(&sig, "script_failure", "server responded: HTTP 502 bad gateway\n"),
+            "transient"
+        );
+    }
+
+    #[test]
+    fn state_drift_outranks_a_404_status() {
+        // A delete that 404s has reached its desired end state — reconcile, don't
+        // treat it as broken configuration.
+        assert_eq!(
+            failure_class("", "script_failure", "Error deleting folder: status-code=404 not found"),
+            "state"
+        );
+    }
+
+    #[test]
+    fn grep_lines_numbers_matches_and_keeps_the_last_ones() {
+        let log = "start\nWARN one\nmiddle\nWARN two\nWARN three\ndone";
+        let re = regex::RegexBuilder::new("warn")
+            .case_insensitive(true)
+            .build()
+            .unwrap();
+
+        let (total, hits) = grep_lines(log, &re, 10);
+        assert_eq!(total, 3);
+        // 1-indexed line numbers, so they line up with an editor.
+        assert_eq!(hits, vec![(2, "WARN one"), (4, "WARN two"), (5, "WARN three")]);
+
+        // Over the cap: keep the LAST matches — the decisive error is near the end.
+        let (total, hits) = grep_lines(log, &re, 2);
+        assert_eq!(total, 3, "total still reports everything found");
+        assert_eq!(hits, vec![(4, "WARN two"), (5, "WARN three")]);
+
+        // No match is not an error.
+        let none = regex::Regex::new("nothing-here").unwrap();
+        assert_eq!(grep_lines(log, &none, 5), (0, vec![]));
+    }
 
     #[test]
     fn strips_csi_color_and_erase_codes() {

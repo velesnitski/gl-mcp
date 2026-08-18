@@ -374,6 +374,10 @@ pub struct ListPipelinesParams {
     pub status: Option<String>,
     #[schemars(description = "Filter by git ref (branch/tag)")]
     pub ref_name: Option<String>,
+    #[schemars(
+        description = "Filter by trigger source: trigger, api, schedule, web, external (production runs) or push, merge_request_event (development CI), or pipeline/parent_pipeline (child pipelines). Use this to exclude child pipelines, which otherwise inflate counts."
+    )]
+    pub source: Option<String>,
     #[schemars(description = "Max results (default: 20)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub per_page: Option<u32>,
@@ -421,6 +425,10 @@ pub struct GetJobLogParams {
     #[schemars(description = "Max lines from end of log (default: 100)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_usize")]
     pub tail: Option<usize>,
+    #[schemars(
+        description = "Case-insensitive regex; when set, searches the WHOLE log and returns only matching lines (numbered), capped at `tail` matches. Far cheaper than pulling a large log to find one error."
+    )]
+    pub pattern: Option<String>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }
