@@ -165,7 +165,7 @@ fn error_signature(log: &str) -> Option<String> {
 /// when it sits next to a status word or carries its canonical reason phrase.
 static HTTP_STATUS_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
     regex::Regex::new(
-        r"(?i)(?:status[ _-]?code|statuscode|status|https?|response|returned|code)\D{0,4}(\d{3})\b|\b(\d{3})\s+(?:unauthorized|forbidden|not\s+found|unprocessable|too\s+many|bad\s+gateway|service\s+unavailable|gateway\s+time)",
+        r"(?i)(?:status[ _-]?code|statuscode|status|https?|response|returned|error|code)\D{0,4}(\d{3})\b|\b(\d{3})\s+(?:unauthorized|forbidden|not\s+found|unprocessable|too\s+many|bad\s+gateway|service\s+unavailable|gateway\s+time)",
     )
     .expect("HTTP_STATUS_RE is a valid regex")
 });
@@ -339,18 +339,19 @@ pub async fn analyze_pipeline_failures(
         for (pid, path, list) in futures::future::join_all(futs).await {
             for p in &list {
                 let source = p["source"].as_str().unwrap_or("unknown").to_string();
+                let status = p["status"].as_str().unwrap_or("?").to_string();
+                let wall = pipeline_end_ts(p, &status).and_then(|end| {
+                    wall_clock_secs(p["created_at"].as_str().unwrap_or(""), end)
+                });
                 runs.push(Run {
                     project: path.clone(),
                     project_id: pid,
                     id: p["id"].as_u64().unwrap_or(0),
-                    status: p["status"].as_str().unwrap_or("?").to_string(),
+                    status,
                     automated: is_automated_source(&source),
                     source,
                     duration: p["duration"].as_f64().unwrap_or(0.0),
-                    wall: wall_clock_secs(
-                        p["created_at"].as_str().unwrap_or(""),
-                        p["finished_at"].as_str().unwrap_or(""),
-                    ),
+                    wall,
                     web_url: p["web_url"].as_str().unwrap_or("").to_string(),
                 });
             }
@@ -458,13 +459,17 @@ pub async fn analyze_pipeline_failures(
                 Some(j) => {
                     let reason = j["failure_reason"].as_str().unwrap_or("").to_string();
                     let job_id = j["id"].as_u64().unwrap_or(0);
-                    let log = client
-                        .get_text(
-                            &format!("/projects/{}/jobs/{job_id}/trace", r.project_id),
-                            &[],
-                        )
-                        .await
-                        .unwrap_or_default();
+                    // Redact before *any* use: the signature is derived from these
+                    // lines and becomes a cluster label in the report.
+                    let log = redact_log(
+                        &client
+                            .get_text(
+                                &format!("/projects/{}/jobs/{job_id}/trace", r.project_id),
+                                &[],
+                            )
+                            .await
+                            .unwrap_or_default(),
+                    );
                     // Keep a bounded tail for classification — the decisive
                     // evidence sits below the Error: header that names the cluster.
                     let tail: String = log.chars().rev().take(4000).collect::<String>()
@@ -569,6 +574,27 @@ fn wall_clock_secs(created: &str, finished: &str) -> Option<f64> {
     (secs >= 0).then_some(secs as f64)
 }
 
+/// End timestamp for a pipeline, tolerating the list endpoint's thinner shape.
+///
+/// `GET /projects/:id/pipelines` returns only `created_at` and `updated_at` — no
+/// `finished_at`, no `duration`. Aggregates built from a listing therefore had no
+/// timing sample at all and every median printed `n/a`, which reads as "too few
+/// runs" rather than "this field is not in the response".
+///
+/// For a pipeline in a terminal state `updated_at` **is** the completion write, so
+/// it stands in for `finished_at`. For one still running it is only the last
+/// heartbeat — an elapsed-so-far, not a duration — so it is refused rather than
+/// quietly widening the sample with numbers that mean something else.
+fn pipeline_end_ts<'a>(p: &'a Value, status: &str) -> Option<&'a str> {
+    if let Some(f) = p["finished_at"].as_str().filter(|s| !s.is_empty()) {
+        return Some(f);
+    }
+    if matches!(status, "success" | "failed" | "canceled" | "skipped") {
+        return p["updated_at"].as_str().filter(|s| !s.is_empty());
+    }
+    None
+}
+
 /// Human duration: `1h 37m` / `4m 12s` / `26s`.
 fn human_secs(s: f64) -> String {
     let s = s as u64;
@@ -585,8 +611,67 @@ fn human_secs(s: f64) -> String {
 /// like `<vendor>_CLIENT_ID` is denied even though it ends in `_ID`.
 const SECRETISH: &[&str] = &[
     "SECRET", "TOKEN", "PASSWORD", "PASSWD", "PASS", "KEY", "CREDENTIAL", "PRIVATE", "AUTH",
-    "CERT", "SALT", "SIGNATURE", "WEBHOOK", "DSN", "CLIENT_ID", "SESSION", "COOKIE",
+    "CERT", "CRT", "PEM", "SALT", "SIGNATURE", "WEBHOOK", "DSN", "CLIENT_ID", "SESSION",
+    "COOKIE",
 ];
+
+static PEM_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?s)-----BEGIN [A-Z0-9 ]*-----.*?-----END [A-Z0-9 ]*-----")
+        .expect("PEM_RE is a valid regex")
+});
+
+static SECRET_ASSIGN_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(
+        r#"(?i)("?[A-Za-z0-9_.-]*(?:SECRET|TOKEN|PASSWORD|PASSWD|PASSPHRASE|KEY|CREDENTIAL|PRIVATE|AUTH|CERT|CRT|SALT|SIGNATURE|WEBHOOK|DSN|SESSION|COOKIE)[A-Za-z0-9_.-]*"?\s*[:=]\s*)("[^"]*"|'[^']*'|\S+)"#,
+    )
+    .expect("SECRET_ASSIGN_RE is a valid regex")
+});
+
+static TOKENISH_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(
+        r"(?i)(?:glpat-[A-Za-z0-9_-]{15,}|xox[baprs]-[A-Za-z0-9-]{8,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9]{20,})",
+    )
+    .expect("TOKENISH_RE is a valid regex")
+});
+
+static LONG_B64_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"[A-Za-z0-9+/]{80,}={0,2}").expect("LONG_B64_RE is a valid regex")
+});
+
+/// Mask credential material in a job log.
+///
+/// `get_pipeline` redacts trigger variables, but that protects one endpoint, not the
+/// value: a CI script running under `set -x` echoes the same payload into its trace,
+/// which is served by a different endpoint the variables rule never reached. A value
+/// shown as `<redacted>` on the pipeline is therefore readable in full from the log
+/// of a job on it, and a payload echo is what puts key and certificate bodies there.
+/// Log output needs its own pass.
+///
+/// Widest rules first: PEM blocks, then secret-ish assignments, then bare token
+/// shapes, then any long base64 run — the last catches key material whose field name
+/// gave nothing away (`*_CRT`, `payload`, an array element).
+///
+/// **Short values are deliberately left alone.** A credential is not 6 characters
+/// long, and redacting them would erase the evidence for the single most common CI
+/// fault of all — the variable was never set. A blanked-out empty token looks
+/// exactly like a present one.
+fn redact_log(log: &str) -> String {
+    let out = PEM_RE.replace_all(log, "<redacted PEM block>");
+    let out = SECRET_ASSIGN_RE.replace_all(&out, |c: &regex::Captures| {
+        let val = c[2].trim_matches(|ch| ch == '"' || ch == '\'');
+        if val.len() < 8 {
+            c[0].to_string()
+        } else {
+            format!("{}<redacted>", &c[1])
+        }
+    });
+    let out = TOKENISH_RE.replace_all(&out, "<redacted token>");
+    LONG_B64_RE
+        .replace_all(&out, |c: &regex::Captures| {
+            format!("<redacted base64: {} chars>", c[0].len())
+        })
+        .into_owned()
+}
 
 /// Render one pipeline variable, **default-deny** on the value.
 ///
@@ -871,11 +956,11 @@ pub async fn get_job_log(
     // The trace endpoint returns plain text, not JSON — use get_text (get::<String>
     // would try to JSON-deserialize the trace and fail with a parse error).
     // Strip the ANSI colour/erase codes GitLab embeds before processing.
-    let log_text = strip_ansi(
+    let log_text = redact_log(&strip_ansi(
         &client
             .get_text(&format!("/projects/{encoded}/jobs/{job_id}/trace"), &[])
             .await?,
-    );
+    ));
 
     if log_text.trim().is_empty() {
         return Ok(format!(
@@ -1172,8 +1257,83 @@ pub async fn get_ci_variables(
 mod tests {
     use super::{
         error_signature, failure_class, grep_lines, http_status, human_secs,
-        is_automated_source, normalize_signature, render_variable, strip_ansi, wall_clock_secs,
+        is_automated_source, normalize_signature, pipeline_end_ts, redact_log, render_variable,
+        strip_ansi, wall_clock_secs,
     };
+
+    #[test]
+    fn curl_style_error_codes_are_classified() {
+        // The commonest real shape, and the one the first cut missed: curl reports
+        // "returned error: <code>", where the context word is `error`.
+        assert_eq!(http_status("curl: (22) The requested URL returned error: 422"), Some(422));
+        assert_eq!(http_status("error: 403"), Some(403));
+        assert_eq!(
+            failure_class("", "script_failure", "curl: (22) The requested URL returned error: 422"),
+            "config"
+        );
+    }
+
+    #[test]
+    fn pipeline_end_falls_back_to_updated_at_when_terminal() {
+        // The list endpoint carries no `finished_at`; without a fallback every
+        // aggregate median was empty and printed "n/a".
+        let listed = serde_json::json!({
+            "created_at": "2026-08-18T10:00:00Z",
+            "updated_at": "2026-08-18T10:05:00Z",
+        });
+        assert_eq!(pipeline_end_ts(&listed, "success"), Some("2026-08-18T10:05:00Z"));
+        assert_eq!(pipeline_end_ts(&listed, "failed"), Some("2026-08-18T10:05:00Z"));
+
+        // Still running: `updated_at` is a heartbeat, not a completion — refuse it
+        // rather than feeding elapsed-so-far into a duration median.
+        assert_eq!(pipeline_end_ts(&listed, "running"), None);
+        assert_eq!(pipeline_end_ts(&listed, "pending"), None);
+
+        // A real `finished_at` always wins.
+        let detailed = serde_json::json!({
+            "created_at": "2026-08-18T10:00:00Z",
+            "updated_at": "2026-08-18T10:09:00Z",
+            "finished_at": "2026-08-18T10:04:00Z",
+        });
+        assert_eq!(pipeline_end_ts(&detailed, "success"), Some("2026-08-18T10:04:00Z"));
+    }
+
+    #[test]
+    fn redact_log_masks_key_material() {
+        let log = "\
++ export 'ENVIRONMENT=prod'
+-----BEGIN PRIVATE KEY-----
+U1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==
+-----END PRIVATE KEY-----
+{\"SERVICE_CA_CRT\":\"U1lOVEhFVElDQ0VSVEJPRFlGT1JURVNUU09OTFlOT1RSRUFMTk9UUkVBTE5PVFJFQUxOT1RSRUFMTk9UUkVBTA==\"}
+";
+        // The token shape is assembled at runtime: a key-shaped literal must never
+        // sit in the repo, not even a fake one — it trips secret scanners and
+        // teaches the pattern by example.
+        let fake_pat = format!("{}{}", "glpat-", "NOTAREALTOKEN000000000");
+        let log = format!("{log}+ header 'PRIVATE-TOKEN: {fake_pat}'\n");
+        let out = redact_log(&log);
+        assert!(out.contains("<redacted PEM block>"), "PEM body must not survive");
+        assert!(!out.contains("U1lOVEhFVElDIEZJWFRVUkUg"), "key body leaked: {out}");
+        assert!(!out.contains("U1lOVEhFVElDQ0VSVEJPRFlGT1I"), "cert body leaked: {out}");
+        assert!(!out.contains(&fake_pat), "PAT shape leaked: {out}");
+        // Non-secret context is preserved — a redactor that eats the log is useless.
+        assert!(out.contains("ENVIRONMENT=prod"), "benign values must survive: {out}");
+    }
+
+    #[test]
+    fn redact_log_keeps_short_and_empty_values_visible() {
+        // "The variable was never set" is the most common CI fault there is, and a
+        // blanked-out empty token looks identical to a present one. This exact shape
+        // was the root cause of a live 422.
+        let log = "+ send --header 'infra_auth_token: ' --to deploy-endpoint";
+        let out = redact_log(log);
+        assert!(out.contains("infra_auth_token: "), "empty token must stay visible: {out}");
+        assert!(!out.contains("<redacted>"), "nothing here is a credential: {out}");
+
+        let short = redact_log("API_KEY=abc123");
+        assert!(short.contains("abc123"), "6 chars is not a credential: {short}");
+    }
 
     #[test]
     fn http_status_needs_context_not_a_bare_number() {

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-08-19
+
+### Security
+- **Job logs are now redacted.** `get_pipeline` renders trigger variables default-deny, but a CI job running under `set -x` echoes the same payload into its trace — served by a different endpoint that never saw that rule. The gap is structural: a value shown as `<redacted>` by `get_pipeline` can be read in full from the log of a job on that pipeline, and a payload echo is exactly what puts key and certificate bodies there. `redact_log` now runs on every trace fetch, before the text is used for anything (the root-cause signature becomes a visible cluster label, so it has to be clean too): PEM blocks, secret-ish assignments, bare token shapes, then any long base64 run — the last catches key material whose field name gave nothing away (`*_CRT`, `payload`, an array element). `CRT`/`PEM` added to the secret-ish key list. **Short values are deliberately left visible**: a credential is not six characters long, and blanking them erases the evidence for the commonest CI fault of all — the variable was never set. See ADR 050.
+
+### Fixed
+- **Median duration was permanently `n/a`.** `GET /projects/:id/pipelines` returns `created_at` and `updated_at` — no `finished_at`, no `duration`. Aggregates are built from that listing, so the timing sample was always empty and the median printed `n/a` on every run regardless of input. ADR 048's claim that wall clock is something "every pipeline has" holds for the pipeline object and not for the list response, which is all the aggregate sees. `pipeline_end_ts` now falls back to `updated_at` for pipelines in a terminal state, and refuses it for running ones, where it is a heartbeat rather than a completion.
+- **`error: <code>` was not classified.** ADR 049's status-code triage required a status word beside the number, but the word list omitted `error` and allowed only four characters of separation — so `curl: (22) The requested URL returned error: 422`, the commonest form in a shell pipeline, fell through to `unknown` on the first live run after shipping.
+
 ## [1.7.1] - 2026-08-18
 
 ### Added

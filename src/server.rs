@@ -632,7 +632,7 @@ impl GlMcpServer {
         )
     }
 
-    #[tool(description = "Get CI job log output. Returns the last N lines (tail), or — with `pattern` — only the lines matching a regex, searched across the whole log. Critical for debugging failed jobs.")]
+    #[tool(description = "Get CI job log output. Returns the last N lines (tail), or — with `pattern` — only the lines matching a regex, searched across the whole log. Credential material (PEM blocks, secret-ish assignments, long base64 bodies) is redacted, since CI scripts under `set -x` echo secrets into the trace. Critical for debugging failed jobs.")]
     async fn get_job_log(&self, Parameters(p): Parameters<GetJobLogParams>) -> Result<CallToolResult, McpError> {
         simple_tool!(self, p, "get_job_log", "", |client|
             tools::pipelines::get_job_log(client, &p.project_id, p.job_id, p.tail.unwrap_or(100), p.pattern.as_deref().unwrap_or("")).await
