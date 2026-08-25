@@ -326,6 +326,50 @@ impl GlMcpServer {
         )
     }
 
+    #[tool(description = "Create a project access token — the only gl-mcp credential that can carry write_repository, which a push from CI requires (deploy tokens cannot). By default the value is NOT returned: pass store_as_ci_variable to have it written straight into a masked CI/CD variable with only metadata coming back, or reveal_token:true to receive it in the response (which places a live credential in this transcript). If the variable write fails the token is revoked rather than left orphaned.")]
+    async fn create_project_access_token(&self, Parameters(p): Parameters<CreateProjectAccessTokenParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "create_project_access_token");
+        let raw_scopes: Vec<String> = p.scopes.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        let scopes: Vec<&str> = raw_scopes.iter().map(|s| s.as_str()).collect();
+        simple_tool!(self, p, "create_project_access_token", &p.project_id, |client|
+            tools::projects::create_project_access_token(
+                client,
+                &p.project_id,
+                &p.name,
+                &scopes,
+                p.expires_at.as_deref().unwrap_or(""),
+                p.access_level.unwrap_or(30),
+                p.store_as_ci_variable.as_deref().unwrap_or(""),
+                p.reveal_token.unwrap_or(false),
+                p.variable_protected.unwrap_or(false),
+            ).await
+        )
+    }
+
+    #[tool(description = "Create a pipeline schedule. The ref is validated first: GitLab accepts a schedule pointing at a nonexistent branch or tag and then silently never fires it, so an unresolvable ref is refused instead of reported as success.")]
+    async fn create_pipeline_schedule(&self, Parameters(p): Parameters<CreatePipelineScheduleParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "create_pipeline_schedule");
+        simple_tool!(self, p, "create_pipeline_schedule", &p.project_id, |client|
+            tools::pipelines::create_pipeline_schedule(
+                client,
+                &p.project_id,
+                &p.description,
+                &p.ref_name,
+                &p.cron,
+                p.cron_timezone.as_deref().unwrap_or(""),
+                p.active.unwrap_or(true),
+            ).await
+        )
+    }
+
+    #[tool(description = "Run a pipeline schedule immediately, so a new schedule can be proven once instead of waiting an interval to find out it was misconfigured.")]
+    async fn play_pipeline_schedule(&self, Parameters(p): Parameters<PlayPipelineScheduleParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "play_pipeline_schedule");
+        simple_tool!(self, p, "play_pipeline_schedule", &p.project_id, |client|
+            tools::pipelines::play_pipeline_schedule(client, &p.project_id, p.schedule_id).await
+        )
+    }
+
     #[tool(description = "Create a deploy token for a project. Returns the token value once at creation — save it immediately. Scopes: read_repository, read_registry, write_registry, read_package_registry, write_package_registry.")]
     async fn create_deploy_token(&self, Parameters(p): Parameters<CreateDeployTokenParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "create_deploy_token");

@@ -43,6 +43,9 @@ pub const WRITE_TOOLS: &[&str] = &[
     "update_ci_variable",
     "delete_ci_variable",
     "create_deploy_token",
+    "create_project_access_token",
+    "create_pipeline_schedule",
+    "play_pipeline_schedule",
 ];
 
 /// The "core" toolset: the ~30 everyday dev-workflow tools (navigate, read,

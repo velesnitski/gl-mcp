@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-08-25
+
+### Added
+- **`create_project_access_token` — the credential that can actually push.** Deploy tokens have no `write_repository` scope, so any workflow automating up to a push broke to the UI at exactly the step that mattered. **The value is not returned by default:** output from an MCP server lands in a model's context and in the conversation transcript, both retained and logged, so a credential that arrives there is disclosed from that moment. The caller instead names a CI/CD variable (`store_as_ci_variable`) and the token is written there masked with only metadata coming back — or passes `reveal_token: true` and is told in the response that it is now disclosed. Choosing neither is refused *before* creation, since a token nobody can reach is litter. If the variable write fails the token is **revoked** rather than orphaned; if revocation also fails, the response says so and names the id. See ADR 051.
+- **`create_pipeline_schedule` + `play_pipeline_schedule`.** GitLab accepts a schedule pointing at a nonexistent ref, returns success, shows it in the UI, and then never fires it — a green result nobody investigates. The ref is now resolved first (via the commits endpoint, so branches, tags and SHAs are all covered) and an unresolvable one is refused. `play` runs a schedule immediately, so a new one can be proven once instead of waiting an interval to learn it was misconfigured.
+
+### Fixed
+- **`search_code` no longer reports an absence it did not establish.** The parameter description advertised "regex supported"; GitLab search is term/substring matching, so `foo|bar` was matched literally and returned nothing. The failure direction is the damaging one — a zero-result sweep reads as "this string appears nowhere in the group", which is the exact claim such sweeps exist to make. The query still runs verbatim first (a literal `a|b` may be the text being sought, and a query that works is never second-guessed); only when it returns nothing *and* looks like alternation is it split, each alternative searched, and the substitution stated in the output. The description now says what the search actually does.
+
 ## [1.7.2] - 2026-08-19
 
 ### Security

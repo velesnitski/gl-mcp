@@ -52,7 +52,7 @@ async fn search_code_group(
     query: &str,
     ref_name: &str,
     per_page: u32,
-) -> Result<String> {
+) -> Result<(String, usize)> {
     let encoded = urlencoding::encode(group_path);
     let projects: Vec<Value> = client
         .get_all_pages(
@@ -68,7 +68,10 @@ async fn search_code_group(
         .await?;
 
     if projects.is_empty() {
-        return Ok(format!("No (non-archived) projects found in group `{group_path}`."));
+        return Ok((
+            format!("No (non-archived) projects found in group `{group_path}`."),
+            0,
+        ));
     }
 
     let total_repos = projects.len();
@@ -102,7 +105,7 @@ async fn search_code_group(
     }
     if hits.is_empty() {
         lines.push("No matches.".to_string());
-        return Ok(lines.join("\n"));
+        return Ok((lines.join("\n"), 0));
     }
 
     hits.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
@@ -119,9 +122,26 @@ async fn search_code_group(
         lines.push(String::new());
     }
 
-    Ok(lines.join("\n"))
+    Ok((lines.join("\n"), match_count))
 }
 
+/// True when a query looks like it was written expecting regex alternation.
+///
+/// GitLab's search is term/substring matching — `foo|bar` is matched **literally**
+/// and finds nothing. That fails in the worst possible direction: an empty result
+/// reads as "this string appears nowhere in the group", which is the exact claim such
+/// a sweep is run to establish.
+fn looks_like_alternation(query: &str) -> bool {
+    query.contains('|') && query.split('|').filter(|t| !t.trim().is_empty()).count() >= 2
+}
+
+/// Search code, and refuse to let a regex-shaped query report a false absence.
+///
+/// The query is first run exactly as given — a literal query that works is never
+/// second-guessed, since `a|b` may legitimately be the text being searched for. Only
+/// when it returns **nothing** and looks like alternation is it split, each
+/// alternative searched separately, and the substitution stated plainly in the
+/// output. Silence is the one answer this tool must never give by accident.
 pub async fn search_code(
     client: &GitLabClient,
     project_id: &str,
@@ -130,6 +150,42 @@ pub async fn search_code(
     ref_name: &str,
     per_page: u32,
 ) -> Result<String> {
+    let (out, count) = search_code_once(client, project_id, group_path, query, ref_name, per_page).await?;
+    if count > 0 || !looks_like_alternation(query) {
+        return Ok(out);
+    }
+
+    let terms: Vec<&str> = query.split('|').map(|t| t.trim()).filter(|t| !t.is_empty()).collect();
+    let mut parts = vec![
+        format!("**`{query}` matched literally: 0 results — this is _not_ evidence of absence.**\n"),
+        format!(
+            "GitLab search does not support regex alternation, so `|` was searched as a character. \
+Re-ran the {} alternatives separately:\n",
+            terms.len()
+        ),
+    ];
+    let mut total = 0usize;
+    for t in &terms {
+        let (o, c) = search_code_once(client, project_id, group_path, t, ref_name, per_page).await?;
+        total += c;
+        parts.push(format!("---\n\n### Alternative `{t}` — {c} match(es)\n"));
+        parts.push(o);
+    }
+    parts.insert(
+        2,
+        format!("**Combined: {total} match(es) across {} alternatives.**\n", terms.len()),
+    );
+    Ok(parts.join("\n"))
+}
+
+async fn search_code_once(
+    client: &GitLabClient,
+    project_id: &str,
+    group_path: &str,
+    query: &str,
+    ref_name: &str,
+    per_page: u32,
+) -> Result<(String, usize)> {
     if !group_path.is_empty() {
         return search_code_group(client, group_path, query, ref_name, per_page).await;
     }
@@ -137,7 +193,7 @@ pub async fn search_code(
     let results: Vec<Value> = search_project_blobs(client, project_id, query, ref_name, per_page).await;
 
     if results.is_empty() {
-        return Ok(format!("No results for '{query}' in {project_id}."));
+        return Ok((format!("No results for '{query}' in {project_id}."), 0));
     }
 
     let mut lines = vec![format!(
@@ -162,7 +218,8 @@ pub async fn search_code(
         lines.push(format!("```\n{}\n```\n", preview));
     }
 
-    Ok(lines.join("\n"))
+    let n = results.len();
+    Ok((lines.join("\n"), n))
 }
 
 /// Get project language breakdown.
@@ -627,6 +684,23 @@ pub async fn update_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn alternation_is_recognised_only_when_it_is_really_alternation() {
+        // These would silently return nothing: GitLab matches the `|` literally,
+        // and an empty result reads as "this string appears nowhere".
+        assert!(looks_like_alternation("foo|bar"));
+        assert!(looks_like_alternation("a|b|c"));
+        assert!(looks_like_alternation(" left | right "));
+
+        // A plain term must never be split — the retry costs API calls and would
+        // relabel a legitimately empty result as something it is not.
+        assert!(!looks_like_alternation("connection_config"));
+        // A dangling pipe leaves only one real alternative; splitting adds nothing.
+        assert!(!looks_like_alternation("foo|"));
+        assert!(!looks_like_alternation("|foo"));
+        assert!(!looks_like_alternation("|"));
+    }
 
     #[test]
     fn subject_only_message_has_no_description() {

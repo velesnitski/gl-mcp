@@ -881,6 +881,165 @@ pub async fn create_deploy_token(
     Ok(lines.join("\n"))
 }
 
+/// Scopes accepted for a project access token.
+const PAT_SCOPES: &[&str] = &[
+    "api", "read_api", "read_repository", "write_repository", "read_registry",
+    "write_registry", "create_runner", "manage_runner", "k8s_proxy", "ai_features",
+    "read_observability", "write_observability", "self_rotate",
+];
+
+/// Reject a malformed request **before** a credential exists.
+///
+/// Every check here is deliberately pre-flight: a token that is created and then found
+/// to be undeliverable has already been minted, and cleaning that up is strictly worse
+/// than never issuing it.
+pub(crate) fn pat_request_error(
+    scopes: &[&str],
+    access_level: u32,
+    store_as_ci_variable: &str,
+    reveal_token: bool,
+) -> Option<String> {
+    if scopes.is_empty() {
+        return Some(format!(
+            "**Error:** At least one scope is required. Valid: {}",
+            PAT_SCOPES.join(", ")
+        ));
+    }
+    for s in scopes {
+        if !PAT_SCOPES.contains(s) {
+            return Some(format!(
+                "**Error:** Invalid scope '{s}'. Valid: {}",
+                PAT_SCOPES.join(", ")
+            ));
+        }
+    }
+    if !(10..=50).contains(&access_level) || access_level % 10 != 0 {
+        return Some("**Error:** access_level must be 10 (guest), 20 (reporter), 30 (developer), 40 (maintainer) or 50 (owner).".to_string());
+    }
+    let storing = !store_as_ci_variable.is_empty();
+    if !storing && !reveal_token {
+        return Some(
+            "**Error:** choose how the token is delivered before it is created.\n\n\
+- `store_as_ci_variable: \"MY_KEY\"` — the value is written straight into a masked \
+CI/CD variable and never surfaced. Prefer this.\n\
+- `reveal_token: true` — the value is returned in the response, which means it enters \
+this conversation's transcript and the model's context. Use only when something \
+outside CI must consume it.\n\n\
+No token was created."
+                .to_string(),
+        );
+    }
+    if storing && !store_as_ci_variable.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Some(format!(
+            "**Error:** `{store_as_ci_variable}` is not a valid CI variable key (letters, digits and underscore only). No token was created."
+        ));
+    }
+    None
+}
+
+/// Create a project access token.
+///
+/// Unlike a deploy token — which has no `write_repository` scope at all — this can
+/// carry the permission a push from CI actually needs, which is where automated
+/// workflows otherwise break to the UI at the one step that matters.
+///
+/// **The value is not returned by default.** Output from an MCP server lands in a
+/// model's context and in the conversation transcript, both retained and logged; a
+/// credential that arrives there has to be considered disclosed. So delivery is an
+/// explicit choice: either the value is written straight into a masked CI/CD variable
+/// and only metadata comes back, or the caller asks for it in the clear. Choosing
+/// neither is refused *before* the token is created — minting a credential nobody can
+/// reach only leaves litter to clean up.
+///
+/// If the variable write fails, the token is **revoked** rather than left orphaned: a
+/// credential created but not delivered is pure liability.
+#[allow(clippy::too_many_arguments)]
+pub async fn create_project_access_token(
+    client: &GitLabClient,
+    project_id: &str,
+    name: &str,
+    scopes: &[&str],
+    expires_at: &str,
+    access_level: u32,
+    store_as_ci_variable: &str,
+    reveal_token: bool,
+    variable_protected: bool,
+) -> Result<String> {
+    if let Some(err) = pat_request_error(scopes, access_level, store_as_ci_variable, reveal_token) {
+        return Ok(err);
+    }
+    let storing = !store_as_ci_variable.is_empty();
+
+    let enc = urlencoding::encode(project_id);
+    let mut body = serde_json::json!({
+        "name": name,
+        "scopes": scopes,
+        "access_level": access_level,
+    });
+    if !expires_at.is_empty() {
+        body["expires_at"] = serde_json::json!(expires_at);
+    }
+    let t: Value = client.post(&format!("/projects/{enc}/access_tokens"), &body).await?;
+
+    let id = t["id"].as_u64().unwrap_or(0);
+    let token_name = t["name"].as_str().unwrap_or(name);
+    let expires = t["expires_at"].as_str().unwrap_or("never");
+    let granted: Vec<&str> = t["scopes"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    let value = t["token"].as_str().unwrap_or("");
+
+    let mut lines = vec![
+        format!("Project access token **{token_name}** created for **{project_id}**."),
+        String::new(),
+        format!("**ID:** {id}"),
+        format!("**Scopes:** {}", granted.join(", ")),
+        format!("**Access level:** {access_level}"),
+        format!("**Expires:** {expires}"),
+    ];
+
+    if storing {
+        let var_body = serde_json::json!({
+            "key": store_as_ci_variable,
+            "value": value,
+            "masked": true,
+            "protected": variable_protected,
+            "variable_type": "env_var",
+        });
+        match client
+            .post::<Value>(&format!("/projects/{enc}/variables"), &var_body)
+            .await
+        {
+            Ok(_) => {
+                lines.push(format!("**Stored as CI variable:** `{store_as_ci_variable}` (masked, protected={variable_protected})"));
+                lines.push(String::new());
+                lines.push("_The value was written directly to CI/CD variables and is not shown here._".to_string());
+                Ok(lines.join("\n"))
+            }
+            Err(e) => {
+                let revoked = client
+                    .delete(&format!("/projects/{enc}/access_tokens/{id}"))
+                    .await
+                    .is_ok();
+                Ok(format!(
+                    "**Error:** the token was created but writing CI variable `{store_as_ci_variable}` failed: {e}\n\n{}",
+                    if revoked {
+                        "The token has been **revoked**, so nothing is left dangling and no value was disclosed. Fix the variable key (a masked value must be at least 8 characters with no whitespace) and run this again.".to_string()
+                    } else {
+                        format!("⚠️ Revoking it also failed — token id **{id}** still exists on {project_id} and must be removed manually.")
+                    }
+                ))
+            }
+        }
+    } else {
+        lines.push(String::new());
+        lines.push("**Token (shown once — it is now in this transcript, so treat it as disclosed):**".to_string());
+        lines.push(format!("```\n{value}\n```"));
+        Ok(lines.join("\n"))
+    }
+}
+
 /// List deploy tokens for a project (token values are never returned by GitLab).
 pub async fn list_deploy_tokens(
     client: &GitLabClient,
@@ -1017,4 +1176,43 @@ pub async fn get_stale_branches(
     }
 
     Ok(lines.join("\n"))
+}
+
+#[cfg(test)]
+mod pat_tests {
+    use super::pat_request_error;
+
+    #[test]
+    fn delivery_must_be_chosen_before_a_token_exists() {
+        // Neither route chosen: refuse up front. Minting a credential nobody can read
+        // leaves litter that has to be hunted down later.
+        let err = pat_request_error(&["api"], 30, "", false).expect("must refuse");
+        assert!(err.contains("choose how the token is delivered"), "{err}");
+        assert!(err.contains("No token was created"), "{err}");
+
+        // Either route on its own is enough.
+        assert!(pat_request_error(&["api"], 30, "MY_KEY", false).is_none());
+        assert!(pat_request_error(&["api"], 30, "", true).is_none());
+    }
+
+    #[test]
+    fn scope_and_level_are_validated_up_front() {
+        assert!(pat_request_error(&[], 30, "K", false).is_some(), "empty scopes");
+        let err = pat_request_error(&["write_everything"], 30, "K", false).expect("bad scope");
+        assert!(err.contains("Invalid scope"), "{err}");
+        // write_repository is the whole reason this exists alongside deploy tokens.
+        assert!(pat_request_error(&["write_repository"], 40, "K", false).is_none());
+        assert!(pat_request_error(&["api"], 35, "K", false).is_some(), "35 is not a level");
+        assert!(pat_request_error(&["api"], 0, "K", false).is_some(), "0 is not a level");
+    }
+
+    #[test]
+    fn variable_key_shape_is_checked_before_creation() {
+        // GitLab rejects these keys, and finding out afterwards means the token
+        // already exists with nowhere to put it.
+        let err = pat_request_error(&["api"], 30, "my-key", false).expect("dash is invalid");
+        assert!(err.contains("No token was created"), "{err}");
+        assert!(pat_request_error(&["api"], 30, "MY KEY", false).is_some());
+        assert!(pat_request_error(&["api"], 30, "CI_PUSH_TOKEN", false).is_none());
+    }
 }

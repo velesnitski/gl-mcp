@@ -1024,6 +1024,88 @@ pub async fn get_job_log(
     Ok(parts.join("\n"))
 }
 
+/// Create a pipeline schedule, after proving the ref resolves.
+///
+/// GitLab accepts a schedule whose `ref` does not exist: the API returns success, the
+/// schedule appears in the UI, and it then simply never fires. Reporting success for
+/// something that cannot run is worse than an error, because nobody goes looking, so
+/// the ref is resolved first and a bad one is refused rather than created.
+pub async fn create_pipeline_schedule(
+    client: &GitLabClient,
+    project_id: &str,
+    description: &str,
+    ref_name: &str,
+    cron: &str,
+    cron_timezone: &str,
+    active: bool,
+) -> Result<String> {
+    if cron.split_whitespace().count() != 5 {
+        return Ok(format!(
+            "**Error:** `{cron}` is not a 5-field cron expression (minute hour day month weekday). Nothing was created."
+        ));
+    }
+    let enc = urlencoding::encode(project_id);
+
+    // Resolve through the commits endpoint: it accepts a branch, a tag or a SHA, so
+    // one call covers every ref a schedule can legitimately point at.
+    let resolved: std::result::Result<Value, _> = client
+        .get(
+            &format!("/projects/{enc}/repository/commits/{}", urlencoding::encode(ref_name)),
+            &[],
+        )
+        .await;
+    if resolved.is_err() {
+        return Ok(format!(
+            "**Error:** ref `{ref_name}` does not resolve in {project_id}, so a schedule on it would be accepted by GitLab and then never fire. Nothing was created."
+        ));
+    }
+
+    let body = serde_json::json!({
+        "description": description,
+        "ref": ref_name,
+        "cron": cron,
+        "cron_timezone": if cron_timezone.is_empty() { "UTC" } else { cron_timezone },
+        "active": active,
+    });
+    let s: Value = client.post(&format!("/projects/{enc}/pipeline_schedules"), &body).await?;
+
+    let id = s["id"].as_u64().unwrap_or(0);
+    let next = s["next_run_at"].as_str().unwrap_or("?");
+    Ok(vec![
+        format!("Pipeline schedule **{description}** created for **{project_id}**."),
+        String::new(),
+        format!("**ID:** {id}"),
+        format!("**Ref:** {ref_name} (verified to resolve)"),
+        format!("**Cron:** `{cron}` ({})", if cron_timezone.is_empty() { "UTC" } else { cron_timezone }),
+        format!("**Active:** {active}"),
+        format!("**Next run:** {next}"),
+        String::new(),
+        format!("_Prove it now rather than waiting for the interval: `play_pipeline_schedule` with schedule_id {id}._"),
+    ]
+    .join("\n"))
+}
+
+/// Run a pipeline schedule immediately.
+///
+/// A schedule's first real proof is a run. Waiting an interval to discover that it was
+/// misconfigured is the slowest possible feedback loop.
+pub async fn play_pipeline_schedule(
+    client: &GitLabClient,
+    project_id: &str,
+    schedule_id: u64,
+) -> Result<String> {
+    let enc = urlencoding::encode(project_id);
+    let _: Value = client
+        .post(
+            &format!("/projects/{enc}/pipeline_schedules/{schedule_id}/play"),
+            &serde_json::json!({}),
+        )
+        .await?;
+    Ok(format!(
+        "Schedule **{schedule_id}** on **{project_id}** was triggered.\n\n_GitLab enqueues this asynchronously — confirm with `list_pipelines` (source=schedule) rather than assuming it ran._"
+    ))
+}
+
 /// List pipelines for a merge request.
 pub async fn get_mr_pipelines(
     client: &GitLabClient,

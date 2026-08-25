@@ -630,7 +630,7 @@ pub struct SearchCodeParams {
         description = "Group path — search every (non-archived) project in the group instead of one repo. Use for org-wide sweeps (renames, leaked strings)."
     )]
     pub group_path: Option<String>,
-    #[schemars(description = "Search query (regex supported)")]
+    #[schemars(description = "Search terms. NOT a regex — GitLab matches substrings/terms, so `foo|bar` is searched literally. If an alternation query returns nothing, the tool re-runs each alternative separately and says so, because an empty result must never be mistaken for proof of absence.")]
     pub query: String,
     #[schemars(description = "Branch/tag to search in (optional)")]
     pub ref_name: Option<String>,
@@ -1151,6 +1151,63 @@ pub struct AddGroupMemberParams {
 }
 
 // ─── Deploy Tokens ───
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateProjectAccessTokenParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Token name")]
+    pub name: String,
+    #[schemars(
+        description = "Comma-separated scopes: api, read_api, read_repository, write_repository, read_registry, write_registry, create_runner, manage_runner, k8s_proxy, ai_features, read_observability, write_observability, self_rotate. Unlike a deploy token, this can carry write_repository."
+    )]
+    pub scopes: String,
+    #[schemars(description = "Expiry date YYYY-MM-DD (GitLab requires one; max 1 year)")]
+    pub expires_at: Option<String>,
+    #[schemars(description = "Access level: 10 guest, 20 reporter, 30 developer (default), 40 maintainer, 50 owner")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
+    pub access_level: Option<u32>,
+    #[schemars(
+        description = "PREFERRED: CI/CD variable key to write the token into (masked). Only metadata is returned — the value is never surfaced to the model or the transcript. If the write fails the token is revoked rather than left orphaned."
+    )]
+    pub store_as_ci_variable: Option<String>,
+    #[schemars(
+        description = "Return the token value in the response. Defaults to false. This puts a live credential into the conversation transcript and the model's context, so use it only when something outside CI must consume the value."
+    )]
+    pub reveal_token: Option<bool>,
+    #[schemars(description = "Mark the stored CI variable as protected (default: false)")]
+    pub variable_protected: Option<bool>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreatePipelineScheduleParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Human-readable description")]
+    pub description: String,
+    #[schemars(description = "Branch or tag the schedule runs on — validated to resolve before the schedule is created")]
+    pub ref_name: String,
+    #[schemars(description = "5-field cron expression, e.g. `0 3 * * *`")]
+    pub cron: String,
+    #[schemars(description = "Cron timezone (default: UTC)")]
+    pub cron_timezone: Option<String>,
+    #[schemars(description = "Active on creation (default: true)")]
+    pub active: Option<bool>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PlayPipelineScheduleParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Schedule ID")]
+    pub schedule_id: u64,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateDeployTokenParams {
