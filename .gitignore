@@ -5,3 +5,8 @@
 .claude/
 ~/.gl-mcp/
 *.DS_Store
+
+# Working backlog. Untracked on purpose: this repo is public, so a tracked
+# tasks.md forces every entry to be written around internal identifiers, which
+# makes the notes worse at the job they exist for. Keep it local and write freely.
+tasks.md
