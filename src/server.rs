@@ -370,7 +370,32 @@ impl GlMcpServer {
         )
     }
 
-    #[tool(description = "Create a deploy token for a project. Returns the token value once at creation — save it immediately. Scopes: read_repository, read_registry, write_registry, read_package_registry, write_package_registry.")]
+    #[tool(description = "List the runners that can take a project's jobs, and say whether anything can actually run a given job. A job no runner can accept sits `pending (0s)` — output identical to a job in a busy queue — so the verdict distinguishes: no runners attached, all offline, no tag match, or genuinely queued.")]
+    async fn list_project_runners(&self, Parameters(p): Parameters<ListProjectRunnersParams>) -> Result<CallToolResult, McpError> {
+        let tags: Vec<String> = p.job_tags.as_deref().unwrap_or("").split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        simple_tool!(self, p, "list_project_runners", &p.project_id, |client|
+            tools::projects::list_project_runners(client, &p.project_id, &tags).await
+        )
+    }
+
+    #[tool(description = "Update project settings — CI runner toggles (shared_runners_enabled, group_runners_enabled), default branch, visibility, merge method, description. Without this a project created through this server cannot be made able to run a pipeline.")]
+    async fn update_project(&self, Parameters(p): Parameters<UpdateProjectParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "update_project");
+        simple_tool!(self, p, "update_project", &p.project_id, |client|
+            tools::projects::update_project(
+                client,
+                &p.project_id,
+                p.shared_runners_enabled,
+                p.group_runners_enabled,
+                p.default_branch.as_deref().unwrap_or(""),
+                p.visibility.as_deref().unwrap_or(""),
+                p.merge_method.as_deref().unwrap_or(""),
+                p.description.as_deref().unwrap_or(""),
+            ).await
+        )
+    }
+
+    #[tool(description = "Create a deploy token for a project. Note deploy tokens have NO write_repository scope — use create_project_access_token when a push is needed. Same delivery contract: pass store_as_ci_variable to write the value into a masked CI/CD variable and get back only metadata, or reveal_token:true to receive it in the response (placing a live credential in this transcript). Scopes: read_repository, read_registry, write_registry, read_package_registry, write_package_registry.")]
     async fn create_deploy_token(&self, Parameters(p): Parameters<CreateDeployTokenParams>) -> Result<CallToolResult, McpError> {
         write_guard!(self, "create_deploy_token");
         let raw_scopes: Vec<String> = p.scopes.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
@@ -383,6 +408,9 @@ impl GlMcpServer {
                 &scopes,
                 p.expires_at.as_deref().unwrap_or(""),
                 p.username.as_deref().unwrap_or(""),
+                p.store_as_ci_variable.as_deref().unwrap_or(""),
+                p.reveal_token.unwrap_or(false),
+                p.variable_protected.unwrap_or(false),
             ).await
         )
     }

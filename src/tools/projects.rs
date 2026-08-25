@@ -668,7 +668,7 @@ pub async fn create_project(
     let default_branch_resp = p["default_branch"].as_str().unwrap_or(default_branch);
     let visibility_resp = p["visibility"].as_str().unwrap_or(visibility);
 
-    let lines = vec![
+    let mut lines = vec![
         format!("Project **{full_path}** created."),
         String::new(),
         format!("**ID:** {id}"),
@@ -677,6 +677,18 @@ pub async fn create_project(
         format!("**Default branch:** {default_branch_resp}"),
         format!("**URL:** {web_url}"),
     ];
+
+    // A project that cannot run a pipeline is a poor end to an otherwise complete
+    // setup: CI config, variables and a schedule can all be added and the result
+    // still never executes. Say it at creation, where it is cheap to fix.
+    let runners: Vec<Value> = client
+        .get(&format!("/projects/{id}/runners"), &[("per_page", "20")])
+        .await
+        .unwrap_or_default();
+    if runners.is_empty() {
+        lines.push(String::new());
+        lines.push("> ⚠️ **No runner is attached to this project**, so any pipeline will sit `pending` indefinitely rather than fail. Enable inherited runners with `update_project` (`shared_runners_enabled` / `group_runners_enabled`), or check what is available with `list_project_runners`.".to_string());
+    }
 
     Ok(lines.join("\n"))
 }
@@ -810,6 +822,7 @@ pub async fn add_group_member(
 }
 
 /// Create a new deploy token for a project.
+#[allow(clippy::too_many_arguments)]
 pub async fn create_deploy_token(
     client: &GitLabClient,
     project_id: &str,
@@ -817,6 +830,9 @@ pub async fn create_deploy_token(
     scopes: &[&str],
     expires_at: &str,
     username: &str,
+    store_as_ci_variable: &str,
+    reveal_token: bool,
+    variable_protected: bool,
 ) -> Result<String> {
     let valid_scopes = [
         "read_repository",
@@ -836,6 +852,12 @@ pub async fn create_deploy_token(
 
     if scopes.is_empty() {
         return Ok("**Error:** At least one scope is required.".to_string());
+    }
+    // Same delivery contract as every other credential this server mints: a secret
+    // that only ever needed to travel from GitLab to GitLab's own CI variables should
+    // not pass through a logged channel on the way.
+    if let Some(err) = delivery_error(store_as_ci_variable, reveal_token) {
+        return Ok(err);
     }
 
     let path = format!(
@@ -866,19 +888,49 @@ pub async fn create_deploy_token(
         .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
         .unwrap_or_default();
 
-    let lines = vec![
-        format!("Deploy token **{token_name}** created for **{project_id}**."),
-        String::new(),
+    let meta = vec![
         format!("**ID:** {id}"),
         format!("**Username:** {token_username}"),
         format!("**Scopes:** {}", token_scopes.join(", ")),
         format!("**Expires:** {token_expires}"),
-        String::new(),
-        "**Token (shown only once — save it now):**".to_string(),
-        format!("```\n{token_value}\n```"),
     ];
 
-    Ok(lines.join("\n"))
+    if !store_as_ci_variable.is_empty() {
+        if let Err(msg) = store_secret_or_revoke(
+            client,
+            project_id,
+            store_as_ci_variable,
+            token_value,
+            variable_protected,
+            &format!(
+                "/projects/{}/deploy_tokens/{id}",
+                urlencoding::encode(project_id)
+            ),
+            id,
+        )
+        .await
+        {
+            return Ok(msg);
+        }
+        return Ok(render_credential(
+            "Deploy token",
+            token_name,
+            project_id,
+            &meta,
+            &CredentialDelivery::Stored {
+                key: store_as_ci_variable,
+                protected: variable_protected,
+            },
+        ));
+    }
+
+    Ok(render_credential(
+        "Deploy token",
+        token_name,
+        project_id,
+        &meta,
+        &CredentialDelivery::Revealed { value: token_value },
+    ))
 }
 
 /// Scopes accepted for a project access token.
@@ -887,6 +939,128 @@ const PAT_SCOPES: &[&str] = &[
     "write_registry", "create_runner", "manage_runner", "k8s_proxy", "ai_features",
     "read_observability", "write_observability", "self_rotate",
 ];
+
+/// How a freshly minted credential reaches whatever consumes it.
+///
+/// Modelled as an enum rather than an `Option<&str>` on purpose: in the `Stored` arm
+/// the secret is **not in scope at all**, so no later edit to the renderer can leak it
+/// by accident, and a test can assert exactly that. A convention that is merely
+/// documented gets broken; one the type system enforces does not.
+pub(crate) enum CredentialDelivery<'a> {
+    /// Written straight into a masked CI/CD variable. The value never reaches output.
+    Stored { key: &'a str, protected: bool },
+    /// Handed back in the response — and therefore into the transcript and the
+    /// model's context, both of which are retained.
+    Revealed { value: &'a str },
+}
+
+/// Render a credential-creation response.
+pub(crate) fn render_credential(
+    kind: &str,
+    name: &str,
+    project_id: &str,
+    meta: &[String],
+    delivery: &CredentialDelivery<'_>,
+) -> String {
+    let mut lines = vec![
+        format!("{kind} **{name}** created for **{project_id}**."),
+        String::new(),
+    ];
+    lines.extend(meta.iter().cloned());
+    match delivery {
+        CredentialDelivery::Stored { key, protected } => {
+            lines.push(format!(
+                "**Stored as CI variable:** `{key}` (masked, protected={protected})"
+            ));
+            lines.push(String::new());
+            lines.push(
+                "_The value was written directly to CI/CD variables and is not shown here._"
+                    .to_string(),
+            );
+        }
+        CredentialDelivery::Revealed { value } => {
+            lines.push(String::new());
+            lines.push(
+                "**Value (shown once — it is now in this transcript, so treat it as disclosed):**"
+                    .to_string(),
+            );
+            lines.push(format!("```\n{value}\n```"));
+        }
+    }
+    lines.join("\n")
+}
+
+/// Refuse a request whose delivery route is unstated or unusable.
+///
+/// Shared by every tool that mints a credential, so the safe default cannot drift
+/// apart between them — which is precisely what had happened: one tool asked how the
+/// secret should travel while its neighbour simply printed it.
+pub(crate) fn delivery_error(store_as_ci_variable: &str, reveal_token: bool) -> Option<String> {
+    let storing = !store_as_ci_variable.is_empty();
+    if !storing && !reveal_token {
+        return Some(
+            "**Error:** choose how the credential is delivered before it is created.\n\n\
+- `store_as_ci_variable: \"MY_KEY\"` — written into a masked CI/CD variable; only \
+metadata is returned. Prefer this.\n\
+- `reveal_token: true` — returned in the response, which places a live credential in \
+this conversation's transcript and the model's context. Use only when something \
+outside CI must consume the value.\n\n\
+Nothing was created."
+                .to_string(),
+        );
+    }
+    if storing
+        && !store_as_ci_variable
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return Some(format!(
+            "**Error:** `{store_as_ci_variable}` is not a valid CI variable key (letters, digits and underscore only). Nothing was created."
+        ));
+    }
+    None
+}
+
+/// Write the secret into a masked CI variable, or undo the credential entirely.
+///
+/// A credential that was created but could not be delivered is pure liability: it
+/// grants access, nobody holds it, and nothing records that it exists. Rolling back
+/// is the only outcome that leaves the project as it was found.
+async fn store_secret_or_revoke(
+    client: &GitLabClient,
+    project_id: &str,
+    key: &str,
+    value: &str,
+    protected: bool,
+    revoke_path: &str,
+    id: u64,
+) -> std::result::Result<(), String> {
+    let enc = urlencoding::encode(project_id);
+    let body = serde_json::json!({
+        "key": key,
+        "value": value,
+        "masked": true,
+        "protected": protected,
+        "variable_type": "env_var",
+    });
+    match client
+        .post::<Value>(&format!("/projects/{enc}/variables"), &body)
+        .await
+    {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            let revoked = client.delete(revoke_path).await.is_ok();
+            Err(format!(
+                "**Error:** the credential was created but writing CI variable `{key}` failed: {e}\n\n{}",
+                if revoked {
+                    "It has been **revoked**, so nothing is left dangling and no value was disclosed. A masked value must be at least 8 characters with no whitespace — fix the key or the constraint and run this again.".to_string()
+                } else {
+                    format!("⚠️ Revoking it also failed — id **{id}** still exists on {project_id} and must be removed manually.")
+                }
+            ))
+        }
+    }
+}
 
 /// Reject a malformed request **before** a credential exists.
 ///
@@ -916,25 +1090,7 @@ pub(crate) fn pat_request_error(
     if !(10..=50).contains(&access_level) || access_level % 10 != 0 {
         return Some("**Error:** access_level must be 10 (guest), 20 (reporter), 30 (developer), 40 (maintainer) or 50 (owner).".to_string());
     }
-    let storing = !store_as_ci_variable.is_empty();
-    if !storing && !reveal_token {
-        return Some(
-            "**Error:** choose how the token is delivered before it is created.\n\n\
-- `store_as_ci_variable: \"MY_KEY\"` — the value is written straight into a masked \
-CI/CD variable and never surfaced. Prefer this.\n\
-- `reveal_token: true` — the value is returned in the response, which means it enters \
-this conversation's transcript and the model's context. Use only when something \
-outside CI must consume it.\n\n\
-No token was created."
-                .to_string(),
-        );
-    }
-    if storing && !store_as_ci_variable.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        return Some(format!(
-            "**Error:** `{store_as_ci_variable}` is not a valid CI variable key (letters, digits and underscore only). No token was created."
-        ));
-    }
-    None
+    delivery_error(store_as_ci_variable, reveal_token)
 }
 
 /// Create a project access token.
@@ -990,9 +1146,7 @@ pub async fn create_project_access_token(
         .unwrap_or_default();
     let value = t["token"].as_str().unwrap_or("");
 
-    let mut lines = vec![
-        format!("Project access token **{token_name}** created for **{project_id}**."),
-        String::new(),
+    let meta = vec![
         format!("**ID:** {id}"),
         format!("**Scopes:** {}", granted.join(", ")),
         format!("**Access level:** {access_level}"),
@@ -1000,43 +1154,37 @@ pub async fn create_project_access_token(
     ];
 
     if storing {
-        let var_body = serde_json::json!({
-            "key": store_as_ci_variable,
-            "value": value,
-            "masked": true,
-            "protected": variable_protected,
-            "variable_type": "env_var",
-        });
-        match client
-            .post::<Value>(&format!("/projects/{enc}/variables"), &var_body)
-            .await
+        if let Err(msg) = store_secret_or_revoke(
+            client,
+            project_id,
+            store_as_ci_variable,
+            value,
+            variable_protected,
+            &format!("/projects/{enc}/access_tokens/{id}"),
+            id,
+        )
+        .await
         {
-            Ok(_) => {
-                lines.push(format!("**Stored as CI variable:** `{store_as_ci_variable}` (masked, protected={variable_protected})"));
-                lines.push(String::new());
-                lines.push("_The value was written directly to CI/CD variables and is not shown here._".to_string());
-                Ok(lines.join("\n"))
-            }
-            Err(e) => {
-                let revoked = client
-                    .delete(&format!("/projects/{enc}/access_tokens/{id}"))
-                    .await
-                    .is_ok();
-                Ok(format!(
-                    "**Error:** the token was created but writing CI variable `{store_as_ci_variable}` failed: {e}\n\n{}",
-                    if revoked {
-                        "The token has been **revoked**, so nothing is left dangling and no value was disclosed. Fix the variable key (a masked value must be at least 8 characters with no whitespace) and run this again.".to_string()
-                    } else {
-                        format!("⚠️ Revoking it also failed — token id **{id}** still exists on {project_id} and must be removed manually.")
-                    }
-                ))
-            }
+            return Ok(msg);
         }
+        Ok(render_credential(
+            "Project access token",
+            token_name,
+            project_id,
+            &meta,
+            &CredentialDelivery::Stored {
+                key: store_as_ci_variable,
+                protected: variable_protected,
+            },
+        ))
     } else {
-        lines.push(String::new());
-        lines.push("**Token (shown once — it is now in this transcript, so treat it as disclosed):**".to_string());
-        lines.push(format!("```\n{value}\n```"));
-        Ok(lines.join("\n"))
+        Ok(render_credential(
+            "Project access token",
+            token_name,
+            project_id,
+            &meta,
+            &CredentialDelivery::Revealed { value },
+        ))
     }
 }
 
@@ -1178,17 +1326,304 @@ pub async fn get_stale_branches(
     Ok(lines.join("\n"))
 }
 
+/// What a project's runners mean for a job that is sitting `pending`.
+///
+/// GitLab renders all four of these as `pending (0s)` — byte-identical output for a
+/// missing runner, a sleeping runner, a tag typo and a genuinely busy queue. They are
+/// four different problems with four different fixes, and collapsing them into
+/// "waiting" is what makes a stuck job unreadable.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum RunnerVerdict {
+    /// Nothing is attached to the project at all.
+    NoRunners,
+    /// Runners exist, but every one of them is offline.
+    AllOffline,
+    /// Runners are online, but none accepts this job's tags.
+    NoTagMatch,
+    /// At least one online runner can take the job — a pending job here really is
+    /// just queued.
+    Eligible,
+}
+
+pub(crate) struct RunnerFacts {
+    pub online: bool,
+    pub tags: Vec<String>,
+    pub run_untagged: bool,
+}
+
+/// Decide whether a job carrying `job_tags` can be picked up at all.
+pub(crate) fn runner_verdict(runners: &[RunnerFacts], job_tags: &[String]) -> RunnerVerdict {
+    if runners.is_empty() {
+        return RunnerVerdict::NoRunners;
+    }
+    let online: Vec<&RunnerFacts> = runners.iter().filter(|r| r.online).collect();
+    if online.is_empty() {
+        return RunnerVerdict::AllOffline;
+    }
+    // An untagged job needs a runner willing to take untagged work; a tagged job
+    // needs every one of its tags present on one runner.
+    let eligible = online.iter().any(|r| {
+        if job_tags.is_empty() {
+            r.run_untagged
+        } else {
+            job_tags.iter().all(|t| r.tags.iter().any(|rt| rt == t))
+        }
+    });
+    if eligible {
+        RunnerVerdict::Eligible
+    } else {
+        RunnerVerdict::NoTagMatch
+    }
+}
+
+/// List the runners that can take this project's jobs, and answer the question that
+/// actually gets asked: *can anything here run my job?*
+pub async fn list_project_runners(
+    client: &GitLabClient,
+    project_id: &str,
+    job_tags: &[String],
+) -> Result<String> {
+    let enc = urlencoding::encode(project_id);
+    let raw: Vec<Value> = client
+        .get(&format!("/projects/{enc}/runners"), &[("per_page", "100")])
+        .await?;
+
+    let facts: Vec<RunnerFacts> = raw
+        .iter()
+        .map(|r| RunnerFacts {
+            online: r["online"].as_bool().unwrap_or(false)
+                || r["status"].as_str() == Some("online"),
+            tags: r["tag_list"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            run_untagged: r["run_untagged"].as_bool().unwrap_or(true),
+        })
+        .collect();
+
+    let verdict = runner_verdict(&facts, job_tags);
+    let scope = if job_tags.is_empty() {
+        "an untagged job".to_string()
+    } else {
+        format!("a job tagged `{}`", job_tags.join("`, `"))
+    };
+
+    let mut lines = vec![format!(
+        "**Runners for {project_id}: {} attached, {} online**\n",
+        facts.len(),
+        facts.iter().filter(|f| f.online).count()
+    )];
+
+    lines.push(match verdict {
+        RunnerVerdict::NoRunners => format!(
+            "❌ **No runner is attached at all** — {scope} will sit `pending` forever, not fail. Enable inherited runners via `update_project` (`shared_runners_enabled` / `group_runners_enabled`), or register one."
+        ),
+        RunnerVerdict::AllOffline => format!(
+            "❌ **Every attached runner is offline** — {scope} cannot start. This is a host/agent problem, not a configuration one."
+        ),
+        RunnerVerdict::NoTagMatch => format!(
+            "❌ **No online runner accepts {scope}** — the tags do not match any runner's tag list. Fix the job's tags or the runner's, rather than waiting."
+        ),
+        RunnerVerdict::Eligible => format!(
+            "✅ **{scope} can be picked up** — at least one online runner matches. A pending job here is genuinely queued."
+        ),
+    });
+    lines.push(String::new());
+
+    if raw.is_empty() {
+        return Ok(lines.join("\n"));
+    }
+
+    lines.push("| Runner | Type | Online | Tags | Untagged jobs |".to_string());
+    lines.push("|--------|------|--------|------|---------------|".to_string());
+    for (r, f) in raw.iter().zip(facts.iter()) {
+        let desc = r["description"].as_str().unwrap_or("?");
+        let rtype = r["runner_type"].as_str().unwrap_or("?");
+        let tags = if f.tags.is_empty() {
+            "_none_".to_string()
+        } else {
+            f.tags.join(", ")
+        };
+        lines.push(format!(
+            "| {desc} | {rtype} | {} | {tags} | {} |",
+            if f.online { "✅" } else { "❌" },
+            if f.run_untagged { "yes" } else { "no" }
+        ));
+    }
+
+    Ok(lines.join("\n"))
+}
+
+/// Update project settings.
+///
+/// Deliberately covers the CI toggles first: without them a project created through
+/// this server cannot be made able to run anything, which leaves the automation one
+/// step short of working.
+#[allow(clippy::too_many_arguments)]
+pub async fn update_project(
+    client: &GitLabClient,
+    project_id: &str,
+    shared_runners_enabled: Option<bool>,
+    group_runners_enabled: Option<bool>,
+    default_branch: &str,
+    visibility: &str,
+    merge_method: &str,
+    description: &str,
+) -> Result<String> {
+    let mut body = serde_json::Map::new();
+    if let Some(v) = shared_runners_enabled {
+        body.insert("shared_runners_enabled".into(), serde_json::json!(v));
+    }
+    if let Some(v) = group_runners_enabled {
+        body.insert("group_runners_enabled".into(), serde_json::json!(v));
+    }
+    if !default_branch.is_empty() {
+        body.insert("default_branch".into(), serde_json::json!(default_branch));
+    }
+    if !visibility.is_empty() {
+        if !["private", "internal", "public"].contains(&visibility) {
+            return Ok(format!(
+                "**Error:** invalid visibility '{visibility}'. Use private, internal or public."
+            ));
+        }
+        body.insert("visibility".into(), serde_json::json!(visibility));
+    }
+    if !merge_method.is_empty() {
+        if !["merge", "rebase_merge", "ff"].contains(&merge_method) {
+            return Ok(format!(
+                "**Error:** invalid merge_method '{merge_method}'. Use merge, rebase_merge or ff."
+            ));
+        }
+        body.insert("merge_method".into(), serde_json::json!(merge_method));
+    }
+    if !description.is_empty() {
+        body.insert("description".into(), serde_json::json!(description));
+    }
+    if body.is_empty() {
+        return Ok("**Error:** nothing to update — pass at least one setting.".to_string());
+    }
+
+    let changed: Vec<String> = body.keys().cloned().collect();
+    let p: Value = client
+        .put(
+            &format!("/projects/{}", urlencoding::encode(project_id)),
+            &Value::Object(body),
+        )
+        .await?;
+
+    let full_path = p["path_with_namespace"].as_str().unwrap_or(project_id);
+    let mut lines = vec![
+        format!("Project **{full_path}** updated ({}).", changed.join(", ")),
+        String::new(),
+    ];
+    for k in &changed {
+        lines.push(format!("**{k}:** {}", p[k.as_str()]));
+    }
+    Ok(lines.join("\n"))
+}
+
 #[cfg(test)]
 mod pat_tests {
-    use super::pat_request_error;
+    use super::{
+        pat_request_error, render_credential, runner_verdict, CredentialDelivery, RunnerFacts,
+        RunnerVerdict,
+    };
+
+    /// Key-shaped literals never live in the repo, not even fake ones — assembled here.
+    fn fake_secret() -> String {
+        format!("{}{}", "glpat-", "NOTAREALTOKEN000000000")
+    }
+
+    #[test]
+    fn a_stored_credential_never_appears_in_the_response() {
+        // The whole point of the Stored path: the value is not in scope for the
+        // renderer, so the response cannot contain it however the text changes.
+        let secret = fake_secret();
+        let meta = vec!["**ID:** 42".to_string(), "**Scopes:** api".to_string()];
+        let out = render_credential(
+            "Project access token",
+            "ci-push",
+            "group/proj",
+            &meta,
+            &CredentialDelivery::Stored { key: "CI_PUSH_TOKEN", protected: false },
+        );
+        assert!(!out.contains(&secret), "value leaked into a stored response: {out}");
+        assert!(!out.contains("glpat-"), "even the prefix must not appear: {out}");
+        assert!(out.contains("CI_PUSH_TOKEN"), "the variable key is the useful part: {out}");
+        assert!(out.contains("**ID:** 42"), "metadata must survive: {out}");
+    }
+
+    #[test]
+    fn a_revealed_credential_says_it_is_disclosed() {
+        // The unsafe path stays available, but it must not look routine.
+        let secret = fake_secret();
+        let out = render_credential(
+            "Deploy token",
+            "reader",
+            "group/proj",
+            &[],
+            &CredentialDelivery::Revealed { value: &secret },
+        );
+        assert!(out.contains(&secret));
+        assert!(out.contains("disclosed"), "the reveal path must name the consequence: {out}");
+    }
+
+    #[test]
+    fn runner_states_that_look_identical_are_told_apart() {
+        let tagged = |t: &[&str], online: bool| RunnerFacts {
+            online,
+            tags: t.iter().map(|s| s.to_string()).collect(),
+            run_untagged: false,
+        };
+        let untagged_ok = RunnerFacts { online: true, tags: vec![], run_untagged: true };
+        let docker = vec!["docker".to_string()];
+
+        // Four situations GitLab renders as the same `pending (0s)`.
+        assert_eq!(runner_verdict(&[], &docker), RunnerVerdict::NoRunners);
+        assert_eq!(
+            runner_verdict(&[tagged(&["docker"], false)], &docker),
+            RunnerVerdict::AllOffline
+        );
+        assert_eq!(
+            runner_verdict(&[tagged(&["arm64"], true)], &docker),
+            RunnerVerdict::NoTagMatch
+        );
+        assert_eq!(
+            runner_verdict(&[tagged(&["docker"], true)], &docker),
+            RunnerVerdict::Eligible
+        );
+
+        // An untagged job needs a runner that accepts untagged work — a tagged-only
+        // runner sitting online is not eligibility.
+        assert_eq!(runner_verdict(&[untagged_ok], &[]), RunnerVerdict::Eligible);
+        assert_eq!(
+            runner_verdict(&[tagged(&["docker"], true)], &[]),
+            RunnerVerdict::NoTagMatch
+        );
+
+        // Every tag must be present on one runner, not spread across two.
+        let both = vec!["docker".to_string(), "arm64".to_string()];
+        assert_eq!(
+            runner_verdict(&[tagged(&["docker"], true), tagged(&["arm64"], true)], &both),
+            RunnerVerdict::NoTagMatch
+        );
+        assert_eq!(
+            runner_verdict(&[tagged(&["docker", "arm64"], true)], &both),
+            RunnerVerdict::Eligible
+        );
+    }
 
     #[test]
     fn delivery_must_be_chosen_before_a_token_exists() {
         // Neither route chosen: refuse up front. Minting a credential nobody can read
         // leaves litter that has to be hunted down later.
         let err = pat_request_error(&["api"], 30, "", false).expect("must refuse");
-        assert!(err.contains("choose how the token is delivered"), "{err}");
-        assert!(err.contains("No token was created"), "{err}");
+        assert!(err.contains("choose how the credential is delivered"), "{err}");
+        assert!(err.contains("Nothing was created"), "{err}");
 
         // Either route on its own is enough.
         assert!(pat_request_error(&["api"], 30, "MY_KEY", false).is_none());
@@ -1211,7 +1646,7 @@ mod pat_tests {
         // GitLab rejects these keys, and finding out afterwards means the token
         // already exists with nowhere to put it.
         let err = pat_request_error(&["api"], 30, "my-key", false).expect("dash is invalid");
-        assert!(err.contains("No token was created"), "{err}");
+        assert!(err.contains("Nothing was created"), "{err}");
         assert!(pat_request_error(&["api"], 30, "MY KEY", false).is_some());
         assert!(pat_request_error(&["api"], 30, "CI_PUSH_TOKEN", false).is_none());
     }

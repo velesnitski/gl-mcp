@@ -1221,6 +1221,48 @@ pub struct CreateDeployTokenParams {
     pub expires_at: Option<String>,
     #[schemars(description = "Custom username for the token (optional)")]
     pub username: Option<String>,
+    #[schemars(
+        description = "PREFERRED: CI/CD variable key to write the token into (masked). Only metadata is returned — the value is never surfaced. If the write fails the token is revoked rather than left orphaned."
+    )]
+    pub store_as_ci_variable: Option<String>,
+    #[schemars(
+        description = "Return the token value in the response. Defaults to false. This places a live credential in the conversation transcript and the model's context."
+    )]
+    pub reveal_token: Option<bool>,
+    #[schemars(description = "Mark the stored CI variable as protected (default: false)")]
+    pub variable_protected: Option<bool>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListProjectRunnersParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(
+        description = "Comma-separated job tags to test eligibility against. Omit for an untagged job. The verdict distinguishes no runners, all offline, and no tag match — three different fixes that GitLab renders identically as a pending job."
+    )]
+    pub job_tags: Option<String>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateProjectParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Enable instance-wide shared runners for this project")]
+    pub shared_runners_enabled: Option<bool>,
+    #[schemars(description = "Enable group runners for this project")]
+    pub group_runners_enabled: Option<bool>,
+    #[schemars(description = "Default branch name")]
+    pub default_branch: Option<String>,
+    #[schemars(description = "Visibility: private, internal or public")]
+    pub visibility: Option<String>,
+    #[schemars(description = "Merge method: merge, rebase_merge or ff")]
+    pub merge_method: Option<String>,
+    #[schemars(description = "Project description")]
+    pub description: Option<String>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }

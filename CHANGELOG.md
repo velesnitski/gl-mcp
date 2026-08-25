@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-08-25
+
+### Changed
+- **BREAKING (`create_deploy_token`): the token value is no longer returned by default.** It now follows the same delivery contract as `create_project_access_token` — pass `store_as_ci_variable` to have the value written into a masked CI/CD variable with only metadata returned, or `reveal_token: true` to receive it in the response. Two tools minting credentials in the same file disagreed about whether a secret may be written to a logged channel, and the unsafe one was the older, more-used path. Callers relying on the value must now pass `reveal_token: true`. See ADR 052.
+
+### Added
+- **`list_project_runners` — tells four identical-looking failures apart.** A job no runner can accept renders as `pending (0s)`, byte-identical to a job in a busy queue. The verdict now distinguishes *no runners attached*, *all offline*, *no tag match* and *genuinely queued* — four different fixes. Eligibility requires all of a job's tags on a single runner (not spread across two), and an untagged job requires a runner that accepts untagged work.
+- **`update_project`** — CI runner toggles (`shared_runners_enabled`, `group_runners_enabled`), default branch, visibility, merge method, description. Without it, a project created through this server could not be made able to run a pipeline at all.
+- **`create_project` warns when no runner is attached**, at the moment that is cheapest to fix. Creating a project, adding CI config, a variable and a schedule, and having the result silently never execute, was a poor end to an otherwise complete automation.
+
+### Internal
+- Credential delivery is now a type (`CredentialDelivery`) rather than a documented convention: in the stored arm the secret is not in scope for the response builder, so it cannot be leaked by a later edit, and a test asserts the rendered response contains neither the value nor its prefix. Route selection, key-shape validation and rollback-on-failure are shared by both credential tools.
+
 ## [1.8.0] - 2026-08-25
 
 ### Added
