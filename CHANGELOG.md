@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.1] - 2026-09-01
+
+### Fixed
+- **`list_commits` now accepts `ref_name` as an alias for `branch`.** The two sibling code-search/pipeline tools and the GitLab API all name this `ref_name`, and `list_commits` maps `branch` onto GitLab's `ref_name` internally — but a caller who passed `ref_name` to `list_commits` had it silently dropped by deserialization, and the call fell back to the default branch, returning a plausible commit list with no error. A branch audit built on that reached a confident wrong conclusion. `branch` now carries `#[serde(alias = "ref_name")]`; the canonical name and internal behaviour are unchanged, and a deserialization test guards it. See ADR 053.
+
 ## [1.9.0] - 2026-08-25
 
 ### Changed

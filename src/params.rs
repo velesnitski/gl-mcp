@@ -469,7 +469,10 @@ pub struct CancelPipelineParams {
 pub struct ListCommitsParams {
     #[schemars(description = "Project ID or path")]
     pub project_id: String,
-    #[schemars(description = "Branch or tag name (empty = default branch). Mutually exclusive with all_branches.")]
+    #[schemars(
+        description = "Branch or tag name (empty = default branch). Mutually exclusive with all_branches. Accepts `ref_name` as an alias — the name sibling tools (search_code, list_pipelines) and the GitLab API itself use — so a caller who passes `ref_name` is honoured rather than silently dropped."
+    )]
+    #[serde(alias = "ref_name")]
     pub branch: Option<String>,
     #[schemars(description = "When true, returns commits from all branches, not just the default. Useful for catching work-in-progress on feature branches. Mutually exclusive with branch.")]
     pub all_branches: Option<bool>,
@@ -1555,4 +1558,33 @@ pub struct CreateBranchParams {
     pub ref_name: Option<String>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
+}
+
+#[cfg(test)]
+mod param_alias_tests {
+    use super::ListCommitsParams;
+
+    #[test]
+    fn ref_name_is_accepted_as_an_alias_for_branch() {
+        // The failure this guards against: a caller passes `ref_name` (what
+        // search_code, list_pipelines and the GitLab API all call it), serde drops
+        // the unknown field, and the call silently falls back to the default branch —
+        // returning a plausible wrong list with no error.
+        let p: ListCommitsParams =
+            serde_json::from_value(serde_json::json!({
+                "project_id": "group/proj",
+                "ref_name": "feat/x",
+            }))
+            .expect("ref_name must deserialize");
+        assert_eq!(p.branch.as_deref(), Some("feat/x"));
+
+        // The canonical name still works.
+        let p: ListCommitsParams =
+            serde_json::from_value(serde_json::json!({
+                "project_id": "group/proj",
+                "branch": "feat/y",
+            }))
+            .expect("branch must deserialize");
+        assert_eq!(p.branch.as_deref(), Some("feat/y"));
+    }
 }

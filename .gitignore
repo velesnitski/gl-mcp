@@ -10,3 +10,5 @@
 # tasks.md forces every entry to be written around internal identifiers, which
 # makes the notes worse at the job they exist for. Keep it local and write freely.
 tasks.md
+# match on case-sensitive checkouts too (Linux CI folds no case)
+TASKS.md
