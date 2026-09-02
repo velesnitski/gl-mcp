@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-09-02
+
+### Added
+- **`get_file_content` can read part of a file.** `start_line`/`end_line` return one window, and `pattern` returns only the lines matching a case-insensitive regex across the whole file. Both report the file's **true** line count, and a window keeps its original line numbers so it can be quoted without re-fetching — which is what makes a line number from `search_code` directly usable instead of pulling the entire file. A `start_line` past the end of the file is an error rather than an empty success; an `end_line` past it clamps. See ADR 054.
+
+### Fixed
+- **The large-response warning no longer recommends parameters the tool does not have.** It was emitted by the shared wrapper for all 106 tools and always suggested `summary_only=true`, but only 19 parameter structs have it — so on ~87 tools the server recommended a parameter it does not accept, and following the advice produced a no-op or an error. The hint is now derived from the tool's own `JsonSchema`, naming only levers that exist, ordered by effect; a tool with no lever says so instead of inventing one. Derived rather than listed on purpose: a table kept beside the structs drifts back into the same bug.
+
 ## [1.9.1] - 2026-09-01
 
 ### Fixed

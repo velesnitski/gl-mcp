@@ -539,6 +539,18 @@ pub struct GetFileContentParams {
     pub project_id: String,
     #[schemars(description = "File path within the repository")]
     pub file_path: String,
+    #[schemars(
+        description = "First line to return (1-indexed, inclusive). Pair with end_line to read one window of a large file instead of all of it — the response always states the file's true line count, so a window is never mistaken for the whole file."
+    )]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_usize")]
+    pub start_line: Option<usize>,
+    #[schemars(description = "Last line to return (1-indexed, inclusive). Defaults to end of file.")]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_usize")]
+    pub end_line: Option<usize>,
+    #[schemars(
+        description = "Case-insensitive regex; when set, returns only matching lines (numbered) from the whole file, with the match count. Takes precedence over start_line/end_line. Use to locate something in a large file without pulling all of it."
+    )]
+    pub pattern: Option<String>,
     #[schemars(description = "Branch, tag, or commit SHA (default: default branch)")]
     pub ref_name: Option<String>,
     #[schemars(description = "GitLab instance name (optional)")]

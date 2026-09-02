@@ -126,9 +126,54 @@ macro_rules! write_guard {
 
 const RESPONSE_SIZE_WARN: usize = 15000;
 
+/// Parameters that genuinely make a response smaller, most effective first.
+///
+/// Paired with the phrasing shown to the caller. Order is the advice order.
+const SHRINK_LEVERS: &[(&str, &str)] = &[
+    ("summary_only", "`summary_only=true`"),
+    ("pattern", "`pattern` to return only matching lines"),
+    ("start_line", "`start_line`/`end_line` to read one window"),
+    ("tail", "a smaller `tail`"),
+    ("max_logs", "a smaller `max_logs`"),
+    ("per_page", "a smaller `per_page`"),
+    ("max_results", "a smaller `max_results`"),
+    ("days", "a shorter `days` window"),
+];
+
+/// Which shrink levers a tool actually has, read from its own parameter schema.
+///
+/// Derived rather than listed on purpose. The warning this feeds used to recommend
+/// `summary_only` on every oversized response, including the ~87 of 106 tools that
+/// have no such parameter — the server describing itself inaccurately, which is the
+/// defect class ADR 049 and ADR 053 were both about. Any hand-kept table beside the
+/// param structs drifts straight back into it; the schema cannot, because it is the
+/// same thing the tool advertises to the caller.
+///
+/// Only reached when a response is already oversized, so the schema build is off the
+/// hot path.
+pub(crate) fn shrink_hints_for<T: schemars::JsonSchema>(_probe: &T) -> String {
+    let schema = schemars::schema_for!(T);
+    let Ok(value) = serde_json::to_value(&schema) else {
+        return String::new();
+    };
+    let Some(props) = value.get("properties").and_then(|p| p.as_object()) else {
+        return String::new();
+    };
+    let hints: Vec<&str> = SHRINK_LEVERS
+        .iter()
+        .filter(|(name, _)| props.contains_key(*name))
+        .map(|(_, phrasing)| *phrasing)
+        .collect();
+    hints.join(", or ")
+}
+
 /// Tool call wrapper: handles compact mode, size warnings, analytics logging.
 macro_rules! tool_call {
-    ($self:expr, $name:literal, $body:expr) => {{
+    // No params in scope: warn without naming parameters we cannot verify exist.
+    ($self:expr, $name:literal, $body:expr) => {
+        tool_call!($self, $name, $body, String::new())
+    };
+    ($self:expr, $name:literal, $body:expr, $hints:expr) => {{
         let timer = ToolTimer::start($name, None);
         match $body {
             Ok(text) => {
@@ -136,8 +181,16 @@ macro_rules! tool_call {
                 let mut output = if $self.config.compact { strip_markdown(&text) } else { text };
                 if output.len() > RESPONSE_SIZE_WARN {
                     let kb = output.len() / 1024;
+                    // Evaluated only here, so the schema build never runs on the
+                    // common path.
+                    let hints: String = $hints;
+                    let advice = if hints.is_empty() {
+                        "This tool has no parameter that narrows its output — fetch a narrower target instead.".to_string()
+                    } else {
+                        format!("To return less, use {hints}.")
+                    };
                     output = format!(
-                        "*Warning: Large response ({kb}KB). Use `summary_only=true` or filter parameters to reduce token usage.*\n\n{output}"
+                        "*Warning: Large response ({kb}KB). {advice}*\n\n{output}"
                     );
                 }
                 Ok(CallToolResult::success(vec![Content::text(output)]))
@@ -170,7 +223,7 @@ macro_rules! tool_call {
 macro_rules! simple_tool {
     ($self:expr, $p:expr, $name:literal, $id:expr, |$client:ident| $body:expr) => {{
         let $client = resolve_client(&$self.resolver, &$p.instance, $id)?;
-        tool_call!($self, $name, $body)
+        tool_call!($self, $name, $body, shrink_hints_for(&$p))
     }};
 }
 
@@ -925,7 +978,15 @@ impl GlMcpServer {
     #[tool(description = "Get file content at a specific branch, tag, or commit SHA")]
     async fn get_file_content(&self, Parameters(p): Parameters<GetFileContentParams>) -> Result<CallToolResult, McpError> {
         simple_tool!(self, p, "get_file_content", "", |client|
-            tools::commits::get_file_content(client, &p.project_id, &p.file_path, p.ref_name.as_deref().unwrap_or("HEAD")).await
+            tools::commits::get_file_content(
+                client,
+                &p.project_id,
+                &p.file_path,
+                p.ref_name.as_deref().unwrap_or("HEAD"),
+                p.start_line,
+                p.end_line,
+                p.pattern.as_deref().unwrap_or(""),
+            ).await
         )
     }
 
@@ -1495,5 +1556,56 @@ mod tests {
         // Prose around a fence is still stripped; the fence is preserved.
         let mixed = "# Title\n```\n# keep me\n```\n**bye**";
         assert_eq!(strip_markdown(mixed), "Title\n```\n# keep me\n```\nbye");
+    }
+}
+
+#[cfg(test)]
+mod shrink_hint_tests {
+    use super::shrink_hints_for;
+    use crate::params::{GetFileContentParams, ListCommitsParams};
+
+    #[test]
+    fn a_tool_is_never_told_to_use_a_parameter_it_lacks() {
+        // The bug: every oversized response advised `summary_only=true`, including
+        // on tools that have no such parameter — most of them.
+        let probe = GetFileContentParams {
+            project_id: String::new(),
+            file_path: String::new(),
+            start_line: None,
+            end_line: None,
+            pattern: None,
+            ref_name: None,
+            instance: None,
+        };
+        let hints = shrink_hints_for(&probe);
+        assert!(
+            !hints.contains("summary_only"),
+            "get_file_content has no summary_only: {hints}"
+        );
+        // It should name the levers it does have.
+        assert!(hints.contains("pattern"), "{hints}");
+        assert!(hints.contains("start_line"), "{hints}");
+    }
+
+    #[test]
+    fn a_tool_that_has_summary_only_is_told_about_it_first() {
+        let probe = ListCommitsParams {
+            project_id: String::new(),
+            branch: None,
+            all_branches: None,
+            author: None,
+            since: None,
+            until: None,
+            per_page: None,
+            summary_only: None,
+            instance: None,
+        };
+        let hints = shrink_hints_for(&probe);
+        assert!(hints.contains("summary_only"), "{hints}");
+        // Most effective lever leads.
+        assert!(
+            hints.find("summary_only") < hints.find("per_page"),
+            "ordering should put the strongest lever first: {hints}"
+        );
     }
 }

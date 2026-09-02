@@ -505,11 +505,54 @@ pub(crate) async fn get_file_raw(
 }
 
 /// Get file content at a specific ref.
+/// Pick a 1-indexed, inclusive line window out of `content`.
+///
+/// Returns the selected lines with their original numbers plus the file's true line
+/// count — the caller must always be able to say what it did **not** show. A window
+/// past the end of the file is an error rather than an empty success: silently
+/// returning nothing for line 900 of a 200-line file is the same
+/// absence-reads-as-a-value failure this server keeps having to fix.
+pub(crate) fn select_lines(
+    content: &str,
+    start: Option<usize>,
+    end: Option<usize>,
+) -> std::result::Result<(Vec<(usize, &str)>, usize), String> {
+    let lines: Vec<&str> = content.lines().collect();
+    let total = lines.len();
+    if start.is_none() && end.is_none() {
+        return Ok((
+            lines.into_iter().enumerate().map(|(i, l)| (i + 1, l)).collect(),
+            total,
+        ));
+    }
+    let s = start.unwrap_or(1);
+    if s == 0 {
+        return Err("`start_line` is 1-indexed; 0 is not a line.".to_string());
+    }
+    if s > total {
+        return Err(format!(
+            "`start_line` {s} is past the end of the file, which has {total} lines."
+        ));
+    }
+    let e = end.unwrap_or(total).min(total);
+    if e < s {
+        return Err(format!("`end_line` {e} is before `start_line` {s}."));
+    }
+    Ok((
+        lines[s - 1..e].iter().enumerate().map(|(i, l)| (s + i, *l)).collect(),
+        total,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn get_file_content(
     client: &GitLabClient,
     project_id: &str,
     file_path: &str,
     ref_name: &str,
+    start_line: Option<usize>,
+    end_line: Option<usize>,
+    pattern: &str,
 ) -> Result<String> {
     let encoded_project = urlencoding::encode(project_id);
     let encoded_file = urlencoding::encode(file_path);
@@ -534,17 +577,81 @@ pub async fn get_file_content(
         content_b64.to_string()
     };
 
-    let parts = vec![
-        format!("## {file_path}"),
-        format!("**Ref:** {ref_name} | **Size:** {size} bytes | **Language:** {lang}"),
-        String::new(),
-        format!("```{}", lang.to_lowercase()),
-        content,
-        "```".to_string(),
-    ];
+    let total_lines = content.lines().count();
+    let head = |note: String| {
+        vec![
+            format!("## {file_path}"),
+            format!(
+                "**Ref:** {ref_name} | **Size:** {size} bytes | **Lines:** {total_lines} | **Language:** {lang}"
+            ),
+            note,
+        ]
+    };
 
-    let result = parts.join("\n");
-    Ok(result)
+    // A pattern answers "where is X"; a line window answers "show me here". When
+    // both are given the search wins, since a window would silently constrain it.
+    if !pattern.is_empty() {
+        let re = match regex::RegexBuilder::new(pattern).case_insensitive(true).build() {
+            Ok(re) => re,
+            Err(e) => {
+                return Ok(format!(
+                    "## {file_path}\n\n**Invalid pattern** `{pattern}`: {e}"
+                ));
+            }
+        };
+        let (found, hits) = crate::tools::pipelines::grep_lines(&content, &re, 400);
+        if found == 0 {
+            return Ok(format!(
+                "## {file_path}\n\n*No line matches `{pattern}` ({total_lines} lines searched).*"
+            ));
+        }
+        let note = if hits.len() < found {
+            format!(
+                "*`{pattern}`: {found} matching lines of {total_lines}, showing {}*",
+                hits.len()
+            )
+        } else {
+            format!("*`{pattern}`: {found} matching lines of {total_lines}*")
+        };
+        let mut parts = head(note);
+        parts.push(String::new());
+        parts.push(format!("```{}", lang.to_lowercase()));
+        for (n, l) in hits {
+            parts.push(format!("{n}: {l}"));
+        }
+        parts.push("```".to_string());
+        return Ok(parts.join("\n"));
+    }
+
+    let (selected, total) = match select_lines(&content, start_line, end_line) {
+        Ok(v) => v,
+        Err(msg) => return Ok(format!("## {file_path}\n\n**Error:** {msg}")),
+    };
+    let windowed = selected.len() < total;
+    let note = if windowed {
+        format!(
+            "*Showing lines {}–{} of {total}.*",
+            selected[0].0,
+            selected[selected.len() - 1].0
+        )
+    } else {
+        String::new()
+    };
+
+    let mut parts = head(note);
+    parts.push(String::new());
+    parts.push(format!("```{}", lang.to_lowercase()));
+    if windowed {
+        // Numbered, so a windowed read can be quoted by line without re-fetching.
+        for (n, l) in &selected {
+            parts.push(format!("{n}: {l}"));
+        }
+    } else {
+        parts.push(content.clone());
+    }
+    parts.push("```".to_string());
+
+    Ok(parts.join("\n"))
 }
 
 /// Get user activity (events) for the last N hours.
@@ -1872,4 +1979,53 @@ pub async fn get_team_timezone(
     let _ = (results.first().map(|r| r.display_name.as_str()), results.first().map(|r| r.weekday_total));
 
     Ok(lines.join("\n"))
+}
+
+#[cfg(test)]
+mod file_window_tests {
+    use super::select_lines;
+
+    const SRC: &str = "one\ntwo\nthree\nfour\nfive";
+
+    #[test]
+    fn no_window_returns_everything_with_true_numbering() {
+        let (lines, total) = select_lines(SRC, None, None).unwrap();
+        assert_eq!(total, 5);
+        assert_eq!(lines.len(), 5);
+        assert_eq!(lines[0], (1, "one"), "numbering is 1-indexed");
+        assert_eq!(lines[4], (5, "five"));
+    }
+
+    #[test]
+    fn a_window_keeps_original_line_numbers_and_reports_the_true_total() {
+        // The numbers must survive the slice, otherwise a windowed read cannot be
+        // quoted back without re-fetching the file.
+        let (lines, total) = select_lines(SRC, Some(2), Some(4)).unwrap();
+        assert_eq!(total, 5, "total is the file's, not the window's");
+        assert_eq!(lines, vec![(2, "two"), (3, "three"), (4, "four")]);
+
+        // Open-ended windows.
+        let (lines, _) = select_lines(SRC, Some(4), None).unwrap();
+        assert_eq!(lines, vec![(4, "four"), (5, "five")]);
+        let (lines, _) = select_lines(SRC, None, Some(2)).unwrap();
+        assert_eq!(lines, vec![(1, "one"), (2, "two")]);
+    }
+
+    #[test]
+    fn an_end_past_the_file_clamps_but_a_start_past_it_is_an_error() {
+        // Clamping the end is helpful; silently returning nothing for a start past
+        // the end would read as "these lines are empty" rather than "no such lines".
+        let (lines, _) = select_lines(SRC, Some(4), Some(999)).unwrap();
+        assert_eq!(lines.len(), 2);
+
+        let err = select_lines(SRC, Some(900), None).unwrap_err();
+        assert!(err.contains("900"), "{err}");
+        assert!(err.contains("5 lines"), "the error must state the real size: {err}");
+    }
+
+    #[test]
+    fn inverted_and_zero_windows_are_refused() {
+        assert!(select_lines(SRC, Some(4), Some(2)).is_err(), "end before start");
+        assert!(select_lines(SRC, Some(0), None).is_err(), "0 is not a line");
+    }
 }

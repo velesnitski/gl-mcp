@@ -915,7 +915,7 @@ fn strip_ansi(s: &str) -> String {
 ///
 /// Returns the total number of matches alongside the kept ones, so a truncated
 /// result can say how much it left out instead of looking complete.
-fn grep_lines<'a>(log: &'a str, re: &regex::Regex, limit: usize) -> (usize, Vec<(usize, &'a str)>) {
+pub(crate) fn grep_lines<'a>(log: &'a str, re: &regex::Regex, limit: usize) -> (usize, Vec<(usize, &'a str)>) {
     let hits: Vec<(usize, &str)> = log
         .lines()
         .enumerate()
