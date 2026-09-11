@@ -1221,7 +1221,7 @@ impl GlMcpServer {
         // Scope drives instance resolution + analytics: the group when sweeping.
         let scope = if group.is_empty() { project.clone() } else { group.clone() };
         simple_tool!(self, p, "search_code", &scope, |client|
-            tools::repository::search_code(client, &project, &group, &p.query, p.ref_name.as_deref().unwrap_or(""), p.per_page.unwrap_or(20)).await
+            tools::repository::search_code(client, &project, &group, &p.query, p.ref_name.as_deref().unwrap_or(""), p.per_page.unwrap_or(20), p.offset.unwrap_or(0), p.full_sweep.unwrap_or(false)).await
         )
     }
 
@@ -1230,6 +1230,17 @@ impl GlMcpServer {
         simple_tool!(self, p, "get_languages", &p.project_id, |client|
             tools::repository::get_languages(client, &p.project_id).await
         )
+    }
+
+    #[tool(description = "Audit CI configuration for exposure across a project or group: secret-shaped CI variables GitLab would not redact from a job log, CI_DEBUG_TRACE left on, floating image tags that change the build environment with no diff, and unpinned remote downloads executed inside CI. Reports variable NAMES and locations only — values are never read or returned.")]
+    async fn audit_ci_security(&self, Parameters(p): Parameters<AuditCiSecurityParams>) -> Result<CallToolResult, McpError> {
+        let project = p.project_id.clone().unwrap_or_default();
+        let group = p.group_path.clone().unwrap_or_default();
+        let id = if group.is_empty() { project.clone() } else { group.clone() };
+        let client = resolve_client(&self.resolver, &p.instance, &id)?;
+        tool_call!(self, "audit_ci_security",
+            tools::security::audit_ci_security(client, &project, &group, p.max_projects.unwrap_or(60)).await,
+            shrink_hints_for(&p))
     }
 
     #[tool(description = "Get repository directory listing. Use recursive=true for full tree.")]

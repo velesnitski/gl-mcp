@@ -13,6 +13,32 @@ const SEARCH_CONCURRENCY: usize = 12;
 /// a partial sweep reported as complete is worse than no sweep.
 const SEARCH_MAX_REPOS: usize = 60;
 
+/// Ceiling for an explicit `full_sweep`. Still bounded: an unbounded sweep over a
+/// large instance is a way to hang, not a way to be thorough.
+const SEARCH_FULL_CEILING: usize = 500;
+
+/// The repo window a group sweep actually covered, and how to reach the rest.
+///
+/// A sweep that silently covers part of a group is the worst shape this server can
+/// take: "no matches" over an unstated subset reads as proof of absence, which is the
+/// exact claim such a sweep is run to establish. So the window is always stated, and
+/// when repos remain the response spells out the literal next call rather than
+/// leaving the caller to work out that one exists.
+fn sweep_note(offset: usize, scanned: usize, total: usize, full_sweep: bool) -> Option<String> {
+    let covered = offset + scanned;
+    if covered >= total {
+        return None;
+    }
+    let remaining = total - covered;
+    Some(format!(
+        "> ⚠️ **Partial sweep — {remaining} of {total} repos not searched.** Covered repos {}–{} by last activity. \
+This is NOT evidence of absence for the rest. Continue with `offset={covered}`, or pass `full_sweep=true` to cover all {total} in one call{}.\n",
+        offset + 1,
+        covered,
+        if full_sweep { " (already raised; ceiling reached)" } else { "" }
+    ))
+}
+
 /// Blob search within one project. Returns raw hits (empty on any error, so one
 /// unreachable repo cannot abort a group sweep).
 async fn search_project_blobs(
@@ -46,12 +72,15 @@ async fn search_project_blobs(
 /// from "no matches". A confident empty on an unsupported query is the worst
 /// possible answer for a rename or leak sweep, so this walks the projects instead,
 /// which works on every instance.
+#[allow(clippy::too_many_arguments)]
 async fn search_code_group(
     client: &GitLabClient,
     group_path: &str,
     query: &str,
     ref_name: &str,
     per_page: u32,
+    offset: usize,
+    full_sweep: bool,
 ) -> Result<(String, usize)> {
     let encoded = urlencoding::encode(group_path);
     let projects: Vec<Value> = client
@@ -75,8 +104,17 @@ async fn search_code_group(
     }
 
     let total_repos = projects.len();
-    let scanned: Vec<&Value> = projects.iter().take(SEARCH_MAX_REPOS).collect();
+    let window = if full_sweep { SEARCH_FULL_CEILING } else { SEARCH_MAX_REPOS };
+    let scanned: Vec<&Value> = projects.iter().skip(offset).take(window).collect();
     let scanned_count = scanned.len();
+    if scanned_count == 0 {
+        return Ok((
+            format!(
+                "`offset={offset}` is past the end of `{group_path}`, which has {total_repos} repos. Nothing was searched."
+            ),
+            0,
+        ));
+    }
 
     // (repo path, hits) for repos with at least one match.
     let mut hits: Vec<(String, Vec<Value>)> = Vec::new();
@@ -95,13 +133,11 @@ async fn search_code_group(
 
     let match_count: usize = hits.iter().map(|(_, v)| v.len()).sum();
     let mut lines = vec![format!(
-        "**Search '{query}' across `{group_path}`: {match_count} matches in {} of {scanned_count} repos**\n",
+        "**Search '{query}' across `{group_path}`: {match_count} matches in {} of {scanned_count} repos searched**\n",
         hits.len()
     )];
-    if scanned_count < total_repos {
-        lines.push(format!(
-            "> ⚠️ Partial sweep — searched the {scanned_count} most recently active of {total_repos} repos (cap {SEARCH_MAX_REPOS}). Narrow to a subgroup for full coverage.\n"
-        ));
+    if let Some(note) = sweep_note(offset, scanned_count, total_repos, full_sweep) {
+        lines.push(note);
     }
     if hits.is_empty() {
         lines.push("No matches.".to_string());
@@ -142,6 +178,7 @@ fn looks_like_alternation(query: &str) -> bool {
 /// when it returns **nothing** and looks like alternation is it split, each
 /// alternative searched separately, and the substitution stated plainly in the
 /// output. Silence is the one answer this tool must never give by accident.
+#[allow(clippy::too_many_arguments)]
 pub async fn search_code(
     client: &GitLabClient,
     project_id: &str,
@@ -149,8 +186,11 @@ pub async fn search_code(
     query: &str,
     ref_name: &str,
     per_page: u32,
+    offset: usize,
+    full_sweep: bool,
 ) -> Result<String> {
-    let (out, count) = search_code_once(client, project_id, group_path, query, ref_name, per_page).await?;
+    let (out, count) =
+        search_code_once(client, project_id, group_path, query, ref_name, per_page, offset, full_sweep).await?;
     if count > 0 || !looks_like_alternation(query) {
         return Ok(out);
     }
@@ -166,7 +206,8 @@ Re-ran the {} alternatives separately:\n",
     ];
     let mut total = 0usize;
     for t in &terms {
-        let (o, c) = search_code_once(client, project_id, group_path, t, ref_name, per_page).await?;
+        let (o, c) =
+            search_code_once(client, project_id, group_path, t, ref_name, per_page, offset, full_sweep).await?;
         total += c;
         parts.push(format!("---\n\n### Alternative `{t}` — {c} match(es)\n"));
         parts.push(o);
@@ -178,6 +219,7 @@ Re-ran the {} alternatives separately:\n",
     Ok(parts.join("\n"))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn search_code_once(
     client: &GitLabClient,
     project_id: &str,
@@ -185,9 +227,12 @@ async fn search_code_once(
     query: &str,
     ref_name: &str,
     per_page: u32,
+    offset: usize,
+    full_sweep: bool,
 ) -> Result<(String, usize)> {
     if !group_path.is_empty() {
-        return search_code_group(client, group_path, query, ref_name, per_page).await;
+        return search_code_group(client, group_path, query, ref_name, per_page, offset, full_sweep)
+            .await;
     }
 
     let results: Vec<Value> = search_project_blobs(client, project_id, query, ref_name, per_page).await;

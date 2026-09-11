@@ -649,6 +649,15 @@ pub struct SearchCodeParams {
     pub query: String,
     #[schemars(description = "Branch/tag to search in (optional)")]
     pub ref_name: Option<String>,
+    #[schemars(
+        description = "Group sweeps only: skip this many repos (ordered by last activity) to continue a partial sweep. When repos remain, the response prints the exact offset to use next."
+    )]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_usize")]
+    pub offset: Option<usize>,
+    #[schemars(
+        description = "Group sweeps only: cover every repo in one call instead of the default window. Costs one API call per repo — use when an empty result must actually mean absence."
+    )]
+    pub full_sweep: Option<bool>,
     #[schemars(description = "Max results (default: 20)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub per_page: Option<u32>,
@@ -1599,4 +1608,20 @@ mod param_alias_tests {
             .expect("branch must deserialize");
         assert_eq!(p.branch.as_deref(), Some("feat/y"));
     }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AuditCiSecurityParams {
+    #[schemars(description = "Project ID or path. Omit when using group_path.")]
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[schemars(description = "Group path — audit every non-archived project in the group")]
+    pub group_path: Option<String>,
+    #[schemars(
+        description = "Max projects to audit in a group sweep (default: 60). A clean result over a subset is not a clean group, and the response says so."
+    )]
+    #[serde(default, deserialize_with = "flex::deserialize_opt_usize")]
+    pub max_projects: Option<usize>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
 }

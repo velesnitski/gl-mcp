@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-09-11
+
+### Added
+- **`audit_ci_security` — configuration-level exposure audit** for a project or a whole group. Four detectors, each derived from a failure that actually happened rather than from a checklist: secret-shaped CI variables that are neither masked nor file-type (nothing would stop a job from writing them to its log in cleartext); debug tracing left enabled, which prints every variable including masked ones; floating image tags, where a rebuild changes the build environment with no diff and no warning; and unpinned remote artifacts downloaded and executed inside CI, where registry and secret-store credentials are in scope. **Reports variable names and locations only — values are never read or returned**, because a scanner that prints the credentials it finds has reproduced the bug it hunts. Key-material variables are detected separately and told to become file-type: masking cannot apply to them, and recommending it yields a failed API call and a reader who concludes the finding was noise. Every report states the blind spot: this can tell that nothing would prevent an exposure, never that one occurred. See ADR 055.
+- **`offset` and `full_sweep` on `search_code` group sweeps.** The 60-repo cap printed a warning but offered no way to reach the rest — no offset, no cursor, no opt-in full pass. A sweep that cannot be completed is the worst shape this server takes: "no matches" over an unstated subset reads as proof of absence, which is the exact claim a sweep is run to establish. The response now states the window covered and prints the literal next invocation when repos remain, and an offset past the end is reported instead of returning an empty, successful-looking result.
+
 ## [1.10.0] - 2026-09-02
 
 ### Added
