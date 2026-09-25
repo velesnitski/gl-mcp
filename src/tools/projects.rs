@@ -1,10 +1,11 @@
 //! GitLab project tools.
 
+use std::fmt::Write as _;
 use crate::client::GitLabClient;
-use crate::error::Result;
+use crate::error::{Error, Result, ResultExt};
 use serde_json::Value;
 
-use super::users::{access_level_name, parse_access_level, resolve_user_id};
+use super::users::{access_level_name, parse_access_level, protection_level_name, resolve_user_id};
 
 /// List projects accessible to the authenticated user.
 pub async fn list_projects(
@@ -195,7 +196,7 @@ pub async fn list_branches(
         let is_protected = b["protected"].as_bool().unwrap_or(false);
         let author = b["commit"]["author_name"].as_str().unwrap_or("?");
         let date = b["commit"]["created_at"].as_str().unwrap_or("?");
-        let date_short = if date.len() > 10 { &date[..10] } else { date };
+        let date_short = date.get(..10).unwrap_or(date);
         let message = b["commit"]["title"].as_str().unwrap_or("");
 
         let mut flags = Vec::new();
@@ -440,7 +441,7 @@ pub async fn get_project_events(
         let target_type = e["target_type"].as_str().unwrap_or("");
         let target_title = e["target_title"].as_str().unwrap_or("");
         let created = e["created_at"].as_str().unwrap_or("?");
-        let date_short = if created.len() > 10 { &created[..10] } else { created };
+        let date_short = created.get(..10).unwrap_or(created);
 
         let push_data = if e["push_data"].is_object() {
             let ref_type = e["push_data"]["ref_type"].as_str().unwrap_or("branch");
@@ -520,16 +521,6 @@ pub async fn check_branch_protection(
     let allow_force_push = pb["allow_force_push"].as_bool().unwrap_or(false);
     let code_owner_required = pb["code_owner_approval_required"].as_bool().unwrap_or(false);
 
-    fn level_label(level: u64) -> &'static str {
-        match level {
-            0 => "No access",
-            30 => "Developer",
-            40 => "Maintainer",
-            60 => "Admin",
-            _ => "?",
-        }
-    }
-
     fn format_access_levels(arr: Option<&Vec<Value>>) -> String {
         match arr {
             Some(items) if !items.is_empty() => items
@@ -537,10 +528,10 @@ pub async fn check_branch_protection(
                 .map(|v| {
                     let level = v["access_level"].as_u64().unwrap_or(0);
                     let desc = v["access_level_description"].as_str().unwrap_or("");
-                    if !desc.is_empty() && desc != level_label(level) {
-                        format!("{} ({desc})", level_label(level))
+                    if !desc.is_empty() && desc != protection_level_name(level) {
+                        format!("{} ({desc})", protection_level_name(level))
                     } else {
-                        level_label(level).to_string()
+                        protection_level_name(level).to_string()
                     }
                 })
                 .collect::<Vec<_>>()
@@ -580,14 +571,14 @@ pub async fn update_branch_protection(
     // Validate access levels
     let valid_levels = [0u32, 30, 40, 60];
     if !valid_levels.contains(&push_access_level) {
-        return Ok(format!(
-            "**Error:** Invalid push_access_level {push_access_level}. Use 0 (None), 30 (Developer), 40 (Maintainer), or 60 (Admin)."
-        ));
+        return Err(Error::user_input(format!(
+            "Invalid push_access_level {push_access_level}. Use 0 (None), 30 (Developer), 40 (Maintainer), or 60 (Admin)."
+        )));
     }
     if !valid_levels.contains(&merge_access_level) {
-        return Ok(format!(
-            "**Error:** Invalid merge_access_level {merge_access_level}. Use 0 (None), 30 (Developer), 40 (Maintainer), or 60 (Admin)."
-        ));
+        return Err(Error::user_input(format!(
+            "Invalid merge_access_level {merge_access_level}. Use 0 (None), 30 (Developer), 40 (Maintainer), or 60 (Admin)."
+        )));
     }
 
     // Delete existing protection (if any) — ignore 404
@@ -608,20 +599,10 @@ pub async fn update_branch_protection(
     let body = serde_json::json!({});
     let _: Value = client.post(&create_path, &body).await?;
 
-    fn level_label(level: u32) -> &'static str {
-        match level {
-            0 => "No access",
-            30 => "Developer",
-            40 => "Maintainer",
-            60 => "Admin",
-            _ => "?",
-        }
-    }
-
     Ok(format!(
         "Branch protection updated for `{branch}` on **{project_id}**:\n- Push: {} ({push_access_level})\n- Merge: {} ({merge_access_level})\n- Allow force push: {allow_force_push}\n- Code owner approval required: {code_owner_approval_required}",
-        level_label(push_access_level),
-        level_label(merge_access_level)
+        protection_level_name(push_access_level.into()),
+        protection_level_name(merge_access_level.into())
     ))
 }
 
@@ -684,7 +665,7 @@ pub async fn create_project(
     let runners: Vec<Value> = client
         .get(&format!("/projects/{id}/runners"), &[("per_page", "20")])
         .await
-        .unwrap_or_default();
+        .or_default_logged();
     if runners.is_empty() {
         lines.push(String::new());
         lines.push("> ⚠️ **No runner is attached to this project**, so any pipeline will sit `pending` indefinitely rather than fail. Enable inherited runners with `update_project` (`shared_runners_enabled` / `group_runners_enabled`), or check what is available with `list_project_runners`.".to_string());
@@ -783,7 +764,7 @@ pub async fn add_member(
     let expiry = m["expires_at"].as_str().filter(|s| !s.is_empty());
     let mut out = format!("Added **@{username}** (id {user_id}) to **{project_id}** as **{role}**.");
     if let Some(e) = expiry {
-        out.push_str(&format!(" Expires {e}."));
+        let _ = write!(out, " Expires {e}.");
     }
     Ok(out)
 }
@@ -816,7 +797,7 @@ pub async fn add_group_member(
         "Added **@{username}** (id {user_id}) to group **{group_id}** as **{role}** — grants access to all projects in the group."
     );
     if let Some(e) = expiry {
-        out.push_str(&format!(" Expires {e}."));
+        let _ = write!(out, " Expires {e}.");
     }
     Ok(out)
 }
@@ -843,21 +824,21 @@ pub async fn create_deploy_token(
     ];
     for s in scopes {
         if !valid_scopes.contains(s) {
-            return Ok(format!(
-                "**Error:** Invalid scope '{s}'. Valid scopes: {}",
+            return Err(Error::user_input(format!(
+                "Invalid scope '{s}'. Valid scopes: {}",
                 valid_scopes.join(", ")
-            ));
+            )));
         }
     }
 
     if scopes.is_empty() {
-        return Ok("**Error:** At least one scope is required.".to_string());
+        return Err(Error::user_input("At least one scope is required.".to_string()));
     }
     // Same delivery contract as every other credential this server mints: a secret
     // that only ever needed to travel from GitLab to GitLab's own CI variables should
     // not pass through a logged channel on the way.
     if let Some(err) = delivery_error(store_as_ci_variable, reveal_token) {
-        return Ok(err);
+        return Err(Error::user_input(err));
     }
 
     let path = format!(
@@ -910,7 +891,7 @@ pub async fn create_deploy_token(
         )
         .await
         {
-            return Ok(msg);
+            return Err(msg);
         }
         return Ok(render_credential(
             "Deploy token",
@@ -999,7 +980,7 @@ pub(crate) fn delivery_error(store_as_ci_variable: &str, reveal_token: bool) -> 
     let storing = !store_as_ci_variable.is_empty();
     if !storing && !reveal_token {
         return Some(
-            "**Error:** choose how the credential is delivered before it is created.\n\n\
+            "choose how the credential is delivered before it is created.\n\n\
 - `store_as_ci_variable: \"MY_KEY\"` — written into a masked CI/CD variable; only \
 metadata is returned. Prefer this.\n\
 - `reveal_token: true` — returned in the response, which places a live credential in \
@@ -1015,7 +996,7 @@ Nothing was created."
             .all(|c| c.is_ascii_alphanumeric() || c == '_')
     {
         return Some(format!(
-            "**Error:** `{store_as_ci_variable}` is not a valid CI variable key (letters, digits and underscore only). Nothing was created."
+            "`{store_as_ci_variable}` is not a valid CI variable key (letters, digits and underscore only). Nothing was created."
         ));
     }
     None
@@ -1034,7 +1015,7 @@ async fn store_secret_or_revoke(
     protected: bool,
     revoke_path: &str,
     id: u64,
-) -> std::result::Result<(), String> {
+) -> Result<()> {
     let enc = urlencoding::encode(project_id);
     let body = serde_json::json!({
         "key": key,
@@ -1049,15 +1030,18 @@ async fn store_secret_or_revoke(
     {
         Ok(_) => Ok(()),
         Err(e) => {
-            let revoked = client.delete(revoke_path).await.is_ok();
-            Err(format!(
-                "**Error:** the credential was created but writing CI variable `{key}` failed: {e}\n\n{}",
-                if revoked {
-                    "It has been **revoked**, so nothing is left dangling and no value was disclosed. A masked value must be at least 8 characters with no whitespace — fix the key or the constraint and run this again.".to_string()
-                } else {
-                    format!("⚠️ Revoking it also failed — id **{id}** still exists on {project_id} and must be removed manually.")
-                }
-            ))
+            let head = format!("the credential was created but writing CI variable `{key}` failed: {e}");
+            // Classified by outcome, not wording: a clean rollback is the caller's to fix;
+            // a failed rollback leaves a live credential nobody holds, and must alert.
+            if client.delete(revoke_path).await.is_ok() {
+                Err(Error::user_input(format!(
+                    "{head}\n\nIt has been **revoked**, so nothing is left dangling and no value was disclosed. A masked value must be at least 8 characters with no whitespace — fix the key or the constraint and run this again."
+                )))
+            } else {
+                Err(Error::other(format!(
+                    "{head}\n\n⚠️ Revoking it also failed — id **{id}** still exists on {project_id} and must be removed manually."
+                )))
+            }
         }
     }
 }
@@ -1075,20 +1059,20 @@ pub(crate) fn pat_request_error(
 ) -> Option<String> {
     if scopes.is_empty() {
         return Some(format!(
-            "**Error:** At least one scope is required. Valid: {}",
+            "At least one scope is required. Valid: {}",
             PAT_SCOPES.join(", ")
         ));
     }
     for s in scopes {
         if !PAT_SCOPES.contains(s) {
             return Some(format!(
-                "**Error:** Invalid scope '{s}'. Valid: {}",
+                "Invalid scope '{s}'. Valid: {}",
                 PAT_SCOPES.join(", ")
             ));
         }
     }
     if !(10..=50).contains(&access_level) || access_level % 10 != 0 {
-        return Some("**Error:** access_level must be 10 (guest), 20 (reporter), 30 (developer), 40 (maintainer) or 50 (owner).".to_string());
+        return Some("access_level must be 10 (guest), 20 (reporter), 30 (developer), 40 (maintainer) or 50 (owner).".to_string());
     }
     delivery_error(store_as_ci_variable, reveal_token)
 }
@@ -1122,7 +1106,7 @@ pub async fn create_project_access_token(
     variable_protected: bool,
 ) -> Result<String> {
     if let Some(err) = pat_request_error(scopes, access_level, store_as_ci_variable, reveal_token) {
-        return Ok(err);
+        return Err(Error::user_input(err));
     }
     let storing = !store_as_ci_variable.is_empty();
 
@@ -1165,7 +1149,7 @@ pub async fn create_project_access_token(
         )
         .await
         {
-            return Ok(msg);
+            return Err(msg);
         }
         Ok(render_credential(
             "Project access token",
@@ -1281,7 +1265,7 @@ pub async fn get_stale_branches(
             .unwrap_or(false);
 
         if merged || is_old {
-            let date_short = if committed_date.len() > 10 { &committed_date[..10] } else { committed_date };
+            let date_short = committed_date.get(..10).unwrap_or(committed_date);
             let author = b["commit"]["author_name"].as_str().unwrap_or("?");
             stale.push((name.to_string(), date_short.to_string(), author.to_string(), merged));
         }
@@ -1486,17 +1470,17 @@ pub async fn update_project(
     }
     if !visibility.is_empty() {
         if !["private", "internal", "public"].contains(&visibility) {
-            return Ok(format!(
-                "**Error:** invalid visibility '{visibility}'. Use private, internal or public."
-            ));
+            return Err(Error::user_input(format!(
+                "invalid visibility '{visibility}'. Use private, internal or public."
+            )));
         }
         body.insert("visibility".into(), serde_json::json!(visibility));
     }
     if !merge_method.is_empty() {
         if !["merge", "rebase_merge", "ff"].contains(&merge_method) {
-            return Ok(format!(
-                "**Error:** invalid merge_method '{merge_method}'. Use merge, rebase_merge or ff."
-            ));
+            return Err(Error::user_input(format!(
+                "invalid merge_method '{merge_method}'. Use merge, rebase_merge or ff."
+            )));
         }
         body.insert("merge_method".into(), serde_json::json!(merge_method));
     }
@@ -1504,7 +1488,7 @@ pub async fn update_project(
         body.insert("description".into(), serde_json::json!(description));
     }
     if body.is_empty() {
-        return Ok("**Error:** nothing to update — pass at least one setting.".to_string());
+        return Err(Error::user_input("nothing to update — pass at least one setting.".to_string()));
     }
 
     let changed: Vec<String> = body.keys().cloned().collect();

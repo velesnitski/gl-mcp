@@ -1,0 +1,1 @@
+acme: 6 repos scanned, 2 dormant. devs 3/5 (60%) · AI share 30%. core: 2/2 active · 2 configured (best L3) | data: 1/2 active · 0 configured (best L0) | web: 1/2 active · 1 configured (best L1) | 1 in-flight

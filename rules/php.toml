@@ -62,7 +62,8 @@ message = "Catching generic Exception — use specific exception types"
 id = "PHP009"
 severity = "critical"
 name = "Unvalidated request input"
-pattern = '\$request\s*->\s*(input|get|post)\s*\([^)]*\)\s*(?!.*validate)'
+pattern = '\$request\s*->\s*(input|get|post)\s*\('
+negative_pattern = 'validate'
 message = "Using raw request input — validate or sanitize first"
 
 [[rule]]
@@ -76,7 +77,8 @@ message = "sleep() in production code — use queue/job instead"
 id = "PHP011"
 severity = "info"
 name = "Magic number"
-pattern = '(?<!=\s)(?<!\$)\b(?!0\b|1\b|2\b|100\b|200\b|301\b|302\b|400\b|401\b|403\b|404\b|422\b|500\b)\d{3,}\b(?!\s*[=;])'
+pattern = '(?:^|[^$\w])\d{3,}\b'
+negative_pattern = '(=\s*\d{3,}|\d{3,}\s*[=;]|\b(100|200|301|302|400|401|403|404|422|500)\b)'
 message = "Magic number — consider using a named constant"
 
 [[rule]]
@@ -98,7 +100,8 @@ message = "Commented-out code — remove or use version control"
 id = "PHP014"
 severity = "info"
 name = "TODO without ticket"
-pattern = '//\s*TODO(?!.*\b[A-Z]+-\d+)'
+pattern = '//\s*TODO'
+negative_pattern = '\b[A-Z][A-Z0-9]+-\d+'
 message = "TODO without issue reference — add ticket ID"
 
 [[rule]]

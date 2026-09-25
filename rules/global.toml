@@ -19,7 +19,8 @@ message = "Possible hardcoded credential — use environment variables"
 id = "G003"
 severity = "warning"
 name = "TODO without ticket"
-pattern = '(?i)(TODO|FIXME|HACK|XXX)(?!.*\b[A-Z]+-\d+)'
+pattern = '(?i)(TODO|FIXME|HACK|XXX)'
+negative_pattern = '\b[A-Z][A-Z0-9]+-\d+'
 message = "TODO/FIXME without issue reference — add ticket ID"
 
 [[rule]]
@@ -49,8 +50,8 @@ message = "Deep nesting (4+ levels) — extract method or use early return"
 id = "G007"
 severity = "info"
 name = "Magic number"
-pattern = '(?<![.\w])(?!0\b|1\b|-1\b)\d{3,}(?!\s*[*+/]?\s*[*+/]|[.]\d|\w)'
-negative_pattern = '(const|CONST|static|final|let.*=|HTTP_|STATUS_|0x[0-9a-fA-F]|#[0-9a-fA-F]|port|timeout|size|width|height|count|max|min|limit|offset|page|version|index\.crates)'
+pattern = '(?:^|[^.\w])\d{3,}(?:$|[^.\w])'
+negative_pattern = '(const|CONST|static|final|let.*=|HTTP_|STATUS_|0x[0-9a-fA-F]|#[0-9a-fA-F]|port|timeout|size|width|height|count|max|min|limit|offset|page|version|index\.crates|\d{3,}\s*[*+/]\s*\d)'
 message = "Magic number — extract to named constant"
 
 [[rule]]

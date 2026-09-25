@@ -1,6 +1,6 @@
 [package]
 name = "gl-mcp"
-version = "1.11.0"
+version = "1.11.1"
 edition = "2024"
 description = "GitLab MCP server for Claude Code — 100 tools for projects, issues, MRs, CI/CD, code review, team analytics, and spec-drift auditing"
 license = "MIT"
@@ -26,7 +26,7 @@ http = ["dep:axum", "rmcp/transport-streamable-http-server"]
 
 [dependencies]
 rmcp = { version = "0.11", features = ["transport-io"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "time", "sync", "net"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "time", "sync", "net", "fs"] }
 axum = { version = "0.8", optional = true }
 futures = "0.3"
 reqwest = { version = "0.12", features = ["json"] }
@@ -44,6 +44,7 @@ thiserror = "2"
 toml = "0.8"
 regex = "1"
 sentry = { version = "0.37", default-features = false, features = ["reqwest", "rustls"], optional = true }
+base64 = "0.22"
 
 [profile.release]
 strip = true

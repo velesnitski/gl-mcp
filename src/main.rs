@@ -9,18 +9,12 @@
 //!                                       # as the generate_ai_adoption_report MCP
 //!                                       # tool — built for cron/CI consumers.
 
-mod client;
-mod config;
-mod error;
-mod logging;
-mod params;
-mod resolver;
-mod server;
-mod teams;
-mod tools;
-
-use crate::config::Config;
-use crate::server::GlMcpServer;
+// The binary is a thin shell over the library crate. It used to re-declare every
+// module, compiling the whole server twice and hiding library dead code behind
+// bin-only warnings.
+use gl_mcp::config::Config;
+use gl_mcp::server::GlMcpServer;
+use gl_mcp::{logging, tools};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -70,7 +64,7 @@ async fn main() -> anyhow::Result<()> {
             .map(|s| s.as_str())
             .unwrap_or("");
 
-        let resolver = crate::resolver::Resolver::new(&config);
+        let resolver = gl_mcp::resolver::Resolver::new(&config);
         let client = resolver.resolve(instance, "").map_err(|e| anyhow::anyhow!("{e}"))?;
         let html = tools::adoption::generate_ai_adoption_report(
             client, group, days, tools::adoption::DORMANT_DAYS,

@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project Report — widgets — <TODAY></title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0d1117;color:#c9d1d9;padding:32px;line-height:1.6}
+h1{color:#58a6ff;margin-bottom:8px;font-size:24px}
+h2{color:#58a6ff;margin:36px 0 16px;font-size:18px;border-bottom:1px solid #21262d;padding-bottom:8px}
+.sub{color:#8b949e;margin-bottom:24px;font-size:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:16px 0}
+.card{background:#161b22;border:1px solid #21262d;border-radius:8px;padding:18px}
+.card-t{color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+.card-v{font-size:28px;font-weight:700}
+.card-s{color:#8b949e;font-size:12px;margin-top:4px}
+.g{color:#3fb950}.r{color:#f85149}.y{color:#d29922}.b{color:#58a6ff}
+table{width:100%;border-collapse:collapse;margin:12px 0}
+th{background:#161b22;color:#8b949e;text-align:left;padding:10px 14px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid #21262d}
+td{padding:10px 14px;border-bottom:1px solid #21262d;font-size:14px}
+.bar{height:8px;border-radius:4px;display:inline-block;vertical-align:middle;min-width:4px}
+.issue{background:#161b22;border:1px solid #21262d;border-radius:6px;padding:14px 18px;margin:8px 0}
+.issue b{font-weight:600}.issue .m{color:#8b949e;font-size:13px;margin-top:4px}
+.risk{border-left:3px solid #f85149}.warn{border-left:3px solid #d29922}.ok{border-left:3px solid #3fb950}
+footer{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484f58;font-size:12px}
+
+@media print {
+  body { background: #fff !important; color: #000 !important; padding: 16px !important; }
+  h1, h2 { color: #000 !important; border-color: #ccc !important; }
+  .card { border-color: #ddd !important; background: #f8f8f8 !important; }
+  .card-t { color: #666 !important; }
+  .card-v, .card-s { color: #000 !important; }
+  .g, .b { color: #1a7f37 !important; }
+  .r { color: #cf222e !important; }
+  .y { color: #9a6700 !important; }
+  .sub, .m, .issue .m { color: #666 !important; }
+  th { background: #f0f0f0 !important; color: #333 !important; border-color: #ccc !important; }
+  td { border-color: #ddd !important; color: #000 !important; }
+  .issue { background: #f8f8f8 !important; border-color: #ddd !important; }
+  .risk { border-left-color: #cf222e !important; }
+  .warn { border-left-color: #9a6700 !important; }
+  .ok { border-left-color: #1a7f37 !important; }
+  .bar { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  footer { color: #999 !important; border-color: #ddd !important; }
+  footer a { color: #666 !important; }
+  .no-print { display: none !important; }
+  @page { margin: 1cm; }
+}
+
+</style>
+</head>
+<body>
+<div class="no-print" style="position:fixed;top:16px;right:16px;z-index:100">
+<button onclick="window.print()" style="background:#238636;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">Export PDF</button>
+</div>
+
+<h1>widgets</h1>
+<div class="sub">Example service &middot; Branch: main &middot; <TODAY></div>
+<div class="grid">
+  <div class="card"><div class="card-t">Avg Quality</div><div class="card-v y">65/100</div></div>
+  <div class="card"><div class="card-t">Total Files</div><div class="card-v">42</div><div class="card-s">3 source</div></div>
+  <div class="card"><div class="card-t">Repo Size</div><div class="card-v">3.0 MB</div></div>
+  <div class="card"><div class="card-t">Contributors</div><div class="card-v">1</div></div>
+  <div class="card"><div class="card-t">Commits (14d)</div><div class="card-v">1</div></div>
+</div>
+<h2>Grade Distribution</h2>
+<div style="margin:6px 0;display:flex;align-items:center;gap:10px"><span style="width:24px;font-weight:700;color:#3fb950">A</span><span class="bar" style="width:300px;background:#3fb950"></span><span style="color:#8b949e;font-size:13px">1 (33%)</span></div>
+<div style="margin:6px 0;display:flex;align-items:center;gap:10px"><span style="width:24px;font-weight:700;color:#58a6ff">B</span><span class="bar" style="width:0px;background:#58a6ff"></span><span style="color:#8b949e;font-size:13px">0 (0%)</span></div>
+<div style="margin:6px 0;display:flex;align-items:center;gap:10px"><span style="width:24px;font-weight:700;color:#d29922">C</span><span class="bar" style="width:300px;background:#d29922"></span><span style="color:#8b949e;font-size:13px">1 (33%)</span></div>
+<div style="margin:6px 0;display:flex;align-items:center;gap:10px"><span style="width:24px;font-weight:700;color:#f85149">D</span><span class="bar" style="width:0px;background:#f85149"></span><span style="color:#8b949e;font-size:13px">0 (0%)</span></div>
+<div style="margin:6px 0;display:flex;align-items:center;gap:10px"><span style="width:24px;font-weight:700;color:#f85149">F</span><span class="bar" style="width:300px;background:#f85149"></span><span style="color:#8b949e;font-size:13px">1 (33%)</span></div>
+<h2>Language Breakdown</h2>
+<div style="margin:6px 0;display:flex;align-items:center;gap:10px"><span style="width:100px;text-align:right;font-size:13px">Rust</span><span class="bar" style="width:214px;background:#58a6ff"></span><span style="color:#8b949e;font-size:13px">71.5%</span></div>
+<div style="margin:6px 0;display:flex;align-items:center;gap:10px"><span style="width:100px;text-align:right;font-size:13px">Shell</span><span class="bar" style="width:85px;background:#3fb950"></span><span style="color:#8b949e;font-size:13px">28.5%</span></div>
+<h2>File Quality</h2>
+<div class="sub">3 of 3 source files analyzed</div>
+<table>
+<tr><th>File</th><th>Lines</th><th>Functions</th><th>Max Nesting</th><th>Violations</th><th>Score</th><th>Grade</th></tr>
+<tr><td title="src/bad.rs">src/bad.rs</td><td>120</td><td>4</td><td>2</td><td>2</td><td>30</td><td style="color:#f85149;font-weight:700">F</td></tr>
+<tr><td title="src/mid.rs">src/mid.rs</td><td>120</td><td>4</td><td>2</td><td>1</td><td>70</td><td style="color:#d29922;font-weight:700">C</td></tr>
+<tr><td title="src/good.rs">src/good.rs</td><td>120</td><td>4</td><td>2</td><td>0</td><td>95</td><td style="color:#3fb950;font-weight:700">A</td></tr>
+</table>
+<h2>Top Issues</h2>
+<div class="issue ok"><b>[G003] TODO without ticket</b><div class="m">2 occurrences across analyzed files</div></div>
+<div class="issue ok"><b>[G002] Hardcoded secret</b><div class="m">1 occurrences across analyzed files</div></div>
+<h2>Binary Files (1)</h2>
+<div class="issue warn"><b>Binary files detected in repository</b><div class="m">Consider using Git LFS for binary assets to keep repository size small.</div></div>
+<table>
+<tr><th>File Path</th></tr>
+<tr><td>assets/logo.png</td></tr>
+</table>
+<h2>Commit Quality</h2>
+<div class="sub">10 non-merge commits in the last 14 days</div>
+<table>
+<tr><th>Check</th><th>Pass</th><th>Fail</th><th>%</th></tr>
+<tr><td>Conventional format</td><td class="g">8</td><td class="r">2</td><td>80%</td></tr>
+<tr><td>Ticket reference</td><td class="g">5</td><td class="r">5</td><td class="r">50%</td></tr>
+<tr><td>Subject length &lt;72</td><td class="g">10</td><td class="r">0</td><td>100%</td></tr>
+</table>
+<h2>Failing Commit Messages (1)</h2>
+<table>
+<tr><th>SHA</th><th>Subject</th><th>Issues</th></tr>
+<tr><td><code>deadbeef</code></td><td>updated stuff</td><td class="r">no ticket reference</td></tr>
+</table>
+<h2>Contributors</h2>
+<table>
+<tr><th>Name</th><th>Commits</th><th>Additions</th><th>Deletions</th></tr>
+<tr><td>Ada</td><td>30</td><td class="g">+900</td><td class="r">-100</td></tr>
+</table>
+<h2>Recommendations</h2>
+<div class="issue risk"><b>bad.rs</b><div class="m">Grade F, 2 violations &mdash; needs cleanup</div></div>
+<div class="issue warn"><b>1 binary files in repository</b><div class="m">Move to Git LFS or generate via CI to reduce repo size.</div></div>
+
+<footer>made with &lt;3 by Alex Velesnitski &middot; gl-mcp + Claude &middot; <TODAY></footer>
+
+</body>
+</html>

@@ -1,5 +1,6 @@
 //! GitLab issue tools.
 
+use std::fmt::Write as _;
 use crate::client::GitLabClient;
 use crate::error::Result;
 use serde_json::Value;
@@ -54,7 +55,7 @@ pub async fn search_issues(
     let count = issues.len();
     let mut lines = vec![format!("**Found: {count} issues**")];
     if count >= per_page as usize {
-        lines[0].push_str(&format!(" (showing first {per_page}, more may exist)"));
+        let _ = write!(lines[0], " (showing first {per_page}, more may exist)");
     }
     lines.push(String::new());
 

@@ -123,7 +123,7 @@ message = "Function has 5+ parameters — consider using a struct or config obje
 id = "SW017"
 severity = "warning"
 name = "String interpolation in log"
-pattern = '(Logger|os_log|print)\s*\(".*\\('
+pattern = '(Logger|os_log|print)\s*\(".*\\\('
 negative_pattern = 'privacy:'
 message = "String interpolation in logging — use structured logging with privacy levels"
 

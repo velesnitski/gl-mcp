@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Adoption Report — acme — <TODAY></title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0d1117;color:#c9d1d9;padding:32px;line-height:1.6}
+h1{color:#58a6ff;margin-bottom:8px;font-size:24px}
+h2{color:#58a6ff;margin:36px 0 16px;font-size:18px;border-bottom:1px solid #21262d;padding-bottom:8px}
+.sub{color:#8b949e;margin-bottom:24px;font-size:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:16px 0}
+.card{background:#161b22;border:1px solid #21262d;border-radius:8px;padding:18px}
+.card-t{color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+.card-v{font-size:28px;font-weight:700}
+.card-s{color:#8b949e;font-size:12px;margin-top:4px}
+.g{color:#3fb950}.r{color:#f85149}.y{color:#d29922}.b{color:#58a6ff}.gr{color:#8b949e}
+.bench{background:#161b22;border:1px solid #21262d;border-radius:8px;padding:20px 22px;margin:16px 0;color:#c9d1d9}
+.bench-tier{font-size:22px;font-weight:700;margin-bottom:6px}
+.bench-line{color:#c9d1d9;font-size:14px}
+.bench-adv{color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin:14px 0 6px}
+.bench-adv-list{margin:0 0 4px 20px;font-size:14px;color:#c9d1d9}.bench-adv-list li{margin:4px 0;color:#c9d1d9}
+.bench-note{color:#8b949e;font-size:12px;margin-top:10px;max-width:900px}
+table{width:100%;border-collapse:collapse;margin:12px 0}
+th{background:#161b22;color:#8b949e;text-align:left;padding:10px 14px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid #21262d}
+td{padding:10px 14px;border-bottom:1px solid #21262d;font-size:14px}
+.issue{background:#161b22;border:1px solid #21262d;border-radius:6px;padding:14px 18px;margin:8px 0}
+.issue b{font-weight:600}.issue .m{color:#8b949e;font-size:13px;margin-top:4px}
+.risk{border-left:3px solid #f85149}.warn{border-left:3px solid #d29922}.ok{border-left:3px solid #3fb950}
+.bar{height:10px;border-radius:4px;display:inline-block;vertical-align:middle;min-width:4px}
+code{background:#21262d;padding:1px 6px;border-radius:4px;font-size:13px}
+a{color:inherit;text-decoration:none;border-bottom:1px dotted #58a6ff}
+a:hover{color:#58a6ff}
+details{margin:24px 0;color:#8b949e;font-size:13px}
+details summary{cursor:pointer;color:#58a6ff}
+details p{margin-top:8px;max-width:900px}
+footer{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484f58;font-size:12px}
+
+@media print {
+  body { background: #fff !important; color: #000 !important; padding: 16px !important; }
+  h1, h2 { color: #000 !important; border-color: #ccc !important; }
+  .card { border-color: #ddd !important; background: #f8f8f8 !important; }
+  .card-t { color: #666 !important; }
+  .card-v, .card-s { color: #000 !important; }
+  .g, .b { color: #1a7f37 !important; }
+  .r { color: #cf222e !important; }
+  .y { color: #9a6700 !important; }
+  .sub, .m, .issue .m { color: #666 !important; }
+  th { background: #f0f0f0 !important; color: #333 !important; border-color: #ccc !important; }
+  td { border-color: #ddd !important; color: #000 !important; }
+  .issue { background: #f8f8f8 !important; border-color: #ddd !important; }
+  .risk { border-left-color: #cf222e !important; }
+  .warn { border-left-color: #9a6700 !important; }
+  .ok { border-left-color: #1a7f37 !important; }
+  .bar { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  footer { color: #999 !important; border-color: #ddd !important; }
+  footer a { color: #666 !important; }
+  .no-print { display: none !important; }
+  @page { margin: 1cm; }
+}
+
+@media print{a{border-bottom:none !important;color:inherit !important}}
+</style>
+</head>
+<body>
+<div class="no-print" style="position:fixed;top:16px;right:16px;z-index:100">
+<button onclick="window.print()" style="background:#238636;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">Export PDF</button>
+</div>
+<script>
+function openTarget(){var el=document.getElementById(location.hash.slice(1));while(el){if(el.tagName==='DETAILS'){el.open=true;break}el=el.parentElement}}
+window.addEventListener('hashchange',openTarget);openTarget();
+</script>
+
+<h1>AI Adoption Report — acme</h1>
+<div class="sub">Last 30 days &middot; <TODAY> &middot; 6 active repos scanned, <a href="#dormant">2 dormant skipped</a></div>
+
+<!-- Summary Cards -->
+<div class="grid">
+  <div class="card"><div class="card-t">Developer Adoption</div><div class="card-v g"><a href="#by-team">60%</a></div><div class="card-s">3/5 devs with AI-assisted commits</div></div>
+  <div class="card"><div class="card-t">AI Commit Share</div><div class="card-v g"><a href="#methodology">30%</a></div><div class="card-s">52/173 commits carry AI trailers</div></div>
+  <div class="card"><div class="card-t">Active Repos</div><div class="card-v b"><a href="#by-team">6</a></div><div class="card-s"><a href="#dormant">2 dormant skipped</a></div></div>
+  <div class="card"><div class="card-t">AI-Active</div><div class="card-v g"><a href="#by-team">4</a></div><div class="card-s">67% of active &middot; config or usage evidence</div></div>
+  <div class="card"><div class="card-t">Configured (L1+)</div><div class="card-v b"><a href="#adopting">3</a></div><div class="card-s">50% of active &middot; marker-based</div></div>
+  <div class="card"><div class="card-t">In-flight</div><div class="card-v y"><a href="#in-flight">1</a></div><div class="card-s">branch signals only</div></div>
+  <div class="card"><div class="card-t">Scaling (L3)</div><div class="card-v g"><a href="#adopting">1</a></div><div class="card-s">agents + active usage</div></div>
+  <div class="card"><div class="card-t">Attribution Rate</div><div class="card-v g"><a href="#methodology">50%</a></div><div class="card-s">usage visible via commit trailers</div></div>
+</div>
+<h2 id="benchmark">Industry Benchmark</h2>
+<div class="bench">
+  <div class="bench-tier g">Advanced</div>
+  <div class="bench-line">Developer adoption <b>60%</b> &middot; Config coverage <b>partial</b> (3/6 repos, 50%) &middot; Depth <b>agentic (subagents in use)</b></div>
+  <div class="bench-adv">To advance:</div>
+  <ol class="bench-adv-list">
+    <li>1 repo(s) have AI usage but no config — add a CLAUDE.md (or the org template). Cheapest tier win, and it makes the usage visible.</li>
+    <li>Attribution is lost at merge (squash-hidden usage) — disable trailer-stripping squash or standardize on MR-description attribution, so the dashboard stops under-reading real usage.</li>
+    <li>Activate 1 more developer(s) with AI to reach the Leading band (75%).</li>
+  </ol>
+  <div class="bench-note">Reference bands (directional, not a cited statistic): Nascent &lt;15% · Emerging 15–29% · Mainstream 30–49% · Advanced 50–74% · Leading ≥75% developer adoption. The grade is a floor — squash-hidden and local-only usage sit above it.</div>
+  <div class="bench-note">Benchmarks &amp; practices: <a href="https://www.anthropic.com/engineering/claude-code-best-practices">Claude Code best practices</a> &middot; <a href="https://agents.md/">AGENTS.md</a> &middot; <a href="https://github.com/humanlayer/12-factor-agents">12-Factor Agents</a> &middot; <a href="https://newsletter.pragmaticengineer.com/p/ai-tooling-2026">Pragmatic Engineer: AI tooling survey</a> &middot; <a href="https://dora.dev/dora-report-2025/">DORA 2025: State of AI-assisted development</a></div>
+</div>
+<h2>Adoption Levels</h2>
+<div style="margin:6px 0;display:flex;align-items:center;gap:10px"><span style="width:110px;font-weight:700;color:#3fb950">L3 Scaling</span><span class="bar" style="width:150px;background:#3fb950"></span><span style="color:#8b949e;font-size:13px"><a href="#adopting">1 (17%)</a></span></div>
+<div style="margin:6px 0;display:flex;align-items:center;gap:10px"><span style="width:110px;font-weight:700;color:#58a6ff">L2 Practicing</span><span class="bar" style="width:150px;background:#58a6ff"></span><span style="color:#8b949e;font-size:13px"><a href="#adopting">1 (17%)</a></span></div>
+<div style="margin:6px 0;display:flex;align-items:center;gap:10px"><span style="width:110px;font-weight:700;color:#d29922">L1 Exploring</span><span class="bar" style="width:150px;background:#d29922"></span><span style="color:#8b949e;font-size:13px"><a href="#adopting">1 (17%)</a></span></div>
+<div style="margin:6px 0;display:flex;align-items:center;gap:10px"><span style="width:110px;font-weight:700;color:#8b949e">In-flight</span><span class="bar" style="width:150px;background:#8b949e"></span><span style="color:#8b949e;font-size:13px"><a href="#in-flight">1 (17%)</a></span></div>
+<div style="margin:6px 0;display:flex;align-items:center;gap:10px"><span style="width:110px;font-weight:700;color:#f85149">L0 None</span><span class="bar" style="width:300px;background:#f85149"></span><span style="color:#8b949e;font-size:13px"><a href="#by-team">2 (33%)</a></span></div>
+<h2 id="by-team">By Team</h2>
+<table>
+<tr><th>Team</th><th>Repos</th><th>Devs (AI/all)</th><th>AI-Active</th><th>Configured</th><th>Best Level</th><th>Trajectory</th><th>AI-visible Usage</th><th>Dormant</th></tr>
+<tr><td><b><a href="https://git.example.com/acme/core">core</a></b></td><td>2</td><td>2/3</td><td>2</td><td><a href="#adopting">2</a></td><td class="g"><b>L3</b></td><td><span class="g">1&uarr;</span> <span class="r">1&darr;</span></td><td>20%</td><td><a href="#dormant">1</a></td></tr>
+<tr><td><b><a href="https://git.example.com/acme/data">data</a></b></td><td>2</td><td>1/2</td><td><span class="g"><b>1</b></span></td><td>0</td><td class="r"><b>L0</b></td><td>&ndash;</td><td>&ndash;</td><td>0</td></tr>
+<tr><td><b><a href="https://git.example.com/acme/ops">ops</a></b></td><td>0</td><td>&ndash;</td><td>0</td><td>0</td><td class="r"><b>L0</b></td><td>&ndash;</td><td>&ndash;</td><td><a href="#dormant">1</a></td></tr>
+<tr><td><b><a href="https://git.example.com/acme/web">web</a></b></td><td>2</td><td>0/1</td><td>1</td><td><a href="#adopting">1</a></td><td class="y"><b>L1</b></td><td><span class="g">1&uarr;</span> <span class="gr">1&rarr;</span></td><td>0%</td><td>0</td></tr>
+</table>
+<h2 id="adopting">Adopting Repos</h2>
+<table>
+<tr><th>Repo</th><th>Level</th><th>Traj</th><th>Markers</th><th>Usage</th><th>Flags</th></tr>
+<tr><td><b><a href="https://git.example.com/acme/core/api">core/api</a></b></td><td class="g"><b>L3</b></td><td><span class="g">&uarr;</span></td><td><a href="https://git.example.com/acme/core/api/-/blob/main/CLAUDE.md">CLAUDE.md</a>, <a href="https://git.example.com/acme/core/api/-/tree/main/.claude/agents">agents(3)</a>, <a href="https://git.example.com/acme/core/api/-/tree/main/.claude/skills">skills(2)</a>, <a href="https://git.example.com/acme/core/api/-/tree/main/.claude/commands">commands</a>, <a href="https://git.example.com/acme/core/api/-/blob/main/.claude/settings.json">settings</a>, <a href="https://git.example.com/acme/core/api/-/tree/main/.claude/hooks">hooks</a>, <a href="https://git.example.com/acme/core/api/-/blob/main/.mcp.json">.mcp.json</a>, <a href="https://git.example.com/acme/core/api/-/tree/main/.tasks">tasks</a>, <a href="https://git.example.com/acme/core/api/-/tree/main/docs/adr">ADR active(2)</a></td><td><a href="https://git.example.com/acme/core/api/-/commits/main">40% (40/100)</a> <a href="https://git.example.com/acme/core/api/-/merge_requests?scope=all&amp;state=merged">+4 MRs</a> <a href="https://git.example.com/acme/core/api/-/commits/main/.tasks">+5 task commits</a><div class="m">ada (30), lin (10) <span class="gr">&middot; Claude</span></div></td><td>&ndash;</td></tr>
+<tr><td><b><a href="https://git.example.com/acme/core/worker">core/worker</a></b></td><td class="b"><b>L2</b></td><td><span class="r">&darr;</span></td><td><a href="https://git.example.com/acme/core/worker/-/blob/main/CLAUDE.md">CLAUDE.md</a>, <a href="https://git.example.com/acme/core/worker/-/tree/main/.claude/agents">agents(1)</a></td><td><a href="https://git.example.com/acme/core/worker/-/commits/main">0% (0/20)</a></td><td>setup unused, stale config (30+ commits behind)</td></tr>
+<tr><td><b><a href="https://git.example.com/acme/web/site">web/site</a></b></td><td class="y"><b>L1</b></td><td><span class="gr">&rarr;</span></td><td><a href="https://git.example.com/acme/web/site/-/blob/main/AGENTS.md">AGENTS.md</a>, cursor, <a href="https://git.example.com/acme/web/site/-/tree/main/.tasks">tasks</a></td><td><a href="https://git.example.com/acme/web/site/-/commits/main">0% (0/15)</a> <a href="https://git.example.com/acme/web/site/-/commits/main/.tasks">+2 task commits</a></td><td>no attribution</td></tr>
+</table>
+<h2 id="in-flight">In-flight (adoption pipeline)</h2>
+<p class="sub">AI work happening on feature branches — no config on the default branch yet.</p>
+<div class="issue warn"><b><a href="https://git.example.com/acme/web/app">web/app</a></b> &mdash; branch <code><a href="https://git.example.com/acme/web/app/-/tree/feature%2Fclaude-setup">feature/claude-setup</a></code><div class="m">Last activity 2026-09-01T00:00:00Z &middot; adoption pipeline: AI work in flight, expect config to land on default.</div></div>
+<h2 id="invisible">Invisible usage (no config)</h2>
+<p class="sub">Devs adopted Claude on their own &mdash; the repo gives it no context. Cheapest win: add a CLAUDE.md.</p>
+<table>
+<tr><th>Repo</th><th>AI Commits</th><th>Who</th><th>Attribution</th></tr>
+<tr><td><b><a href="https://git.example.com/acme/data/etl">data/etl</a></b></td><td>40% (12/30)</td><td>joe (12) <span class="gr">&middot; Copilot</span></td><td><span class="y">squash-hidden (branches only)</span></td></tr>
+</table>
+<h2 id="flags">Quality Flags</h2>
+<div class="issue risk"><b><a href="https://git.example.com/acme/core/worker">acme/core/worker</a> &mdash; setup unused</b><div class="m">.claude/agents present, 0 AI commits in 30d.</div></div>
+<div class="issue risk"><b><a href="https://git.example.com/acme/core/worker">acme/core/worker</a> &mdash; stale config</b><div class="m">CLAUDE.md last touched 2025-11-01 but 20+ commits since &mdash; refresh it.</div></div>
+<div class="issue warn"><b><a href="https://git.example.com/acme/web/site">acme/web/site</a> &mdash; no attribution</b><div class="m">2 .tasks / 0 .claude commits in 30d but 0 AI-trailed commits &mdash; enable Co-Authored-By attribution for measurable adoption.</div></div>
+<div class="issue warn"><b><a href="https://git.example.com/acme/data/etl">acme/data/etl</a> &mdash; usage without config</b><div class="m">40% AI commits (joe) but no CLAUDE.md &mdash; add one.</div></div>
+<div class="issue warn"><b><a href="https://git.example.com/acme/data/etl">acme/data/etl</a> &mdash; squash-hidden usage</b><div class="m">12 AI-trailed commits (joe) on feature branches, 0 on default &mdash; squash strips attribution at merge.</div></div>
+<h2>Recommendations</h2>
+<div class="issue warn"><b>data team: 0 adoption</b><div class="m">No markers across 2 active repos &mdash; pilot candidate: <code><a href="https://git.example.com/acme/data/etl">acme/data/etl</a></code>.</div></div>
+<div class="issue warn"><b>1 repo(s) with AI commits but no CLAUDE.md</b><div class="m">Quick win: add one.</div></div>
+<div class="issue warn"><b>1 repo(s) with agent activity but no commit attribution</b><div class="m">Standardize Co-Authored-By trailers to measure adoption.</div></div>
+<div class="issue warn"><b>1 repo(s) lose attribution at merge</b><div class="m">Check squash settings or rely on MR descriptions.</div></div>
+<div class="issue warn"><b>1 repo(s) with AI work on feature branches</b><div class="m">Adoption pipeline &mdash; support these teams so config lands on default.</div></div>
+<details id="dormant"><summary>Dormant repos (2) &mdash; archive candidates</summary>
+<p>Inactive 90+ days and not archived &mdash; consider archiving to reduce noise.</p>
+<table>
+<tr><th>Repo</th><th>Team</th><th>Last Activity</th></tr>
+<tr><td><b><a href="https://git.example.com/acme/ops/old-infra">ops/old-infra</a></b></td><td>ops</td><td>2024-06-01T00:00:00Z</td></tr>
+<tr><td><b><a href="https://git.example.com/acme/core/legacy">core/legacy</a></b></td><td>core</td><td>2025-01-01T00:00:00Z</td></tr>
+</table>
+</details>
+<details id="methodology"><summary>Methodology</summary><p><b>Developer adoption</b> is the people-based industry headline: distinct non-bot commit authors with at least one AI-trailed commit in the window, divided by distinct non-bot commit authors overall (union across repos and teams &mdash; a developer active in several repos counts once). Automation identities (<code>[bot]</code>, renovate, dependabot, CI) are excluded from both sides. <b>AI commit share</b> is commit-weighted: total AI-trailed commits / total commits across all scanned repos &mdash; unlike the per-repo averages it cannot be skewed by tiny repos. Both are <i>telemetry lower bounds</i>: trailers are the only visible signal, and squash-merges or disabled attribution hide real usage. <b>AI-Active</b> counts repos with config markers <i>or</i> any usage evidence &mdash; an AI-trailed commit on any branch (squash-hidden feature-branch usage counts), recent <code>.tasks</code> activity, or an AI-marked MR &mdash; so real adoption is not gated on config presence; <b>Configured</b> is the marker-based count (L1+). Levels: <b>L0</b> no AI tooling markers; <b>L1 Exploring</b> any config marker (CLAUDE.md, AGENTS.md, .cursorrules, .mcp.json); <b>L2 Practicing</b> CLAUDE.md plus shared workflow assets (commands, settings, MCP config, hooks, or an ADR log) &mdash; or agents configured but not yet used; <b>L3 Scaling</b> agents plus measurable usage (&ge;10% AI-trailed commits, recent <code>.tasks</code> activity, or AI-marked MR descriptions). Usage is measured across <i>all</i> branches over the last 30 days because squash-merge strips commit trailers from the default branch; MR descriptions and <code>.tasks</code>/<code>.claude</code> path activity count as first-class evidence. <b>In-flight</b> repos have AI-named feature branches but no config merged yet. Trajectory: &uarr; actively building (live AI branches or recent config/ADR maintenance), &rarr; steady use, &darr; markers present but unused and unmaintained. Attribution rate = share of adopting repos with usage evidence whose usage is visible via Co-Authored-By trailers. &ldquo;Who&rdquo; names the commit authors of trailed commits (top 3) and the AI tool parsed from the trailer itself; sample commits link to the evidence. Repos with no activity in 90 days are skipped as dormant and listed as archive candidates.</p></details>
+
+<footer>gl-mcp v<VERSION> &middot; <TODAY></footer>
+
+</body>
+</html>

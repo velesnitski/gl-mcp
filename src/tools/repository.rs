@@ -1,7 +1,7 @@
 //! GitLab repository tools: search code, tree, languages, compare, tags, stats.
 
 use crate::client::GitLabClient;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, ResultExt};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use crate::tools::commits::detect_language;
@@ -61,7 +61,7 @@ async fn search_project_blobs(
     client
         .get::<Vec<Value>>(&format!("/projects/{encoded}/search"), &params)
         .await
-        .unwrap_or_default()
+        .or_default_logged()
 }
 
 /// Search code across every project in a group.
@@ -289,7 +289,7 @@ pub async fn get_languages(
         .iter()
         .filter_map(|(k, v)| v.as_f64().map(|pct| (k, pct)))
         .collect();
-    entries.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    entries.sort_by(|a, b| b.1.total_cmp(&a.1));
 
     let mut lines = vec![format!("**{project_id} — Languages**\n")];
     for (lang, pct) in &entries {
@@ -471,7 +471,7 @@ pub async fn list_tags(
         let msg = t["message"].as_str().unwrap_or("");
         let sha = t["commit"]["short_id"].as_str().unwrap_or("?");
         let date = t["commit"]["created_at"].as_str().unwrap_or("?");
-        let date_short = if date.len() > 10 { &date[..10] } else { date };
+        let date_short = date.get(..10).unwrap_or(date);
 
         let msg_str = if msg.is_empty() { String::new() } else { format!(" — {msg}") };
         lines.push(format!("- **{name}** `{sha}` ({date_short}){msg_str}"));
@@ -611,7 +611,7 @@ pub async fn update_file(
             .post(&format!("/projects/{encoded_project}/repository/commits"), &payload)
             .await?;
         let sha = result["id"].as_str().unwrap_or("?");
-        let short_sha = if sha.len() > 8 { &sha[..8] } else { sha };
+        let short_sha = sha.get(..8).unwrap_or(sha);
         let web_url = result["web_url"].as_str().unwrap_or("");
 
         let mut lines = vec![
@@ -677,7 +677,7 @@ pub async fn update_file(
         .await?;
 
     let sha = result["id"].as_str().unwrap_or("?");
-    let short_sha = if sha.len() > 8 { &sha[..8] } else { sha };
+    let short_sha = sha.get(..8).unwrap_or(sha);
     let web_url = result["web_url"].as_str().unwrap_or("");
 
     let mut lines = vec![
@@ -851,11 +851,11 @@ pub async fn list_environments(
             "no deployments".to_string()
         } else {
             let sha = deploy["sha"].as_str().unwrap_or("?");
-            let short_sha = if sha.len() > 8 { &sha[..8] } else { sha };
+            let short_sha = sha.get(..8).unwrap_or(sha);
             let ref_name = deploy["ref"].as_str().unwrap_or("?");
             let status = deploy["status"].as_str().unwrap_or("?");
             let created = deploy["created_at"].as_str().unwrap_or("?");
-            let date_short = if created.len() > 16 { &created[..16] } else { created };
+            let date_short = created.get(..16).unwrap_or(created);
             let deployer = deploy["user"]["username"].as_str().unwrap_or("?");
             format!("`{short_sha}` on `{ref_name}` [{status}] by @{deployer} ({date_short})")
         };
@@ -964,6 +964,19 @@ pub async fn get_approval_rules(
     Ok(lines.join("\n"))
 }
 
+/// Human-readable byte size in binary units (1 KB = 1024 B), one decimal place.
+pub(crate) fn format_size(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+    match bytes {
+        b if b >= GB => format!("{:.1} GB", b as f64 / GB as f64),
+        b if b >= MB => format!("{:.1} MB", b as f64 / MB as f64),
+        b if b >= KB => format!("{:.1} KB", b as f64 / KB as f64),
+        b => format!("{b} B"),
+    }
+}
+
 /// Get project statistics: file counts by type, languages, binary files, repo size.
 pub async fn get_project_stats(
     client: &GitLabClient,
@@ -1062,19 +1075,6 @@ pub async fn get_project_stats(
         .await
         .unwrap_or(Value::Object(serde_json::Map::new()));
 
-    // Format sizes
-    fn format_size(bytes: u64) -> String {
-        if bytes >= 1_073_741_824 {
-            format!("{:.1} GB", bytes as f64 / 1_073_741_824.0)
-        } else if bytes >= 1_048_576 {
-            format!("{:.1} MB", bytes as f64 / 1_048_576.0)
-        } else if bytes >= 1024 {
-            format!("{:.1} KB", bytes as f64 / 1024.0)
-        } else {
-            format!("{} B", bytes)
-        }
-    }
-
     let mut out = vec![
         format!("## Project Stats: {project_name}\n"),
         "| Metric | Value |".to_string(),
@@ -1096,7 +1096,7 @@ pub async fn get_project_stats(
                 .iter()
                 .filter_map(|(k, v)| v.as_f64().map(|pct| (k, pct)))
                 .collect();
-            lang_entries.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            lang_entries.sort_by(|a, b| b.1.total_cmp(&a.1));
 
             let lang_str: String = lang_entries
                 .iter()
@@ -1174,7 +1174,7 @@ pub async fn get_deploy_frequency(
     for d in &deployments {
         let env_name = d["environment"]["name"].as_str().unwrap_or("?").to_string();
         let created = d["created_at"].as_str().unwrap_or("");
-        let day = if created.len() >= 10 { &created[..10] } else { created };
+        let day = created.get(..10).unwrap_or(created);
         let deployer = d["user"]["username"].as_str().unwrap_or("?").to_string();
 
         *by_env.entry(env_name).or_default().entry(day.to_string()).or_default() += 1;

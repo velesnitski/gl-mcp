@@ -1,7 +1,8 @@
 //! GitLab merge request tools.
 
+use std::fmt::Write as _;
 use crate::client::GitLabClient;
-use crate::error::Result;
+use crate::error::{Error, Result, ResultExt};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -161,7 +162,7 @@ pub async fn list_merge_requests(
         };
 
         let created = mr["created_at"].as_str().unwrap_or("?");
-        let created_short = if created.len() > 10 { &created[..10] } else { created };
+        let created_short = created.get(..10).unwrap_or(created);
 
         let pipeline_status = mr["head_pipeline"]["status"].as_str().or(mr["pipeline"]["status"].as_str()).unwrap_or("none");
         let ci = if pipeline_status != "none" { format!(" [CI: {pipeline_status}]") } else { String::new() };
@@ -258,7 +259,7 @@ pub async fn create_merge_request(
     let branches_path = format!("/projects/{enc}/repository/branches/{}", urlencoding::encode(source_branch));
     let branch_check: std::result::Result<Value, _> = client.get(&branches_path, &[]).await;
     if branch_check.is_err() {
-        return Ok(format!("**Error:** Source branch `{source_branch}` not found in project `{project_id}`."));
+        return Err(Error::user_input(format!("Source branch `{source_branch}` not found in project `{project_id}`.")));
     }
 
     // 3. Check for existing open MR with same source→target
@@ -604,11 +605,7 @@ pub async fn get_mr_turnaround(
 
     let total: f64 = stats.iter().map(|s| s.hours_to_merge).sum();
     let avg = total / stats.len() as f64;
-    let median = {
-        let mut sorted: Vec<f64> = stats.iter().map(|s| s.hours_to_merge).collect();
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        sorted[sorted.len() / 2]
-    };
+    let median = crate::tools::stats::median(&mut stats.iter().map(|s| s.hours_to_merge).collect::<Vec<_>>());
     let max = stats.iter().map(|s| s.hours_to_merge).fold(0.0f64, f64::max);
     let min = stats.iter().map(|s| s.hours_to_merge).fold(f64::MAX, f64::min);
 
@@ -646,7 +643,7 @@ pub async fn get_mr_turnaround(
         lines.push(format!("- @{merger}: {} MRs merged, avg {:.1}h", times.len(), merger_avg));
     }
 
-    stats.sort_by(|a, b| b.hours_to_merge.partial_cmp(&a.hours_to_merge).unwrap());
+    stats.sort_by(|a, b| b.hours_to_merge.total_cmp(&a.hours_to_merge));
     lines.push(String::new());
     lines.push("**Slowest MRs:**".to_string());
     for s in stats.iter().take(5) {
@@ -837,7 +834,7 @@ pub async fn get_mr_review_depth(
         // Fetch discussions count from API
         let proj_path = mr["source_project_id"].as_u64().unwrap_or(0);
         let disc_path = format!("/projects/{}/merge_requests/{}/discussions", proj_path, iid);
-        let discussions: Vec<Value> = client.get(&disc_path, &[("per_page", "100")]).await.unwrap_or_default();
+        let discussions: Vec<Value> = client.get(&disc_path, &[("per_page", "100")]).await.or_default_logged();
         let non_system = discussions.iter().filter(|d| {
             d["notes"].as_array()
                 .map(|notes| notes.iter().any(|n| !n["system"].as_bool().unwrap_or(true)))
@@ -1046,7 +1043,7 @@ pub async fn get_mr_timeline(
 
         // Fetch notes to find first non-author action
         let notes_path = format!("/projects/{}/merge_requests/{}/notes", project_id_num, iid);
-        let notes: Vec<Value> = client.get(&notes_path, &[("per_page", "50"), ("sort", "asc")]).await.unwrap_or_default();
+        let notes: Vec<Value> = client.get(&notes_path, &[("per_page", "50"), ("sort", "asc")]).await.or_default_logged();
 
         let first_review_ts = notes.iter().find_map(|n| {
             let note_author = n["author"]["username"].as_str().unwrap_or("");
@@ -1102,7 +1099,7 @@ pub async fn get_mr_timeline(
     ];
 
     // Longest queue times
-    timelines.sort_by(|a, b| b.queue_hours.partial_cmp(&a.queue_hours).unwrap());
+    timelines.sort_by(|a, b| b.queue_hours.total_cmp(&a.queue_hours));
     lines.push(String::new());
     lines.push("**Longest queue (waiting for first review):**".to_string());
     for t in timelines.iter().take(5) {
@@ -1138,7 +1135,7 @@ pub async fn get_org_mr_dashboard(
         let mrs: Vec<Value> = client.get(&path, &[
             ("state", "opened"),
             ("per_page", "100"),
-        ]).await.unwrap_or_default();
+        ]).await.or_default_logged();
 
         let mut gs = GroupStats {
             name: group_id.to_string(),
@@ -1405,7 +1402,7 @@ pub async fn update_merge_request(
     // Echo the resulting assignee so success is visible, not assumed.
     if !assignee.is_empty() {
         match mr["assignee"]["username"].as_str() {
-            Some(u) => out.push_str(&format!("\nAssignee: @{u}")),
+            Some(u) => { let _ = write!(out, "\nAssignee: @{u}"); },
             None => out.push_str("\nAssignee: (none)"),
         }
     }
@@ -1491,7 +1488,7 @@ pub async fn get_mr_discussions(
             *authors.entry(author.to_string()).or_default() += 1;
             let body = note["body"].as_str().unwrap_or("");
             let created = note["created_at"].as_str().unwrap_or("?");
-            let date_short = if created.len() > 10 { &created[..10] } else { created };
+            let date_short = created.get(..10).unwrap_or(created);
 
             if i == 0 {
                 lines.push(format!("### Discussion by @{author} ({date_short}){is_resolved}"));
@@ -1588,7 +1585,7 @@ pub async fn get_reviewer_velocity(
                 ("per_page", "100"),
                 ("order_by", "created_at"),
                 ("sort", "asc"),
-            ]).await.unwrap_or_default();
+            ]).await.or_default_logged();
 
             // For each reviewer, find their first non-system note timestamp
             let mut first_responses: Vec<(String, f64)> = Vec::new();
@@ -1632,14 +1629,6 @@ pub async fn get_reviewer_velocity(
         ));
     }
 
-    fn median(values: &mut [f64]) -> f64 {
-        values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let n = values.len();
-        if n == 0 { 0.0 }
-        else if n % 2 == 1 { values[n / 2] }
-        else { (values[n / 2 - 1] + values[n / 2]) / 2.0 }
-    }
-
     fn fmt_hours(h: f64) -> String {
         if h >= 24.0 {
             format!("{:.1}d", h / 24.0)
@@ -1654,11 +1643,11 @@ pub async fn get_reviewer_velocity(
         .map(|(rev, mut times)| {
             let count = times.len();
             let avg = times.iter().sum::<f64>() / count as f64;
-            let med = median(&mut times);
+            let med = crate::tools::stats::median(&mut times);
             (rev, count, avg, med)
         })
         .collect();
-    entries.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+    entries.sort_by(|a, b| a.2.total_cmp(&b.2));
 
     let scope = if !group_id.is_empty() { group_id }
         else if !project_id.is_empty() { project_id }

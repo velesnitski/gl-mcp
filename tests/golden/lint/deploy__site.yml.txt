@@ -1,0 +1,24 @@
+## deploy/site.yml
+
+**Language:** YAML/Ansible | **Branch:** main
+
+### Metrics
+
+| Metric | Value | Assessment |
+|--------|-------|------------|
+| Total lines | 3 | OK |
+| Code lines | 3 | |
+| Comments | 0 (0%) | No comments |
+| Blank lines | 0 | |
+| Functions | 0 | OK |
+| Imports | 0 | OK |
+| Max nesting depth | 1 (line 3) | OK |
+
+### Lint Violations (2)
+
+- **[ANS001]** Plain text password: 1 occurrences
+- **[ANS002]** Missing no_log on sensitive task: 1 occurrences
+
+### Quality Score: 98/100 (Grade A)
+---
+total=3 functions=0 max_nesting=1 violations=2 score=98 grade=A details=[("ANS001", "Plain text password"), ("ANS002", "Missing no_log on sensitive task")]

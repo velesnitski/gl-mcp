@@ -8,7 +8,7 @@
 //! credentials it finds into a logged transcript has reproduced the bug it hunts.
 
 use crate::client::GitLabClient;
-use crate::error::Result;
+use crate::error::{Result, ResultExt};
 use serde_json::Value;
 
 /// Key substrings that mark a variable as holding a secret.
@@ -31,9 +31,25 @@ fn is_structurally_unmaskable(key: &str) -> bool {
         .any(|m| k.contains(m))
 }
 
+/// Finding severity. Declaration order is report order: `Ord` puts High first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Severity {
+    High,
+    Medium,
+}
+
+impl std::fmt::Display for Severity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::High => "HIGH",
+            Self::Medium => "MEDIUM",
+        })
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Finding {
-    pub severity: &'static str,
+    pub severity: Severity,
     pub code: &'static str,
     pub where_: String,
     pub detail: String,
@@ -59,7 +75,7 @@ pub(crate) fn audit_variables(project: &str, vars: &[Value]) -> Vec<Finding> {
             );
             if on {
                 out.push(Finding {
-                    severity: "HIGH",
+                    severity: Severity::High,
                     code: "CI-DEBUG",
                     where_: format!("{project} (scope={scope})"),
                     detail: "CI_DEBUG_TRACE is enabled — GitLab prints every variable, including masked ones, into the job log.".to_string(),
@@ -77,7 +93,7 @@ pub(crate) fn audit_variables(project: &str, vars: &[Value]) -> Vec<Finding> {
         }
         let unmaskable = is_structurally_unmaskable(key);
         out.push(Finding {
-            severity: if unmaskable { "HIGH" } else { "MEDIUM" },
+            severity: if unmaskable { Severity::High } else { Severity::Medium },
             code: "VAR-UNMASKED",
             where_: format!("{project} → {key} (scope={scope})"),
             detail: if unmaskable {
@@ -121,7 +137,7 @@ pub(crate) fn audit_ci_file(project: &str, path: &str, content: &str) -> Vec<Fin
                 let floating = img.ends_with(":latest") || !img.rsplit('/').next().unwrap_or("").contains(':');
                 if floating && !img.contains('@') {
                     out.push(Finding {
-                        severity: "MEDIUM",
+                        severity: Severity::Medium,
                         code: "IMG-FLOATING",
                         where_: format!("{project} → {path}:{n}"),
                         detail: format!("`{img}` is a floating tag — a rebuild silently changes the build environment."),
@@ -137,7 +153,7 @@ pub(crate) fn audit_ci_file(project: &str, path: &str, content: &str) -> Vec<Fin
         let latest_release = lower.contains("releases/latest/download");
         if piped_to_shell || latest_release {
             out.push(Finding {
-                severity: "HIGH",
+                severity: Severity::High,
                 code: "FETCH-UNPINNED",
                 where_: format!("{project} → {path}:{n}"),
                 detail: if latest_release {
@@ -160,7 +176,7 @@ async fn audit_project(client: &GitLabClient, path: &str) -> Vec<Finding> {
     let vars: Vec<Value> = client
         .get(&format!("/projects/{enc}/variables"), &[("per_page", "100")])
         .await
-        .unwrap_or_default();
+        .or_default_logged();
     findings.extend(audit_variables(path, &vars));
 
     // The CI definition is read raw; a missing file simply means nothing to check.
@@ -221,30 +237,39 @@ pub async fn audit_ci_security(
         }
     }
 
-    let rank = |s: &str| match s {
-        "HIGH" => 0,
-        "MEDIUM" => 1,
-        _ => 2,
-    };
-    all.sort_by_key(|f| (rank(f.severity), f.code, f.where_.clone()));
+    Ok(render_audit_report(&scope_label, targets.len(), total_repos, all))
+}
+
+/// Render the audit report from gathered findings.
+///
+/// Pure, so ordering, counts and the partial-coverage warning — none of which a
+/// network-bound test can pin — are verified directly.
+pub(crate) fn render_audit_report(
+    scope_label: &str,
+    audited: usize,
+    total_repos: usize,
+    findings: Vec<Finding>,
+) -> String {
+    let mut all = findings;
+    all.sort_by(|a, b| (a.severity, a.code, &a.where_).cmp(&(b.severity, b.code, &b.where_)));
 
     let (high, med) = (
-        all.iter().filter(|f| f.severity == "HIGH").count(),
-        all.iter().filter(|f| f.severity == "MEDIUM").count(),
+        all.iter().filter(|f| f.severity == Severity::High).count(),
+        all.iter().filter(|f| f.severity == Severity::Medium).count(),
     );
     let mut out = vec![
         format!("# CI security audit — {scope_label}"),
         String::new(),
         format!(
             "**{} project(s) audited** of {total_repos} · **{high} HIGH · {med} MEDIUM**",
-            targets.len()
+            audited
         ),
         String::new(),
     ];
-    if targets.len() < total_repos {
+    if audited < total_repos {
         out.push(format!(
             "> ⚠️ Partial: {} of {total_repos} projects audited. Raise `max_projects` for full coverage — a clean result over a subset is not a clean group.\n",
-            targets.len()
+            audited
         ));
     }
 
@@ -266,13 +291,105 @@ pub async fn audit_ci_security(
         "_Scope: CI configuration only. This cannot tell whether a secret was actually printed — only that nothing would stop it. Job-log contents are not scanned. Variable **values are never read or reported**._"
             .to_string(),
     );
-    Ok(out.join("\n"))
+    out.join("\n")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{audit_ci_file, audit_variables};
+    use super::{audit_ci_file, audit_variables, render_audit_report, Finding, Severity};
     use serde_json::json;
+
+    fn codes_at(f: &[Finding], code: &str) -> Vec<String> {
+        f.iter().filter(|x| x.code == code).map(|x| x.where_.clone()).collect()
+    }
+
+    #[test]
+    fn floating_detection_names_the_exact_lines_not_just_a_count() {
+        // A count-only assertion let a mutant through: flagging the pinned image
+        // instead of the untagged one keeps the total at two.
+        let ci = "\
+stages: [build]
+job:
+  image: registry.example.com/build/runtime:latest
+  image: node:20.11.1
+  image: registry.example.com/base
+  image: registry.example.com/base@sha256:abc123
+  image: $CI_REGISTRY_IMAGE
+  image: \"\"
+";
+        let f = audit_ci_file("g/p", ".gitlab-ci.yml", ci);
+        assert_eq!(
+            codes_at(&f, "IMG-FLOATING"),
+            vec!["g/p → .gitlab-ci.yml:3", "g/p → .gitlab-ci.yml:5"],
+            "line 3 (:latest) and line 5 (untagged) — never the pinned or digest ones"
+        );
+        assert!(f[0].detail.contains("runtime:latest"));
+    }
+
+    #[test]
+    fn every_pipe_to_shell_spelling_is_caught_individually() {
+        for (i, line) in [
+            "curl -fsSL https://example.com/i.sh | sh",
+            "curl -fsSL https://example.com/i.sh |sh",
+            "wget -qO- https://example.com/i.sh | bash",
+            "wget -qO- https://example.com/i.sh |bash",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let f = audit_ci_file("g/p", "ci.yml", line);
+            assert_eq!(codes_at(&f, "FETCH-UNPINNED").len(), 1, "case {i}: {line}");
+            assert!(f[0].detail.contains("Pipes a remote download"), "case {i}");
+        }
+        // Downloading without piping into a shell, or piping something else, is fine.
+        assert!(audit_ci_file("g/p", "ci.yml", "curl -o tool https://example.com/v2.3.1/tool").is_empty());
+        assert!(audit_ci_file("g/p", "ci.yml", "cat notes | sh").is_empty(), "no download involved");
+        // The latest-release form carries its own explanation.
+        let rel = audit_ci_file("g/p", "ci.yml", "curl -L https://example.com/releases/latest/download/x -o x");
+        assert!(rel[0].detail.contains("latest"));
+    }
+
+    fn finding(sev: Severity, code: &'static str, at: &str) -> Finding {
+        Finding { severity: sev, code, where_: at.into(), detail: "d".into(), fix: "f".into() }
+    }
+
+    #[test]
+    fn the_report_orders_by_severity_and_counts_each_class() {
+        let out = render_audit_report(
+            "group `g`",
+            3,
+            3,
+            vec![
+                finding(Severity::Medium, "IMG-FLOATING", "g/b"),
+                finding(Severity::High, "VAR-UNMASKED", "g/c"),
+                finding(Severity::Medium, "IMG-FLOATING", "g/a"),
+                finding(Severity::High, "FETCH-UNPINNED", "g/a"),
+            ],
+        );
+        assert!(out.starts_with("# CI security audit — group `g`"));
+        assert!(out.contains("**3 project(s) audited** of 3 · **2 HIGH · 2 MEDIUM**"));
+        let rows: Vec<&str> = out.lines().filter(|l| l.starts_with("| HIGH") || l.starts_with("| MEDIUM")).collect();
+        // HIGH before MEDIUM; within a severity, by code, then location.
+        assert_eq!(rows.len(), 4);
+        assert!(rows[0].starts_with("| HIGH | FETCH-UNPINNED | g/a"));
+        assert!(rows[1].starts_with("| HIGH | VAR-UNMASKED | g/c"));
+        assert!(rows[2].starts_with("| MEDIUM | IMG-FLOATING | g/a"));
+        assert!(rows[3].starts_with("| MEDIUM | IMG-FLOATING | g/b"));
+        assert!(!out.contains("Partial"), "full coverage must not warn");
+        assert!(out.contains("values are never read or reported"));
+    }
+
+    #[test]
+    fn a_partial_sweep_warns_and_a_complete_one_does_not() {
+        // The boundary is exact: auditing all of them is not partial.
+        let warns = |audited, total| render_audit_report("g", audited, total, vec![]).contains("Partial");
+        assert!(warns(59, 60));
+        assert!(!warns(60, 60));
+        assert!(!warns(1, 1));
+        let clean = render_audit_report("project `p`", 1, 1, vec![]);
+        assert!(clean.contains("No configuration-level exposure found."));
+        assert!(clean.contains("**0 HIGH · 0 MEDIUM**"));
+    }
 
     #[test]
     fn an_unmaskable_key_is_told_to_use_file_type_not_masking() {
@@ -284,7 +401,7 @@ mod tests {
         })];
         let f = audit_variables("group/app", &vars);
         assert_eq!(f.len(), 1);
-        assert_eq!(f[0].severity, "HIGH");
+        assert_eq!(f[0].severity, Severity::High);
         assert!(f[0].fix.contains("variable_type=file"), "{}", f[0].fix);
         assert!(!f[0].fix.starts_with("Enable masking"), "{}", f[0].fix);
         // The value is never echoed, because it is never read.
@@ -301,7 +418,7 @@ mod tests {
         ];
         let f = audit_variables("group/app", &vars);
         assert_eq!(f.len(), 1, "only the unmasked env_var secret: {f:?}");
-        assert_eq!(f[0].severity, "MEDIUM");
+        assert_eq!(f[0].severity, Severity::Medium);
         assert!(f[0].fix.starts_with("Enable masking"));
     }
 
@@ -342,6 +459,6 @@ image: registry.example.com/build/runtime:latest
         let f = audit_ci_file("g/p", ".gitlab-ci.yml", ci);
         let fetch: Vec<_> = f.iter().filter(|x| x.code == "FETCH-UNPINNED").collect();
         assert_eq!(fetch.len(), 3, "pinned version and comment excluded: {f:?}");
-        assert!(fetch.iter().all(|x| x.severity == "HIGH"));
+        assert!(fetch.iter().all(|x| x.severity == Severity::High));
     }
 }

@@ -75,6 +75,18 @@ pub(crate) fn access_level_name(n: u64) -> &'static str {
     }
 }
 
+/// Name of a protected-branch access level. A different vocabulary from member roles:
+/// 0 means nobody, and 60 is instance admins only.
+pub(crate) fn protection_level_name(n: u64) -> &'static str {
+    match n {
+        0 => "No access",
+        30 => "Developer",
+        40 => "Maintainer",
+        60 => "Admin",
+        _ => "?",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,5 +107,13 @@ mod tests {
             assert_eq!(parse_access_level(&n.to_string()).unwrap() as u64, n);
         }
         assert_eq!(access_level_name(99), "?");
+    }
+
+    #[test]
+    fn protection_levels_have_their_own_names() {
+        assert_eq!(protection_level_name(0), "No access");
+        assert_eq!(protection_level_name(60), "Admin");
+        assert_eq!(protection_level_name(40), "Maintainer");
+        assert_eq!(protection_level_name(50), "?", "50 is a member role, not a protection level");
     }
 }

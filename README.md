@@ -6,7 +6,7 @@
 [![MCP](https://img.shields.io/badge/MCP-compatible-purple)](https://modelcontextprotocol.io)
 [![Rust](https://img.shields.io/badge/Rust-1.80+-orange.svg)](https://www.rust-lang.org)
 
-**GitLab MCP server with 86 tools** for projects, issues, merge requests, CI/CD, code review, team analytics, and code quality analysis.
+**GitLab MCP server with 107 tools** for projects, issues, merge requests, CI/CD, code review, team analytics, and code quality analysis.
 
 Single Rust binary. Zero runtime dependencies. Works with Claude Code, GitHub Copilot, Cursor, Windsurf, n8n, and any MCP-compatible client.
 
@@ -14,8 +14,8 @@ Single Rust binary. Zero runtime dependencies. Works with Claude Code, GitHub Co
 
 ## Highlights
 
-- **86 tools** across 9 categories — from basic CRUD to advanced analytics
-- **Code quality analysis** — file-level scoring (A–F), project-wide reports, 41 lint rules for Swift/PHP/Go/Kotlin/TypeScript
+- **107 tools** across 9 categories — from basic CRUD to advanced analytics
+- **Code quality analysis** — file-level scoring (A–F), project-wide reports, 81 lint rules for Swift/PHP/Go/Kotlin/TypeScript/Ansible
 - **Team performance reports** — developer comparison, review matrix, MR turnaround, auto-detected process issues
 - **HTML reports** — dark-theme reports with Export PDF button for dev activity, team performance, and project quality
 - **Token optimization** — `summary_only` mode (~5–10x smaller responses), smart diff filtering, compact mode
@@ -119,7 +119,7 @@ For HTTP transport: `gl-mcp --transport http --port 8000`
 
 ---
 
-## Tools (100)
+## Tools (107)
 
 ### Projects & Users
 | Tool | Description |
@@ -144,7 +144,9 @@ For HTTP transport: `gl-mcp --transport http --port 8000`
 | `delete_project` | Delete a project — guarded by exact-path confirmation |
 | `add_member` | Add a project member by username + role name |
 | `add_group_member` | Add a group member (grants all projects in the group) |
-| `create_deploy_token` | Create a deploy token (value shown once) |
+| `create_deploy_token` | Create a deploy token; value stored in a masked CI variable or revealed on request |
+| `create_project_access_token` | Create a project access token (the only credential that can push from CI); same delivery contract |
+| `update_project` | CI runner toggles, default branch, visibility, merge method, description |
 | `list_deploy_tokens` | List deploy tokens (metadata only) |
 
 ### Issues
@@ -194,6 +196,11 @@ For HTTP transport: `gl-mcp --transport http --port 8000`
 | `set_ci_variable` | Create a CI/CD variable (masked/protected flags) |
 | `update_ci_variable` | Update a CI/CD variable |
 | `delete_ci_variable` | Delete a CI/CD variable |
+| `analyze_pipeline_failures` | Pipeline health for a project or group, separating operator/scheduled runs from development CI |
+| `list_project_runners` | Runners that can take a project's jobs; tells "no runner can run this" apart from a busy queue |
+| `create_pipeline_schedule` | Create a schedule; the ref is validated first (GitLab silently never fires one on a missing ref) |
+| `play_pipeline_schedule` | Run a schedule now, to prove it once instead of waiting an interval |
+| `audit_ci_security` | CI exposure audit: unredactable secret-shaped variables, debug tracing, floating images, unpinned remote scripts — names only, never values |
 
 ### Commits & Code Review
 | Tool | Description |
@@ -358,6 +365,26 @@ Pass `instance="staging"` to any tool. URLs auto-resolve to the correct instance
 | [serde](https://serde.rs) / [schemars](https://crates.io/crates/schemars) | JSON + schema generation |
 
 ---
+
+## Development
+
+```bash
+make test        # cargo test -- --test-threads=1 (env-var tests need one thread)
+cargo clippy --all-targets
+```
+
+- **Functional core, I/O shell.** Report and analysis tools fetch in a thin async
+  function and hand plain data to a pure renderer, so every threshold, score and
+  table is tested on values — no mock servers, no network.
+- **Golden masters.** Each report renderer's full output is pinned under
+  `tests/golden/` (today's date and the crate version are normalised). After an
+  intended output change, regenerate with `UPDATE_GOLDEN=1 cargo test --lib` and
+  review the snapshot diff like code.
+- **Rule-file gate.** Every lint rule file must parse and every pattern must compile
+  under the linear-time `regex` crate; a rule that cannot match fails the build
+  instead of shipping dead.
+- **Errors are typed.** Caller mistakes return `Error::UserInput` and surface as MCP
+  tool errors (`isError`), never as success text, and stay out of Sentry.
 
 ## Versioning
 

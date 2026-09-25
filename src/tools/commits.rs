@@ -1,7 +1,8 @@
 //! GitLab commit and diff tools with smart filtering and token compression.
 
+use std::fmt::Write as _;
 use crate::client::GitLabClient;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, ResultExt};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -348,7 +349,7 @@ pub async fn list_commits(
         let title = c["title"].as_str().unwrap_or("?");
         let author = c["author_name"].as_str().unwrap_or("?");
         let date = c["created_at"].as_str().unwrap_or("?");
-        let date_short = if date.len() > 16 { &date[..16] } else { date };
+        let date_short = date.get(..16).unwrap_or(date);
         lines.push(format!("- `{sha}` {title} — @{author} ({date_short})"));
     }
     Ok(lines.join("\n"))
@@ -494,14 +495,7 @@ pub(crate) async fn get_file_raw(
         )
         .await
         .ok()?;
-    let content_b64 = data["content"].as_str().unwrap_or("");
-    let encoding = data["encoding"].as_str().unwrap_or("base64");
-    if encoding == "base64" {
-        let decoded = base64_decode(content_b64).ok()?;
-        Some(String::from_utf8_lossy(&decoded).to_string())
-    } else {
-        Some(content_b64.to_string())
-    }
+    crate::tools::encoding::file_text(&data).ok()
 }
 
 /// Get file content at a specific ref.
@@ -565,17 +559,10 @@ pub async fn get_file_content(
         .await
         ?;
 
-    let content_b64 = data["content"].as_str().unwrap_or("");
-    let encoding = data["encoding"].as_str().unwrap_or("base64");
     let size = data["size"].as_u64().unwrap_or(0);
     let lang = detect_language(file_path);
 
-    let content = if encoding == "base64" {
-        let decoded = base64_decode(content_b64).map_err(|e| Error::Other(format!("Base64 decode error: {e}")))?;
-        String::from_utf8_lossy(&decoded).to_string()
-    } else {
-        content_b64.to_string()
-    };
+    let content = crate::tools::encoding::file_text(&data)?;
 
     let total_lines = content.lines().count();
     let head = |note: String| {
@@ -593,11 +580,7 @@ pub async fn get_file_content(
     if !pattern.is_empty() {
         let re = match regex::RegexBuilder::new(pattern).case_insensitive(true).build() {
             Ok(re) => re,
-            Err(e) => {
-                return Ok(format!(
-                    "## {file_path}\n\n**Invalid pattern** `{pattern}`: {e}"
-                ));
-            }
+            Err(e) => return Err(Error::user_input(format!("invalid pattern `{pattern}`: {e}"))),
         };
         let (found, hits) = crate::tools::pipelines::grep_lines(&content, &re, 400);
         if found == 0 {
@@ -625,7 +608,7 @@ pub async fn get_file_content(
 
     let (selected, total) = match select_lines(&content, start_line, end_line) {
         Ok(v) => v,
-        Err(msg) => return Ok(format!("## {file_path}\n\n**Error:** {msg}")),
+        Err(msg) => return Err(Error::user_input(msg)),
     };
     let windowed = selected.len() < total;
     let note = if windowed {
@@ -1050,7 +1033,7 @@ pub async fn get_group_activity(
 
         let client = client.clone();
         Some(async move {
-            let events = fetch_user_events(&client, user_id, since_ts).await.unwrap_or_default();
+            let events = fetch_user_events(&client, user_id, since_ts).await.or_default_logged();
             (username, name, events)
         })
     }).collect();
@@ -1182,30 +1165,6 @@ pub async fn list_group_projects(
     Ok(lines.join("\n"))
 }
 
-fn base64_decode(input: &str) -> std::result::Result<Vec<u8>, String> {
-    let clean: String = input.chars().filter(|c| !c.is_whitespace()).collect();
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = Vec::with_capacity(clean.len() * 3 / 4);
-    let mut buf: u32 = 0;
-    let mut bits: u32 = 0;
-    for byte in clean.bytes() {
-        let val = if byte == b'=' {
-            break;
-        } else if let Some(pos) = TABLE.iter().position(|&b| b == byte) {
-            pos as u32
-        } else {
-            return Err(format!("Invalid base64 character: {}", byte as char));
-        };
-        buf = (buf << 6) | val;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((buf >> bits) as u8);
-            buf &= (1 << bits) - 1;
-        }
-    }
-    Ok(out)
-}
 
 /// Compare multiple developers' performance in a project over a given period.
 pub async fn compare_developers(
@@ -1270,7 +1229,7 @@ pub async fn compare_developers(
                     ("state", "opened"),
                     ("created_after", &since),
                     ("per_page", "100"),
-                ]).await.unwrap_or_default();
+                ]).await.or_default_logged();
                 total_opened += opened_mrs.len() as u64;
 
                 // 2) Fetch merged MRs by this author
@@ -1279,7 +1238,7 @@ pub async fn compare_developers(
                     ("state", "merged"),
                     ("created_after", &since),
                     ("per_page", "100"),
-                ]).await.unwrap_or_default();
+                ]).await.or_default_logged();
                 total_merged_count += merged_mrs.len() as u64;
 
                 // 3) Fetch MRs where this user is reviewer (merged)
@@ -1288,7 +1247,7 @@ pub async fn compare_developers(
                     ("state", "merged"),
                     ("created_after", &since),
                     ("per_page", "100"),
-                ]).await.unwrap_or_default();
+                ]).await.or_default_logged();
                 total_reviewed_count += reviewed_mrs.len() as u64;
 
                 // 4) Calculate avg merge time + LOC/files from merged MRs
@@ -1346,12 +1305,12 @@ pub async fn compare_developers(
                     let users: Vec<Value> = client
                         .get_cached(&cache_key, "/users", &[("username", username)], 60)
                         .await
-                        .unwrap_or_default();
+                        .or_default_logged();
 
                     let user_id = users.first().and_then(|u| u["id"].as_u64()).unwrap_or(0);
                     let since_ts = (chrono::Utc::now() - chrono::Duration::days(days as i64)).timestamp();
                     let events = if user_id > 0 {
-                        fetch_user_events(&client, user_id, since_ts).await.unwrap_or_default()
+                        fetch_user_events(&client, user_id, since_ts).await.or_default_logged()
                     } else {
                         Vec::new()
                     };
@@ -1461,7 +1420,7 @@ pub async fn compare_developers(
     // Build markdown table
     let mut header = "| Metric".to_string();
     for stats in &results {
-        header.push_str(&format!(" | @{}", stats.username));
+        let _ = write!(header, " | @{}", stats.username);
     }
     header.push_str(" |");
 
@@ -1496,7 +1455,7 @@ pub async fn compare_developers(
     for (metric_name, formatter) in &metrics {
         let mut row = format!("| {metric_name}");
         for stats in &results {
-            row.push_str(&format!(" | {}", formatter(stats)));
+            let _ = write!(row, " | {}", formatter(stats));
         }
         row.push_str(" |");
         lines.push(row);
@@ -1510,7 +1469,7 @@ pub async fn compare_developers(
         lines.push("### Review Matrix (who reviewed whom)\n".to_string());
         let mut matrix_header = "| Reviewer \\ Author".to_string();
         for u in &all_usernames {
-            matrix_header.push_str(&format!(" | @{u}"));
+            let _ = write!(matrix_header, " | @{u}");
         }
         matrix_header.push_str(" |");
         lines.push(matrix_header);
@@ -1527,7 +1486,7 @@ pub async fn compare_developers(
             for author_name in &all_usernames {
                 let count = reviewer.reviewed_authors.get(*author_name).unwrap_or(&0);
                 let cell = if *count == 0 { "–".to_string() } else { count.to_string() };
-                row.push_str(&format!(" | {cell}"));
+                let _ = write!(row, " | {cell}");
             }
             row.push_str(" |");
             lines.push(row);

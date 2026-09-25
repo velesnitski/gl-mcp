@@ -12,3 +12,7 @@
 tasks.md
 # match on case-sensitive checkouts too (Linux CI folds no case)
 TASKS.md
+
+# cargo-mutants working output
+mutants.out/
+mutants.out.old/

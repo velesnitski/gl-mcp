@@ -1,0 +1,25 @@
+## App/View.swift
+
+**Language:** Swift | **Branch:** main
+
+### Metrics
+
+| Metric | Value | Assessment |
+|--------|-------|------------|
+| Total lines | 5 | OK |
+| Code lines | 5 | |
+| Comments | 0 (0%) | No comments |
+| Blank lines | 0 | |
+| Functions | 2 | OK |
+| Imports | 1 | OK |
+| Max nesting depth | 1 (line 3) | OK |
+
+### Lint Violations (3)
+
+- **[SW001]** print() left in code: 1 occurrences
+- **[SW014]** Massive function: 1 occurrences
+- **[SW017]** String interpolation in log: 1 occurrences
+
+### Quality Score: 97/100 (Grade A)
+---
+total=5 functions=2 max_nesting=1 violations=3 score=97 grade=A details=[("SW014", "Massive function"), ("SW001", "print() left in code"), ("SW017", "String interpolation in log")]

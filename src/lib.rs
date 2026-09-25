@@ -9,3 +9,6 @@ pub mod resolver;
 pub mod server;
 pub mod teams;
 pub mod tools;
+
+#[cfg(test)]
+mod golden;

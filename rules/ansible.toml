@@ -5,7 +5,7 @@ id = "ANS001"
 severity = "critical"
 name = "Plain text password"
 pattern = '(?i)(password|passwd|secret):\s*["\x27]?[A-Za-z0-9]{6,}'
-negative_pattern = '(?i)(vault|{{|lookup|no_log)'
+negative_pattern = '(?i)(vault|\{\{|lookup|no_log)'
 message = "Plain text password — use ansible-vault or variable lookup"
 
 [[rule]]

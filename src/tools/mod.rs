@@ -14,6 +14,8 @@ pub mod adoption;
 pub mod spec;
 pub mod users;
 pub mod docs;
+pub(crate) mod encoding;
+pub(crate) mod stats;
 pub mod security;
 
 /// Tools that modify data — blocked in read-only mode.

@@ -77,6 +77,32 @@ impl Error {
     }
 }
 
+/// Best-effort fallback for optional data, without hiding the failure.
+///
+/// Reports enrich their output from many secondary API calls; one failing should not
+/// fail the whole report. `unwrap_or_default()` achieved that by discarding the error,
+/// so an outage and a genuinely empty result rendered identically. This keeps the
+/// fallback but logs where it happened: 4xx at debug (a missing README is expected),
+/// anything else at warn.
+pub trait ResultExt<T> {
+    fn or_default_logged(self) -> T;
+}
+
+impl<T: Default> ResultExt<T> for Result<T> {
+    #[track_caller]
+    fn or_default_logged(self) -> T {
+        self.unwrap_or_else(|e| {
+            let at = std::panic::Location::caller();
+            if e.is_user_error() {
+                tracing::debug!(%at, "optional fetch failed, using empty value: {e}");
+            } else {
+                tracing::warn!(%at, "optional fetch failed, using empty value: {e}");
+            }
+            T::default()
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,5 +128,12 @@ mod tests {
         assert!(!gitlab(500).is_user_error());
         assert!(!Error::Other("boom".into()).is_user_error());
         assert!(!Error::Config("bad env".into()).is_user_error());
+    }
+
+    #[test]
+    fn or_default_logged_keeps_values_and_defaults_errors() {
+        assert_eq!(Ok::<_, Error>(vec![1]).or_default_logged(), vec![1]);
+        assert_eq!(Err::<Vec<u8>, _>(gitlab(500)).or_default_logged(), Vec::<u8>::new());
+        assert_eq!(Err::<String, _>(gitlab(404)).or_default_logged(), "");
     }
 }

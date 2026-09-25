@@ -25,7 +25,9 @@ use crate::tools;
 pub struct GlMcpServer {
     resolver: std::sync::Arc<Resolver>,
     config: std::sync::Arc<Config>,
-    teams: std::sync::Arc<std::sync::Mutex<Teams>>,
+    /// Async mutex: `save_team` holds it across the file write so concurrent saves
+    /// land in order, and a tokio mutex may be held across `.await`.
+    teams: std::sync::Arc<tokio::sync::Mutex<Teams>>,
     tool_router: rmcp::handler::server::tool::ToolRouter<Self>,
 }
 
@@ -242,7 +244,7 @@ impl GlMcpServer {
         Self {
             resolver,
             config: std::sync::Arc::new(config),
-            teams: std::sync::Arc::new(std::sync::Mutex::new(teams)),
+            teams: std::sync::Arc::new(tokio::sync::Mutex::new(teams)),
             tool_router,
         }
     }
@@ -1031,7 +1033,7 @@ impl GlMcpServer {
 
         // Resolve: team key from teams.json OR raw usernames
         let raw_usernames: Vec<String> = {
-            let teams = self.teams.lock().unwrap_or_else(|e| e.into_inner());
+            let teams = self.teams.lock().await;
             if let Some(team) = teams.get(&p.team) {
                 team.members.iter().map(|m| m.username.clone()).collect()
             } else {
@@ -1062,7 +1064,7 @@ impl GlMcpServer {
 
     #[tool(description = "List configured teams from ~/.gl-mcp/teams.json")]
     async fn list_teams(&self, Parameters(_p): Parameters<ListTeamsParams>) -> Result<CallToolResult, McpError> {
-        let teams = self.teams.lock().unwrap_or_else(|e| e.into_inner());
+        let teams = self.teams.lock().await;
         let list = teams.list();
         if list.is_empty() {
             return Ok(CallToolResult::success(vec![Content::text(
@@ -1121,9 +1123,9 @@ impl GlMcpServer {
             projects,
         };
 
-        let mut teams = self.teams.lock().unwrap_or_else(|e| e.into_inner());
+        let mut teams = self.teams.lock().await;
         teams.set(p.key.clone(), team);
-        teams.save().map_err(|e| McpError::internal_error(format!("Failed to save teams.json: {e}"), None))?;
+        teams.save().await.map_err(|e| McpError::internal_error(format!("Failed to save teams.json: {e}"), None))?;
 
         let count = teams.list().len();
         Ok(CallToolResult::success(vec![Content::text(

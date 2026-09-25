@@ -42,10 +42,90 @@ pub(crate) fn should_skip_lint_file(path: &str) -> bool {
         || SKIP_FILE_PATTERNS.iter().any(|pat| path.contains(pat))
 }
 
+/// Rule severity. Declaration order is report order: `Ord` puts critical first.
+///
+/// A typo such as `severity = "warn"` in a rule file is now a parse error caught by
+/// the rule-file gate test, instead of a rule whose hits never appear in any report
+/// (the reports only printed the three spellings they knew).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RuleSeverity {
+    Critical,
+    Warning,
+    Info,
+}
+
+impl RuleSeverity {
+    fn icon(self) -> &'static str {
+        match self {
+            Self::Critical => "🔴",
+            Self::Warning => "🟡",
+            Self::Info => "🔵",
+        }
+    }
+
+    fn heading(self) -> &'static str {
+        match self {
+            Self::Critical => "CRITICAL",
+            Self::Warning => "WARNING",
+            Self::Info => "INFO",
+        }
+    }
+}
+
+/// Letter grade for a quality score.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Grade {
+    A,
+    B,
+    C,
+    D,
+    F,
+}
+
+impl Grade {
+    pub const ALL: [Grade; 5] = [Grade::A, Grade::B, Grade::C, Grade::D, Grade::F];
+
+    /// The only place the grade bands are defined; the per-file grade and the
+    /// project-average grade used to carry separate copies of this match.
+    pub fn from_score(score: i32) -> Self {
+        match score {
+            90.. => Self::A,
+            75..=89 => Self::B,
+            60..=74 => Self::C,
+            40..=59 => Self::D,
+            _ => Self::F,
+        }
+    }
+
+    /// Score range of the band, as printed in reports.
+    pub fn band(self) -> &'static str {
+        match self {
+            Self::A => "90-100",
+            Self::B => "75-89",
+            Self::C => "60-74",
+            Self::D => "40-59",
+            Self::F => "<40",
+        }
+    }
+}
+
+impl std::fmt::Display for Grade {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::A => "A",
+            Self::B => "B",
+            Self::C => "C",
+            Self::D => "D",
+            Self::F => "F",
+        })
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct Rule {
     pub id: String,
-    pub severity: String,
+    pub severity: RuleSeverity,
     pub name: String,
     #[serde(default)]
     pub pattern: String,
@@ -63,7 +143,7 @@ pub struct Rule {
 #[derive(Debug)]
 pub struct Violation {
     pub rule_id: String,
-    pub severity: String,
+    pub severity: RuleSeverity,
     pub name: String,
     pub file: String,
     pub line: usize,
@@ -82,23 +162,23 @@ struct CompiledRule {
 
 impl CompiledRule {
     fn compile(rule: Rule) -> Self {
-        let pattern_re = if rule.pattern.is_empty() {
-            None
-        } else {
-            regex::Regex::new(&rule.pattern).ok()
-        };
-        let neg_pattern_re = if rule.negative_pattern.is_empty() {
-            None
-        } else {
-            regex::Regex::new(&rule.negative_pattern).ok()
-        };
-        let neg_file_re = if rule.negative_file_pattern.is_empty() {
-            None
-        } else {
-            regex::Regex::new(&rule.negative_file_pattern).ok()
-        };
+        let pattern_re = compile_rule_regex(&rule.id, "pattern", &rule.pattern);
+        let neg_pattern_re = compile_rule_regex(&rule.id, "negative_pattern", &rule.negative_pattern);
+        let neg_file_re = compile_rule_regex(&rule.id, "negative_file_pattern", &rule.negative_file_pattern);
         Self { rule, pattern_re, neg_pattern_re, neg_file_re }
     }
+}
+
+/// `None` for an empty pattern. An invalid one disables only that rule — and says so:
+/// seven rules once shipped with lookarounds the `regex` crate rejects, and were
+/// silently dead until `every_rule_file_parses_and_every_pattern_compiles` caught them.
+fn compile_rule_regex(rule_id: &str, field: &str, pattern: &str) -> Option<regex::Regex> {
+    if pattern.is_empty() {
+        return None;
+    }
+    regex::Regex::new(pattern)
+        .inspect_err(|e| tracing::error!("lint rule {rule_id}: invalid {field}, rule disabled: {e}"))
+        .ok()
 }
 
 // ─── Rule loading (cached, parsed once) ───
@@ -106,6 +186,7 @@ impl CompiledRule {
 fn parse_embedded_rules(content: &str) -> Vec<Rule> {
     toml::from_str::<RuleFile>(content)
         .map(|rf| rf.rule)
+        .inspect_err(|e| tracing::error!("embedded lint rule file does not parse, its rules are disabled: {e}"))
         .unwrap_or_default()
 }
 
@@ -227,7 +308,7 @@ pub async fn validate_commit(
         if cr.rule.applies_to == "commit_message" && matches_compiled_rule(cr, message.trim(), "") {
             violations.push(Violation {
                 rule_id: cr.rule.id.clone(),
-                severity: cr.rule.severity.clone(),
+                severity: cr.rule.severity,
                 name: cr.rule.name.clone(),
                 file: "(commit message)".into(),
                 line: 0,
@@ -276,7 +357,7 @@ pub async fn validate_commit(
                         if *count <= MAX_VIOLATIONS_PER_RULE_PER_FILE {
                             violations.push(Violation {
                                 rule_id: cr.rule.id.clone(),
-                                severity: cr.rule.severity.clone(),
+                                severity: cr.rule.severity,
                                 name: cr.rule.name.clone(),
                                 file: file_path.to_string(),
                                 line: i + 1,
@@ -296,7 +377,7 @@ pub async fn validate_commit(
             {
                 violations.push(Violation {
                     rule_id: "PHP012".into(),
-                    severity: "info".into(),
+                    severity: RuleSeverity::Info,
                     name: "No newline at EOF".into(),
                     file: file_path.to_string(),
                     line: i + 1,
@@ -311,7 +392,7 @@ pub async fn validate_commit(
             if cr.rule.applies_to == "file_stats" && cr.rule.max_additions > 0 && additions > cr.rule.max_additions {
                 violations.push(Violation {
                     rule_id: cr.rule.id.clone(),
-                    severity: cr.rule.severity.clone(),
+                    severity: cr.rule.severity,
                     name: cr.rule.name.clone(),
                     file: file_path.to_string(),
                     line: 0,
@@ -331,15 +412,14 @@ pub async fn validate_commit(
     }
 
     // Group by severity
-    let mut by_severity: BTreeMap<String, Vec<&Violation>> = BTreeMap::new();
+    let mut by_severity: BTreeMap<RuleSeverity, Vec<&Violation>> = BTreeMap::new();
     for v in &violations {
-        by_severity.entry(v.severity.clone()).or_default().push(v);
+        by_severity.entry(v.severity).or_default().push(v);
     }
 
     let total_suppressed: usize = suppressed.values().sum();
     let total_shown = violations.len();
 
-    let severity_order = ["critical", "warning", "info"];
     let mut lines = vec![
         format!(
             "**{project_id} `{short_sha}`** by {author} — **{} violations** ({} files)",
@@ -349,15 +429,9 @@ pub async fn validate_commit(
         String::new(),
     ];
 
-    for sev in &severity_order {
-        if let Some(sevs) = by_severity.get(*sev) {
-            let icon = match *sev {
-                "critical" => "🔴",
-                "warning" => "🟡",
-                "info" => "🔵",
-                _ => "⚪",
-            };
-            lines.push(format!("### {} {} ({})", icon, sev.to_uppercase(), sevs.len()));
+    for (sev, sevs) in &by_severity {
+        {
+            lines.push(format!("### {} {} ({})", sev.icon(), sev.heading(), sevs.len()));
             for v in sevs {
                 let loc = if v.line > 0 {
                     format!("{}:{}", v.file, v.line)
@@ -523,7 +597,7 @@ pub async fn validate_mr_changes(
                         if *count <= MAX_VIOLATIONS_PER_RULE_PER_FILE {
                             violations.push(Violation {
                                 rule_id: cr.rule.id.clone(),
-                                severity: cr.rule.severity.clone(),
+                                severity: cr.rule.severity,
                                 name: cr.rule.name.clone(),
                                 file: file_path.to_string(),
                                 line: i + 1,
@@ -543,7 +617,7 @@ pub async fn validate_mr_changes(
             if cr.rule.applies_to == "file_stats" && cr.rule.max_additions > 0 && additions > cr.rule.max_additions {
                 violations.push(Violation {
                     rule_id: cr.rule.id.clone(),
-                    severity: cr.rule.severity.clone(),
+                    severity: cr.rule.severity,
                     name: cr.rule.name.clone(),
                     file: file_path.to_string(),
                     line: 0,
@@ -561,15 +635,14 @@ pub async fn validate_mr_changes(
         ));
     }
 
-    let mut by_severity: BTreeMap<String, Vec<&Violation>> = BTreeMap::new();
+    let mut by_severity: BTreeMap<RuleSeverity, Vec<&Violation>> = BTreeMap::new();
     for v in &violations {
-        by_severity.entry(v.severity.clone()).or_default().push(v);
+        by_severity.entry(v.severity).or_default().push(v);
     }
 
     let total_suppressed: usize = suppressed.values().sum();
     let total_shown = violations.len();
 
-    let severity_order = ["critical", "warning", "info"];
     let mut lines = vec![
         format!(
             "**{project_id} !{mr_iid}** \"{}\" by @{author} — **{} violations** ({files_checked} files)",
@@ -578,15 +651,9 @@ pub async fn validate_mr_changes(
         String::new(),
     ];
 
-    for sev in &severity_order {
-        if let Some(sevs) = by_severity.get(*sev) {
-            let icon = match *sev {
-                "critical" => "🔴",
-                "warning" => "🟡",
-                "info" => "🔵",
-                _ => "⚪",
-            };
-            lines.push(format!("### {} {} ({})", icon, sev.to_uppercase(), sevs.len()));
+    for (sev, sevs) in &by_severity {
+        {
+            lines.push(format!("### {} {} ({})", sev.icon(), sev.heading(), sevs.len()));
             for v in sevs {
                 let loc = if v.line > 0 {
                     format!("{}:{}", v.file, v.line)
@@ -640,20 +707,14 @@ pub fn list_rules(language: &str) -> String {
 
     let mut lines = vec![format!("**Rules: {}**\n", rules.len())];
 
-    let mut by_severity: BTreeMap<String, Vec<&Rule>> = BTreeMap::new();
+    let mut by_severity: BTreeMap<RuleSeverity, Vec<&Rule>> = BTreeMap::new();
     for r in &rules {
-        by_severity.entry(r.severity.clone()).or_default().push(r);
+        by_severity.entry(r.severity).or_default().push(r);
     }
 
-    for sev in &["critical", "warning", "info"] {
-        if let Some(sevs) = by_severity.get(*sev) {
-            let icon = match *sev {
-                "critical" => "🔴",
-                "warning" => "🟡",
-                "info" => "🔵",
-                _ => "⚪",
-            };
-            lines.push(format!("### {} {} ({})", icon, sev.to_uppercase(), sevs.len()));
+    for (sev, sevs) in &by_severity {
+        {
+            lines.push(format!("### {} {} ({})", sev.icon(), sev.heading(), sevs.len()));
             for r in sevs {
                 lines.push(format!("- **[{}]** {} — {}", r.id, r.name, r.message));
             }
@@ -666,6 +727,249 @@ pub fn list_rules(language: &str) -> String {
 
 /// Analyze a file's code quality metrics: length, functions, nesting depth, complexity indicators.
 /// Fetches the full file content (not diff) for structural analysis.
+/// Inputs to the quality score — the aggregates both file analyses compute.
+pub(crate) struct ScoreInputs {
+    pub total_lines: usize,
+    pub func_count: usize,
+    pub max_nesting: usize,
+    pub imports: usize,
+    pub comment_lines: usize,
+    pub code_lines: usize,
+    pub long_funcs: usize,
+    pub violations: usize,
+}
+
+/// Score and grade for a file — the **only** place this is decided.
+///
+/// This existed twice, in `analyze_file` and in `compute_file_metrics` (which backs
+/// `analyze_project`), and the copies had drifted: one lost an `else` and charged a
+/// file over 500 lines both the >500 and the >300 penalty, so the same file scored
+/// 10 points lower — sometimes a full grade lower — depending on which tool was asked.
+/// The tiers are exclusive: a file is either long or very long, never both.
+pub(crate) fn quality_score(m: &ScoreInputs) -> (i32, Grade) {
+    let mut score = 100i32;
+    if m.total_lines > 500 {
+        score -= 20;
+    } else if m.total_lines > 300 {
+        score -= 10;
+    }
+    if m.func_count > 20 {
+        score -= 15;
+    }
+    if m.max_nesting >= 6 {
+        score -= 20;
+    } else if m.max_nesting >= 4 {
+        score -= 10;
+    }
+    if m.imports > 15 {
+        score -= 10;
+    }
+    if m.comment_lines == 0 && m.code_lines > 50 {
+        score -= 5;
+    }
+    score -= (m.long_funcs as i32) * 5;
+    score -= (m.violations as i32).min(20);
+    let score = score.max(0);
+    (score, Grade::from_score(score))
+}
+
+/// Length in lines of each function, given 0-based start lines in file order.
+///
+/// A function runs from its start to the next function's start, and the last one to
+/// the end of the file. Shared by both analyses: they previously disagreed by one on
+/// the last function (one counted from a 1-based start), so a 51-line function at the
+/// end of a file was "long" in one tool and not the other.
+pub(crate) fn function_lengths(starts: &[usize], total_lines: usize) -> Vec<usize> {
+    starts
+        .iter()
+        .enumerate()
+        .map(|(i, &s)| starts.get(i + 1).copied().unwrap_or(total_lines) - s)
+        .collect()
+}
+
+/// Characters of leading whitespace per nesting level. A tab counts as one full level.
+const INDENT_WIDTH: usize = 4;
+
+/// Declaration patterns per language; a line matching one starts a function.
+const FUNCTION_PATTERNS: &[(&[&str], &str)] = &[
+    // `init(`, `init?(`, `init<T>(` — an initializer is never followed by whitespace.
+    (&["Swift"], r"\bfunc\s+|\binit[?!]?\s*[(<]"),
+    (&["PHP"], r"function\s+\w+"),
+    (&["Go"], r"func\s+"),
+    (&["Kotlin", "Java"], r"fun\s+"),
+    (
+        &["TypeScript", "JavaScript"],
+        r"(?:function\s+|(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?(?:\([^)]*\)|[a-zA-Z_]\w*)\s*=>)",
+    ),
+    (&["Rust"], r"fn\s+"),
+    (&["Python"], r"def\s+"),
+];
+const FALLBACK_FUNCTION_PATTERN: &str = r"function\s+|func\s+|fn\s+|def\s+";
+
+/// Compiled once. The patterns are constants, so a compile failure is a programming
+/// error caught by `function_patterns_all_compile`, not a runtime condition.
+static FUNCTION_RES: LazyLock<Vec<(&'static [&'static str], regex::Regex)>> = LazyLock::new(|| {
+    FUNCTION_PATTERNS
+        .iter()
+        .map(|&(langs, p)| (langs, regex::Regex::new(p).expect("function pattern is a valid regex")))
+        .collect()
+});
+static FALLBACK_FUNCTION_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(FALLBACK_FUNCTION_PATTERN).expect("fallback function pattern is a valid regex"));
+
+fn function_regex(lang: &str) -> &'static regex::Regex {
+    FUNCTION_RES
+        .iter()
+        .find(|(langs, _)| langs.contains(&lang))
+        .map(|(_, re)| re)
+        .unwrap_or(&FALLBACK_FUNCTION_RE)
+}
+
+/// Line prefix that marks an import in `lang`.
+fn import_prefix(lang: &str) -> &'static str {
+    match lang {
+        "PHP" | "Rust" => "use ",
+        "Go" => "import",
+        _ => "import ",
+    }
+}
+
+/// Ticket reference such as `ABC-123`: 2–10 capitals, a dash, digits.
+///
+/// Shared by commit validation and the reports, which used to disagree — the report
+/// accepted any capitals (`A-1`, `UTF-8`), so its ticket rate overstated what commit
+/// validation would pass.
+static TICKET_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"[A-Z]{2,10}-\d+").expect("ticket pattern is a valid regex"));
+
+pub(crate) fn has_ticket_ref(text: &str) -> bool {
+    TICKET_RE.is_match(text)
+}
+
+/// A lint rule hit in the file.
+pub(crate) struct LineViolation {
+    pub rule_id: String,
+    pub name: String,
+}
+
+/// Everything measured about one file — computed in exactly one place.
+///
+/// `analyze_file` and `analyze_project` each carried their own copy of this
+/// computation; the copies had drifted before (see `quality_score`). Both now
+/// render from this struct, so they cannot disagree about a file again.
+pub(crate) struct FileFacts {
+    pub total_lines: usize,
+    pub blank_lines: usize,
+    pub comment_lines: usize,
+    pub code_lines: usize,
+    /// (1-based line, declaration text truncated to 80 chars)
+    pub functions: Vec<(usize, String)>,
+    pub max_nesting: usize,
+    /// 1-based line of the first line reaching `max_nesting`; 0 for an empty file.
+    pub max_nesting_line: usize,
+    /// Lines nested four or more levels deep.
+    pub deep_lines: usize,
+    /// (declaration, length) of functions longer than 50 lines.
+    pub long_functions: Vec<(String, usize)>,
+    pub imports: usize,
+    pub violations: Vec<LineViolation>,
+}
+
+impl FileFacts {
+    pub(crate) fn score(&self) -> (i32, Grade) {
+        quality_score(&ScoreInputs {
+            total_lines: self.total_lines,
+            func_count: self.functions.len(),
+            max_nesting: self.max_nesting,
+            imports: self.imports,
+            comment_lines: self.comment_lines,
+            code_lines: self.code_lines,
+            long_funcs: self.long_functions.len(),
+            violations: self.violations.len(),
+        })
+    }
+}
+
+fn is_comment(line: &str) -> bool {
+    let t = line.trim();
+    t.starts_with("//") || t.starts_with('#') || t.starts_with("/*") || t.starts_with('*')
+}
+
+fn nesting_level(line: &str) -> usize {
+    let width: usize = line
+        .chars()
+        .take_while(|c| c.is_whitespace())
+        .map(|c| if c == '\t' { INDENT_WIDTH } else { 1 })
+        .sum();
+    width / INDENT_WIDTH
+}
+
+pub(crate) fn file_facts(file_path: &str, content: &str, lang: &str) -> FileFacts {
+    let lines: Vec<&str> = content.lines().collect();
+    let total_lines = lines.len();
+    let blank_lines = lines.iter().filter(|l| l.trim().is_empty()).count();
+    let comment_lines = lines.iter().filter(|l| is_comment(l)).count();
+
+    let func_re = function_regex(lang);
+    let functions: Vec<(usize, String)> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| func_re.is_match(l))
+        .map(|(i, l)| (i + 1, l.trim().chars().take(80).collect()))
+        .collect();
+
+    let (mut max_nesting, mut max_nesting_line, mut deep_lines) = (0, 0, 0);
+    for (i, line) in lines.iter().enumerate().filter(|(_, l)| !l.trim().is_empty()) {
+        let nesting = nesting_level(line);
+        if nesting >= 4 {
+            deep_lines += 1;
+        }
+        if nesting > max_nesting {
+            max_nesting = nesting;
+            max_nesting_line = i + 1;
+        }
+    }
+
+    let starts: Vec<usize> = functions.iter().map(|(line, _)| line - 1).collect();
+    let long_functions = function_lengths(&starts, total_lines)
+        .into_iter()
+        .zip(&functions)
+        .filter(|(len, _)| *len > 50)
+        .map(|(len, (_, name))| (name.clone(), len))
+        .collect();
+
+    let prefix = import_prefix(lang);
+    let imports = lines.iter().filter(|l| l.trim().starts_with(prefix)).count();
+
+    let rules = get_compiled_rules(lang);
+    let violations = lines
+        .iter()
+        .flat_map(|line| {
+            rules
+                .iter()
+                .filter(move |cr| {
+                    (cr.rule.applies_to.is_empty() || cr.rule.applies_to == "line")
+                        && matches_compiled_rule(cr, line, file_path)
+                })
+                .map(|cr| LineViolation { rule_id: cr.rule.id.clone(), name: cr.rule.name.clone() })
+        })
+        .collect();
+
+    FileFacts {
+        total_lines,
+        blank_lines,
+        comment_lines,
+        code_lines: total_lines - blank_lines - comment_lines,
+        functions,
+        max_nesting,
+        max_nesting_line,
+        deep_lines,
+        long_functions,
+        imports,
+        violations,
+    }
+}
+
 pub async fn analyze_file(
     client: &GitLabClient,
     project_id: &str,
@@ -683,115 +987,35 @@ pub async fn analyze_file(
         )
         .await?;
 
-    let content_b64 = file_info["content"].as_str().unwrap_or("");
-    let content = base64_decode(content_b64);
+    let content = crate::tools::encoding::file_text(&file_info)?;
 
+    Ok(analyze_content(file_path, ref_param, &content))
+}
+
+/// Quality metrics and lint findings for one file's contents.
+///
+/// Pure: text in, report out. Split from `analyze_file` so every threshold, the
+/// score and the grade can be verified on plain strings rather than through a
+/// network fetch the analysis has nothing to do with.
+pub(crate) fn analyze_content(file_path: &str, ref_param: &str, content: &str) -> String {
     let lang = detect_language(file_path);
-    let lines: Vec<&str> = content.lines().collect();
-    let total_lines = lines.len();
-
-    if total_lines == 0 {
-        return Ok(format!("**{file_path}** — empty file"));
+    if content.lines().next().is_none() {
+        return format!("**{file_path}** — empty file");
     }
-
-    // ─── Metrics ───
-    let blank_lines = lines.iter().filter(|l| l.trim().is_empty()).count();
-    let comment_lines = lines.iter().filter(|l| {
-        let t = l.trim();
-        t.starts_with("//") || t.starts_with('#') || t.starts_with("/*") || t.starts_with('*')
-    }).count();
-    let code_lines = total_lines - blank_lines - comment_lines;
-
-    // Function detection
-    let func_pattern = match lang {
-        "Swift" => r"(?:func|init)\s+",
-        "PHP" => r"function\s+\w+",
-        "Go" => r"func\s+",
-        "Kotlin" | "Java" => r"fun\s+",
-        "TypeScript" | "JavaScript" => r"(?:function\s+|(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?(?:\([^)]*\)|[a-zA-Z_]\w*)\s*=>)",
-        "Rust" => r"fn\s+",
-        "Python" => r"def\s+",
-        _ => r"function\s+|func\s+|fn\s+|def\s+",
-    };
-    let func_re = regex::Regex::new(func_pattern).ok();
-    let mut functions: Vec<(usize, String)> = Vec::new();
-    if let Some(re) = &func_re {
-        for (i, line) in lines.iter().enumerate() {
-            if re.is_match(line) {
-                let name = line.trim().chars().take(80).collect::<String>();
-                functions.push((i + 1, name));
-            }
-        }
-    }
-
-    // Nesting depth analysis
-    let mut max_nesting: usize = 0;
-    let mut max_nesting_line: usize = 0;
-    let mut deep_lines: usize = 0; // lines with 4+ nesting levels
-    let indent_size: usize = match lang {
-        "Python" => 4,
-        "Go" | "Rust" => 4, // tabs count as 4
-        _ => 4,
-    };
-    for (i, line) in lines.iter().enumerate() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let leading = line.len() - line.trim_start().len();
-        // Convert tabs to spaces for counting
-        let tab_adjusted = line.chars().take_while(|c| c.is_whitespace())
-            .map(|c| if c == '\t' { indent_size } else { 1 })
-            .sum::<usize>();
-        let nesting = tab_adjusted / indent_size;
-        if nesting >= 4 {
-            deep_lines += 1;
-        }
-        if nesting > max_nesting {
-            max_nesting = nesting;
-            max_nesting_line = i + 1;
-        }
-    }
-
-    // Long functions (estimate: count lines between function declarations)
-    let mut long_functions: Vec<(String, usize)> = Vec::new();
-    for i in 0..functions.len() {
-        let start = functions[i].0;
-        let end = if i + 1 < functions.len() {
-            functions[i + 1].0
-        } else {
-            total_lines
-        };
-        let length = end - start;
-        if length > 50 {
-            long_functions.push((functions[i].1.clone(), length));
-        }
-    }
-
-    // Import count
-    let import_pattern = match lang {
-        "Swift" => "import ",
-        "PHP" => "use ",
-        "Go" => "import",
-        "TypeScript" | "JavaScript" => "import ",
-        "Rust" => "use ",
-        "Python" => "import ",
-        "Kotlin" | "Java" => "import ",
-        _ => "import ",
-    };
-    let imports = lines.iter().filter(|l| l.trim().starts_with(import_pattern)).count();
-
-    // Lint violations on full file
-    let compiled_rules = get_compiled_rules(lang);
-    let mut violations: Vec<(String, String, usize)> = Vec::new(); // (rule_id, message, line)
-    for (i, line) in lines.iter().enumerate() {
-        for cr in compiled_rules {
-            if (cr.rule.applies_to.is_empty() || cr.rule.applies_to == "line")
-                && matches_compiled_rule(cr, line, file_path)
-            {
-                violations.push((cr.rule.id.clone(), cr.rule.name.clone(), i + 1));
-            }
-        }
-    }
+    let facts = file_facts(file_path, content, lang);
+    let FileFacts {
+        total_lines,
+        blank_lines,
+        comment_lines,
+        code_lines,
+        ref functions,
+        max_nesting,
+        max_nesting_line,
+        deep_lines,
+        ref long_functions,
+        imports,
+        ref violations,
+    } = facts;
 
     // ─── Output ───
     let mut out = vec![
@@ -829,7 +1053,7 @@ pub async fn analyze_file(
     if !long_functions.is_empty() {
         out.push(String::new());
         out.push("### Long Functions (>50 lines)\n".to_string());
-        for (name, length) in &long_functions {
+        for (name, length) in long_functions {
             let short = name.chars().take(60).collect::<String>();
             out.push(format!("- `{short}` — ~{length} lines"));
         }
@@ -838,14 +1062,12 @@ pub async fn analyze_file(
     // Violations
     if !violations.is_empty() {
         out.push(String::new());
-        let unique: std::collections::BTreeMap<String, usize> = violations.iter()
-            .fold(std::collections::BTreeMap::new(), |mut acc, (id, _, _)| {
-                *acc.entry(id.clone()).or_insert(0) += 1;
-                acc
-            });
+        let mut unique: BTreeMap<&str, (&str, usize)> = BTreeMap::new();
+        for v in violations {
+            unique.entry(&v.rule_id).or_insert((&v.name, 0)).1 += 1;
+        }
         out.push(format!("### Lint Violations ({})\n", violations.len()));
-        for (id, count) in &unique {
-            let name = violations.iter().find(|(rid, _, _)| rid == id).map(|(_, n, _)| n.as_str()).unwrap_or("?");
+        for (id, (name, count)) in &unique {
             out.push(format!("- **[{id}]** {name}: {count} occurrences"));
         }
     } else {
@@ -853,31 +1075,12 @@ pub async fn analyze_file(
         out.push("### Lint: No violations".to_string());
     }
 
-    // Summary score
-    let mut score = 100i32;
-    if total_lines > 500 { score -= 20; }
-    if total_lines > 300 { score -= 10; }
-    if functions.len() > 20 { score -= 15; }
-    if max_nesting >= 6 { score -= 20; }
-    else if max_nesting >= 4 { score -= 10; }
-    if imports > 15 { score -= 10; }
-    if comment_lines == 0 && code_lines > 50 { score -= 5; }
-    score -= (long_functions.len() as i32) * 5;
-    score -= (violations.len() as i32).min(20);
-    score = score.max(0);
-
-    let grade = match score {
-        90..=100 => "A",
-        75..=89 => "B",
-        60..=74 => "C",
-        40..=59 => "D",
-        _ => "F",
-    };
+    let (score, grade) = facts.score();
 
     out.push(String::new());
     out.push(format!("### Quality Score: {score}/100 (Grade {grade})"));
 
-    Ok(out.join("\n"))
+    out.join("\n")
 }
 
 /// Analyze all source files in a project: fetch tree, fetch file contents concurrently,
@@ -982,8 +1185,11 @@ pub async fn analyze_project(
                 Err(_) => continue,
             };
 
-            let content_b64 = file_info["content"].as_str().unwrap_or("");
-            let content = base64_decode(content_b64);
+            // A file that does not decode is skipped, like one that failed to
+            // fetch — scoring a corrupted payload would report a fiction.
+            let Ok(content) = crate::tools::encoding::file_text(&file_info) else {
+                continue;
+            };
             let lang = detect_language(&file_path);
 
             all_metrics.push(compute_file_metrics(&file_path, &content, lang));
@@ -999,7 +1205,7 @@ pub async fn analyze_project(
     all_metrics.sort_by(|a, b| a.score.cmp(&b.score));
 
     // Grade counts
-    let mut grade_counts: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut grade_counts: BTreeMap<Grade, usize> = BTreeMap::new();
     for m in &all_metrics {
         *grade_counts.entry(m.grade).or_insert(0) += 1;
     }
@@ -1007,20 +1213,14 @@ pub async fn analyze_project(
     let total_analyzed = all_metrics.len();
     let avg_score: f64 =
         all_metrics.iter().map(|m| m.score as f64).sum::<f64>() / total_analyzed as f64;
-    let avg_grade = match avg_score as i32 {
-        90..=100 => "A",
-        75..=89 => "B",
-        60..=74 => "C",
-        40..=59 => "D",
-        _ => "F",
-    };
+    let avg_grade = Grade::from_score(avg_score as i32);
 
     if summary_only {
-        let grade_a = grade_counts.get("A").copied().unwrap_or(0);
-        let grade_b = grade_counts.get("B").copied().unwrap_or(0);
-        let grade_c = grade_counts.get("C").copied().unwrap_or(0);
-        let grade_d = grade_counts.get("D").copied().unwrap_or(0);
-        let grade_f = grade_counts.get("F").copied().unwrap_or(0);
+        let grade_a = grade_counts.get(&Grade::A).copied().unwrap_or(0);
+        let grade_b = grade_counts.get(&Grade::B).copied().unwrap_or(0);
+        let grade_c = grade_counts.get(&Grade::C).copied().unwrap_or(0);
+        let grade_d = grade_counts.get(&Grade::D).copied().unwrap_or(0);
+        let grade_f = grade_counts.get(&Grade::F).copied().unwrap_or(0);
 
         // Collect top issues
         let mut issue_counts: BTreeMap<(String, String), usize> = BTreeMap::new();
@@ -1053,9 +1253,9 @@ pub async fn analyze_project(
         "|-------|-------|---|".to_string(),
     ];
 
-    let grade_labels = [("A", "90-100"), ("B", "75-89"), ("C", "60-74"), ("D", "40-59"), ("F", "<40")];
-    for (g, range) in &grade_labels {
-        let count = grade_counts.get(g).copied().unwrap_or(0);
+    for g in Grade::ALL {
+        let range = g.band();
+        let count = grade_counts.get(&g).copied().unwrap_or(0);
         let pct = if total_analyzed > 0 {
             count as f64 / total_analyzed as f64 * 100.0
         } else {
@@ -1311,10 +1511,7 @@ pub fn validate_commit_message(msg: &str) -> CommitMessageReport {
         .iter()
         .any(|p| subject_lower.starts_with(&p.to_lowercase()));
 
-    let has_ticket_ref = regex::Regex::new(r"[A-Z]{2,10}-\d+")
-        .ok()
-        .map(|re| re.is_match(msg))
-        .unwrap_or(false);
+    let has_ticket_ref = has_ticket_ref(msg);
 
     let subject_length = subject.len();
     let is_too_long = subject_length > 72;
@@ -1347,196 +1544,449 @@ pub struct FileMetricsPub {
     pub max_nesting: usize,
     pub violations: usize,
     pub score: i32,
-    pub grade: &'static str,
+    pub grade: Grade,
     pub violation_details: Vec<(String, String)>,
 }
 
-/// Public base64 decode for cross-module use.
-pub fn base64_decode_pub(input: &str) -> String {
-    base64_decode(input)
-}
 
 /// Compute quality metrics for a file given its content and detected language.
 /// Reuses the same scoring logic as analyze_project.
 pub fn compute_file_metrics(file_path: &str, content: &str, lang: &str) -> FileMetricsPub {
-    let lines: Vec<&str> = content.lines().collect();
-    let total_lines = lines.len();
-
-    if total_lines == 0 {
-        return FileMetricsPub {
-            path: file_path.to_string(),
-            total_lines: 0,
-            functions: 0,
-            max_nesting: 0,
-            violations: 0,
-            score: 100,
-            grade: "A",
-            violation_details: Vec::new(),
-        };
-    }
-
-    // Function detection
-    let func_pattern = match lang {
-        "Swift" => r"(?:func|init)\s+",
-        "PHP" => r"function\s+\w+",
-        "Go" => r"func\s+",
-        "Kotlin" | "Java" => r"fun\s+",
-        "TypeScript" | "JavaScript" => r"(?:function\s+|(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?(?:\([^)]*\)|[a-zA-Z_]\w*)\s*=>)",
-        "Rust" => r"fn\s+",
-        "Python" => r"def\s+",
-        _ => r"function\s+|func\s+|fn\s+|def\s+",
-    };
-    let func_re = regex::Regex::new(func_pattern).ok();
-    let mut func_count = 0usize;
-    let mut func_starts: Vec<usize> = Vec::new();
-    if let Some(re) = &func_re {
-        for (i, line) in lines.iter().enumerate() {
-            if re.is_match(line) {
-                func_count += 1;
-                func_starts.push(i);
-            }
-        }
-    }
-
-    // Nesting depth
-    let mut max_nesting: usize = 0;
-    let indent_size: usize = 4;
-    for line in &lines {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let tab_adjusted: usize = line
-            .chars()
-            .take_while(|c| c.is_whitespace())
-            .map(|c| if c == '\t' { indent_size } else { 1 })
-            .sum();
-        let nesting = tab_adjusted / indent_size;
-        if nesting > max_nesting {
-            max_nesting = nesting;
-        }
-    }
-
-    // Long functions
-    let mut long_func_count = 0usize;
-    for i in 0..func_starts.len() {
-        let start = func_starts[i];
-        let end = if i + 1 < func_starts.len() {
-            func_starts[i + 1]
-        } else {
-            total_lines
-        };
-        if end - start > 50 {
-            long_func_count += 1;
-        }
-    }
-
-    // Lint violations
-    let compiled_rules = get_compiled_rules(lang);
-    let mut violation_details: Vec<(String, String)> = Vec::new();
-    let mut violation_count = 0usize;
-    for line in &lines {
-        for cr in compiled_rules {
-            if (cr.rule.applies_to.is_empty() || cr.rule.applies_to == "line")
-                && matches_compiled_rule(cr, line, file_path)
-            {
-                violation_count += 1;
-                violation_details.push((cr.rule.id.clone(), cr.rule.name.clone()));
-            }
-        }
-    }
-
-    // Imports
-    let import_pattern = match lang {
-        "Swift" => "import ",
-        "PHP" => "use ",
-        "Go" => "import",
-        "TypeScript" | "JavaScript" => "import ",
-        "Rust" => "use ",
-        "Python" => "import ",
-        "Kotlin" | "Java" => "import ",
-        _ => "import ",
-    };
-    let imports = lines.iter().filter(|l| l.trim().starts_with(import_pattern)).count();
-    let comment_lines = lines.iter().filter(|l| {
-        let t = l.trim();
-        t.starts_with("//") || t.starts_with('#') || t.starts_with("/*") || t.starts_with('*')
-    }).count();
-    let code_lines = total_lines - lines.iter().filter(|l| l.trim().is_empty()).count() - comment_lines;
-
-    // Score
-    let mut score = 100i32;
-    if total_lines > 500 { score -= 20; }
-    else if total_lines > 300 { score -= 10; }
-    if func_count > 20 { score -= 15; }
-    if max_nesting >= 6 { score -= 20; }
-    else if max_nesting >= 4 { score -= 10; }
-    if imports > 15 { score -= 10; }
-    if comment_lines == 0 && code_lines > 50 { score -= 5; }
-    score -= (long_func_count as i32) * 5;
-    score -= (violation_count as i32).min(20);
-    score = score.max(0);
-
-    let grade = match score {
-        90..=100 => "A",
-        75..=89 => "B",
-        60..=74 => "C",
-        40..=59 => "D",
-        _ => "F",
-    };
-
+    let facts = file_facts(file_path, content, lang);
+    let (score, grade) = facts.score();
     FileMetricsPub {
         path: file_path.to_string(),
-        total_lines,
-        functions: func_count,
-        max_nesting,
-        violations: violation_count,
+        total_lines: facts.total_lines,
+        functions: facts.functions.len(),
+        max_nesting: facts.max_nesting,
+        violations: facts.violations.len(),
         score,
         grade,
-        violation_details,
+        violation_details: facts.violations.into_iter().map(|v| (v.rule_id, v.name)).collect(),
     }
 }
 
-fn base64_decode(input: &str) -> String {
-    // GitLab returns base64-encoded file content
-    let cleaned: String = input.chars().filter(|c| !c.is_whitespace()).collect();
-    let bytes = base64_decode_bytes(&cleaned);
-    String::from_utf8_lossy(&bytes).to_string()
-}
 
-fn base64_decode_bytes(input: &str) -> Vec<u8> {
-    const TABLE: [u8; 256] = {
-        let mut t = [255u8; 256];
-        let mut i = 0u8;
-        while i < 26 { t[(b'A' + i) as usize] = i; i += 1; }
-        let mut i = 0u8;
-        while i < 26 { t[(b'a' + i) as usize] = 26 + i; i += 1; }
-        let mut i = 0u8;
-        while i < 10 { t[(b'0' + i) as usize] = 52 + i; i += 1; }
-        t[b'+' as usize] = 62;
-        t[b'/' as usize] = 63;
-        t
-    };
-    let bytes = input.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
-    let mut i = 0;
-    while i + 3 < bytes.len() {
-        let a = TABLE[bytes[i] as usize] as u32;
-        let b = TABLE[bytes[i+1] as usize] as u32;
-        let c = TABLE[bytes[i+2] as usize] as u32;
-        let d = TABLE[bytes[i+3] as usize] as u32;
-        if a == 255 || b == 255 { break; }
-        let triple = (a << 18) | (b << 12) | (c << 6) | d;
-        out.push((triple >> 16) as u8);
-        if bytes[i+2] != b'=' { out.push((triple >> 8) as u8); }
-        if bytes[i+3] != b'=' { out.push(triple as u8); }
-        i += 4;
-    }
-    out
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ─── Golden master: pins the analysis output byte-for-byte across refactors ───
+
+    /// Synthetic sources in every language the analyzer distinguishes, built to
+    /// cross the thresholds: long functions, deep nesting, comments, imports, and
+    /// lines that trip rules. Regenerate with `UPDATE_GOLDEN=1 cargo test golden`.
+    fn golden_inputs() -> Vec<(&'static str, String)> {
+        let deep = |d: usize| format!("{}x = 1;", "    ".repeat(d));
+        let long_body = |n: usize| (0..n).map(|i| format!("    let v{i} = {i};")).collect::<Vec<_>>().join("\n");
+        vec![
+            ("src/lib.rs", format!("use std::io;\nuse std::fmt;\n// helper\nfn a() {{\n{}\n}}\nfn b() {{\n{}\n{}\n}}\n// TODO fix this\nlet port = 8080;", long_body(55), deep(5), deep(7))),
+            ("app/Ctrl.php", "<?php\nuse App\\Models\\User;\nfunction handle() {\n    $x = $request->input('email');\n    // TODO clean up\n    return 4096;\n}\n".to_string()),
+            ("App/View.swift", "import UIKit\nfunc load() {\n    print(\"user \\(name)\")\n}\ninit(frame: CGRect) {}\n".to_string()),
+            ("cmd/main.go", "package main\nimport \"fmt\"\nfunc main() {\n\tif true {\n\t\tif true {\n\t\t\tif true {\n\t\t\t\tfmt.Println(1)\n\t\t\t}\n\t\t}\n\t}\n}\n".to_string()),
+            ("src/Main.kt", "import a.b\nfun main() {\n    val x = 1\n}\nfun other() {}\n".to_string()),
+            ("web/app.ts", "import x from 'y';\nfunction f() {}\nconst g = async (a) => a;\nlet h = b => b;\n".to_string()),
+            ("tools/run.py", "import os\n# comment\ndef main():\n    pass\n".to_string()),
+            ("deploy/site.yml", format!("- hosts: all\n  vars:\n    password: {}\n", ["sample", "value", "42"].concat())),
+            ("notes.unknownext", "just some text\nfn looks_like(x)\n".to_string()),
+        ]
+    }
+
+    fn golden_render(path: &str, content: &str) -> String {
+        let lang = crate::tools::commits::detect_language(path);
+        let m = compute_file_metrics(path, content, lang);
+        format!(
+            "{}\n---\ntotal={} functions={} max_nesting={} violations={} score={} grade={} details={:?}\n",
+            analyze_content(path, "main", content),
+            m.total_lines, m.functions, m.max_nesting, m.violations, m.score, m.grade, m.violation_details
+        )
+    }
+
+    #[test]
+    fn golden_analysis_output_is_unchanged() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/lint");
+        let update = std::env::var_os("UPDATE_GOLDEN").is_some();
+        let mut drift = Vec::new();
+        for (path, content) in golden_inputs() {
+            let file = dir.join(format!("{}.txt", path.replace('/', "__")));
+            let got = golden_render(path, &content);
+            if update {
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(&file, &got).unwrap();
+                continue;
+            }
+            let want = std::fs::read_to_string(&file).unwrap_or_else(|_| panic!("missing golden {}", file.display()));
+            if got != want {
+                drift.push(format!("{path}\n--- want\n{want}\n--- got\n{got}"));
+            }
+        }
+        assert!(drift.is_empty(), "analysis output changed:\n{}", drift.join("\n\n"));
+    }
+
+    #[test]
+    fn function_patterns_all_compile() {
+        // Forces the LazyLock: a bad constant pattern fails here, not in production.
+        assert_eq!(FUNCTION_RES.len(), FUNCTION_PATTERNS.len());
+        assert!(FALLBACK_FUNCTION_RE.is_match("def x"));
+    }
+
+    #[test]
+    fn each_language_detects_its_own_declarations_only() {
+        let cases: &[(&str, &str, &str)] = &[
+            ("Swift", "func load()", "def load():"),
+            ("Swift", "init(frame: x)", "fn load()"),
+            ("Swift", "convenience init?(x: Int)", "let initial = 1"),
+            ("PHP", "function handle()", "function ()"),
+            ("Go", "func main()", "def main():"),
+            ("Kotlin", "fun main()", "func main()"),
+            ("Java", "fun main()", "def main()"),
+            ("TypeScript", "const f = async (a) => a;", "const f = 1;"),
+            ("JavaScript", "let h = b => b;", "def h():"),
+            ("Rust", "fn main()", "def main():"),
+            ("Python", "def main():", "fn main()"),
+        ];
+        for &(lang, yes, no) in cases {
+            assert!(function_regex(lang).is_match(yes), "{lang} should detect {yes:?}");
+            assert!(!function_regex(lang).is_match(no), "{lang} should not detect {no:?}");
+        }
+        assert!(function_regex("Unknown").is_match("fn x()"));
+        assert!(function_regex("Unknown").is_match("function x()"));
+    }
+
+    #[test]
+    fn import_prefix_per_language() {
+        assert_eq!(import_prefix("PHP"), "use ");
+        assert_eq!(import_prefix("Rust"), "use ");
+        assert_eq!(import_prefix("Go"), "import");
+        assert_eq!(import_prefix("Swift"), "import ");
+        assert_eq!(import_prefix("Unknown"), "import ");
+    }
+
+    #[test]
+    fn nesting_counts_a_tab_as_one_level() {
+        assert_eq!(nesting_level("x"), 0);
+        assert_eq!(nesting_level("   x"), 0, "three spaces is not a level");
+        assert_eq!(nesting_level("    x"), 1);
+        assert_eq!(nesting_level("\t\tx"), 2);
+        assert_eq!(nesting_level("\t    x"), 2, "mixed tab and spaces");
+    }
+
+    #[test]
+    fn ticket_reference_needs_two_to_ten_capitals() {
+        assert!(has_ticket_ref("fix: PROJ-12 thing"));
+        assert!(has_ticket_ref("AB-1"));
+        assert!(!has_ticket_ref("A-1"), "single letter is not a project key");
+        assert!(!has_ticket_ref("utf-8 handling"));
+        assert!(!has_ticket_ref("no ticket"));
+    }
+
+    #[test]
+    fn file_facts_boundaries() {
+        let body = |n: usize| (0..n).map(|_| "  x").collect::<Vec<_>>().join("\n");
+        // A function of exactly 50 lines is not long; 51 is.
+        let fifty = format!("fn a() {{\n{}", body(49));
+        let fifty_one = format!("fn a() {{\n{}", body(50));
+        assert!(file_facts("a.rs", &fifty, "Rust").long_functions.is_empty());
+        assert_eq!(file_facts("a.rs", &fifty_one, "Rust").long_functions.len(), 1);
+        let f = file_facts("a.rs", "use a;\n\n// c\n                x", "Rust");
+        assert_eq!((f.total_lines, f.blank_lines, f.comment_lines, f.code_lines), (4, 1, 1, 2));
+        assert_eq!((f.imports, f.max_nesting, f.max_nesting_line, f.deep_lines), (1, 4, 4, 1));
+        let empty = file_facts("a.rs", "", "Rust");
+        assert_eq!(empty.score(), (100, Grade::A));
+    }
+
+    // ─── Rule files: the gate that makes a broken rule loud ───
+
+    /// Every embedded rule source, as the binary sees it.
+    const RULE_SOURCES: &[(&str, &str)] = &[
+        ("global.toml", include_str!("../../rules/global.toml")),
+        ("php.toml", include_str!("../../rules/php.toml")),
+        ("kotlin.toml", include_str!("../../rules/kotlin.toml")),
+        ("swift.toml", include_str!("../../rules/swift.toml")),
+        ("go.toml", include_str!("../../rules/go.toml")),
+        ("typescript.toml", include_str!("../../rules/typescript.toml")),
+        ("ansible.toml", include_str!("../../rules/ansible.toml")),
+    ];
+
+    #[test]
+    fn every_rule_file_parses_and_every_pattern_compiles() {
+        // At runtime both failures are silent by design (a bad rule must not take the
+        // server down): a TOML error empties a whole language, and a pattern the
+        // linear-time engine rejects — lookaround, an unescaped `{` — disables the
+        // rule, or, for a negative_pattern, removes its exclusion so it fires on
+        // lines it was meant to skip. Rules are embedded at compile time, so this is
+        // where they have to fail instead.
+        let mut problems = Vec::new();
+        for (file, src) in RULE_SOURCES {
+            let parsed: RuleFile = match toml::from_str(src) {
+                Ok(p) => p,
+                Err(e) => {
+                    problems.push(format!("{file}: TOML does not parse: {e}"));
+                    continue;
+                }
+            };
+            if parsed.rule.is_empty() {
+                problems.push(format!("{file}: parses to zero rules"));
+            }
+            for r in &parsed.rule {
+                for (field, pat) in [
+                    ("pattern", &r.pattern),
+                    ("negative_pattern", &r.negative_pattern),
+                    ("negative_file_pattern", &r.negative_file_pattern),
+                ] {
+                    if !pat.is_empty() {
+                        if let Err(e) = regex::Regex::new(pat) {
+                            let why = e.to_string().lines().last().unwrap_or("").to_string();
+                            problems.push(format!("{file} {} {field}: {why}", r.id));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(problems.is_empty(), "broken rules:\n  {}", problems.join("\n  "));
+    }
+
+    #[test]
+    fn rule_ids_are_unique_across_all_files() {
+        let mut seen = std::collections::HashMap::new();
+        for (file, src) in RULE_SOURCES {
+            let parsed: RuleFile = toml::from_str(src).expect("parses");
+            for r in parsed.rule {
+                if let Some(prev) = seen.insert(r.id.clone(), *file) {
+                    panic!("rule id {} defined in both {prev} and {file}", r.id);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn language_sets_include_the_global_rules_and_aliases_resolve() {
+        let global = get_compiled_rules("global").len();
+        assert!(global > 0);
+        for lang in ["PHP", "Kotlin", "Swift", "Go", "TypeScript", "YAML/Ansible"] {
+            assert!(get_compiled_rules(lang).len() > global, "{lang} must add to the global set");
+        }
+        assert_eq!(get_compiled_rules("Java").len(), get_compiled_rules("Kotlin").len());
+        assert_eq!(get_compiled_rules("Vue").len(), get_compiled_rules("TypeScript").len());
+        // An unknown language falls back to the global set rather than to nothing.
+        assert_eq!(get_compiled_rules("Cobol").len(), global);
+    }
+
+    fn fires(id: &str, lang: &str, line: &str, path: &str) -> bool {
+        get_compiled_rules(lang)
+            .iter()
+            .filter(|cr| cr.rule.id == id)
+            .any(|cr| matches_compiled_rule(cr, line, path))
+    }
+
+    #[test]
+    fn rewritten_rules_fire_where_they_should_and_not_where_they_should_not() {
+        // G003 / PHP014 — these never fired before (lookahead).
+        assert!(fires("G003", "global", "// TODO: handle retries", "a.rs"));
+        assert!(!fires("G003", "global", "// TODO PROJ-12 handle retries", "a.rs"));
+        assert!(fires("PHP014", "PHP", "// TODO clean this up", "a.php"));
+        assert!(!fires("PHP014", "PHP", "// TODO APP-7 clean this up", "a.php"));
+        // PHP009 — raw request input, unless validated on the same line.
+        assert!(fires("PHP009", "PHP", "$x = $request->input('email');", "a.php"));
+        assert!(!fires("PHP009", "PHP", "$x = $request->input('email')->validate();", "a.php"));
+        // ANS001 — its exclusion was dead, so it fired on vaulted values too.
+        let line = format!("password: {}", ["sample", "value", "42"].concat());
+        assert!(fires("ANS001", "YAML/Ansible", &line, "x.yml"));
+        assert!(!fires("ANS001", "YAML/Ansible", "password: \"{{ vault_db_password }}\"", "x.yml"));
+        // SW017 — interpolation in a log call; never fired before (unclosed group).
+        assert!(fires("SW017", "Swift", r#"print("user \(name) logged in")"#, "a.swift"));
+        assert!(!fires("SW017", "Swift", r#"print("static message")"#, "a.swift"));
+        // Magic numbers: a bare literal fires, an arithmetic expression does not.
+        assert!(fires("G007", "global", "if retries > 4096 {", "a.rs"));
+        assert!(!fires("G007", "global", "let buf = 1024 * 1024;", "a.rs"));
+        assert!(!fires("G007", "global", "let pi = 3.14159;", "a.rs"));
+    }
+
+    #[test]
+    fn a_rule_without_a_pattern_never_matches_and_negatives_exclude() {
+        let rule = |pattern: &str, neg: &str, neg_file: &str| {
+            CompiledRule::compile(Rule {
+                id: "T1".into(),
+                severity: RuleSeverity::Warning,
+                name: "t".into(),
+                pattern: pattern.into(),
+                negative_pattern: neg.into(),
+                negative_file_pattern: neg_file.into(),
+                applies_to: String::new(),
+                max_additions: 0,
+                message: "m".into(),
+            })
+        };
+        assert!(!matches_compiled_rule(&rule("", "", ""), "anything", "a.rs"));
+        assert!(matches_compiled_rule(&rule("foo", "", ""), "a foo b", "a.rs"));
+        assert!(!matches_compiled_rule(&rule("foo", "", ""), "a bar b", "a.rs"));
+        assert!(!matches_compiled_rule(&rule("foo", "ok", ""), "foo ok", "a.rs"));
+        assert!(!matches_compiled_rule(&rule("foo", "", r"_test\.rs$"), "foo", "x_test.rs"));
+        assert!(matches_compiled_rule(&rule("foo", "", r"_test\.rs$"), "foo", "x.rs"));
+    }
+
+    // ─── Scoring: one decision, pinned at every boundary ───
+
+    fn inputs() -> ScoreInputs {
+        ScoreInputs {
+            total_lines: 100,
+            func_count: 5,
+            max_nesting: 1,
+            imports: 3,
+            comment_lines: 10,
+            code_lines: 80,
+            long_funcs: 0,
+            violations: 0,
+        }
+    }
+
+    #[test]
+    fn a_clean_file_scores_a_hundred() {
+        assert_eq!(quality_score(&inputs()), (100, Grade::A));
+    }
+
+    #[test]
+    fn length_penalty_is_tiered_not_cumulative() {
+        // The drift bug: one copy charged a >500-line file both tiers (-30).
+        let at = |n| quality_score(&ScoreInputs { total_lines: n, ..inputs() }).0;
+        assert_eq!(at(300), 100);
+        assert_eq!(at(301), 90);
+        assert_eq!(at(500), 90);
+        assert_eq!(at(501), 80, "very long is -20, not -20 and -10");
+    }
+
+    #[test]
+    fn every_other_threshold_sits_exactly_where_documented() {
+        let s = |m: ScoreInputs| quality_score(&m).0;
+        assert_eq!(s(ScoreInputs { func_count: 20, ..inputs() }), 100);
+        assert_eq!(s(ScoreInputs { func_count: 21, ..inputs() }), 85);
+        assert_eq!(s(ScoreInputs { max_nesting: 3, ..inputs() }), 100);
+        assert_eq!(s(ScoreInputs { max_nesting: 4, ..inputs() }), 90);
+        assert_eq!(s(ScoreInputs { max_nesting: 5, ..inputs() }), 90);
+        assert_eq!(s(ScoreInputs { max_nesting: 6, ..inputs() }), 80, "tiered, not -30");
+        assert_eq!(s(ScoreInputs { imports: 15, ..inputs() }), 100);
+        assert_eq!(s(ScoreInputs { imports: 16, ..inputs() }), 90);
+        // Uncommented code is only penalised past 50 lines of it.
+        assert_eq!(s(ScoreInputs { comment_lines: 0, code_lines: 50, ..inputs() }), 100);
+        assert_eq!(s(ScoreInputs { comment_lines: 0, code_lines: 51, ..inputs() }), 95);
+        assert_eq!(s(ScoreInputs { comment_lines: 1, code_lines: 51, ..inputs() }), 100);
+        assert_eq!(s(ScoreInputs { long_funcs: 3, ..inputs() }), 85);
+        // Violations cost one point each, capped at twenty.
+        assert_eq!(s(ScoreInputs { violations: 7, ..inputs() }), 93);
+        assert_eq!(s(ScoreInputs { violations: 20, ..inputs() }), 80);
+        assert_eq!(s(ScoreInputs { violations: 500, ..inputs() }), 80);
+    }
+
+    #[test]
+    fn the_score_floors_at_zero_and_grades_break_where_stated() {
+        let worst = ScoreInputs {
+            total_lines: 9000,
+            func_count: 99,
+            max_nesting: 9,
+            imports: 99,
+            comment_lines: 0,
+            code_lines: 9000,
+            long_funcs: 40,
+            violations: 99,
+        };
+        assert_eq!(quality_score(&worst), (0, Grade::F));
+        let grade = |v: usize| quality_score(&ScoreInputs { violations: v, ..inputs() }).1;
+        assert_eq!(grade(10), Grade::A); // 90
+        assert_eq!(grade(11), Grade::B); // 89
+        // Grades below B need more than violations alone can remove (capped at 20).
+        let g = |long| quality_score(&ScoreInputs { long_funcs: long, ..inputs() });
+        assert_eq!(g(5), (75, Grade::B));
+        assert_eq!(g(6), (70, Grade::C));
+        assert_eq!(g(8), (60, Grade::C));
+        assert_eq!(g(9), (55, Grade::D));
+        assert_eq!(g(12), (40, Grade::D));
+        assert_eq!(g(13), (35, Grade::F));
+    }
+
+    #[test]
+    fn function_lengths_run_to_the_next_start_and_the_last_to_eof() {
+        assert_eq!(function_lengths(&[], 10), Vec::<usize>::new());
+        assert_eq!(function_lengths(&[0], 10), vec![10]);
+        assert_eq!(function_lengths(&[0, 4, 9], 12), vec![4, 5, 3]);
+    }
+
+    // ─── The two analyses must agree ───
+
+    fn score_in_report(report: &str) -> i32 {
+        let tail = report.split("Quality Score: ").nth(1).expect("report has a score");
+        tail.split('/').next().unwrap().trim().parse().expect("numeric score")
+    }
+
+    #[test]
+    fn analyze_file_and_analyze_project_score_the_same_file_identically() {
+        // Regression for the drift: the same file used to score differently depending
+        // on which tool was asked. Exercise the paths where the copies disagreed —
+        // a very long file, and a long function sitting at the end of the file.
+        let body = |n: usize| (0..n).map(|i| format!("    let v{i} = {i};")).collect::<Vec<_>>().join("\n");
+        let cases = [
+            ("short.rs", format!("fn a() {{\n{}\n}}", body(10))),
+            ("long.rs", format!("fn a() {{\n{}\n}}", body(600))),
+            ("tail.rs", format!("fn a() {{}}\nfn b() {{\n{}\n}}", body(49))),
+            ("mid.rs", format!("fn a() {{\n{}\n}}\nfn b() {{}}", body(320))),
+        ];
+        for (path, content) in &cases {
+            let lang = crate::tools::commits::detect_language(path);
+            let project = compute_file_metrics(path, content, lang).score;
+            let file = score_in_report(&analyze_content(path, "main", content));
+            assert_eq!(file, project, "{path}: analyze_file={file} analyze_project={project}");
+        }
+    }
+
+    #[test]
+    fn analyze_content_reports_metrics_violations_and_the_empty_case() {
+        assert_eq!(analyze_content("e.rs", "main", ""), "**e.rs** — empty file");
+        let src = "use std::io;\n// helper\nfn main() {\n    let token = \"abcdefghijklmnop\";\n}\n";
+        let out = analyze_content("src/main.rs", "dev", src);
+        assert!(out.contains("## src/main.rs"));
+        assert!(out.contains("**Branch:** dev"));
+        assert!(out.contains("| Total lines | 5 | OK |"));
+        assert!(out.contains("| Functions | 1 | OK |"));
+        assert!(out.contains("| Imports | 1 | OK |"));
+        assert!(out.contains("Quality Score:"));
+        let deep = format!("fn f() {{\n{}x\n}}", " ".repeat(24));
+        assert!(analyze_content("d.rs", "m", &deep).contains("Consider flattening")
+            || analyze_content("d.rs", "m", &deep).contains("Deeply nested"));
+    }
+
+    #[test]
+    fn list_rules_groups_by_severity_and_dedups_across_languages() {
+        let all = list_rules("");
+        assert!(all.starts_with("**Rules: "));
+        assert!(all.contains("CRITICAL"));
+        let ids: Vec<&str> = all.lines().filter_map(|l| l.split("**[").nth(1)).map(|t| t.split(']').next().unwrap()).collect();
+        let unique: std::collections::HashSet<_> = ids.iter().collect();
+        assert_eq!(ids.len(), unique.len(), "a rule listed twice");
+        assert!(list_rules("PHP").contains("PHP009"));
+        assert!(!list_rules("Go").contains("PHP009"));
+    }
+
+    #[test]
+    fn commit_message_conventions() {
+        let ok = validate_commit_message("feat(api): add retries PROJ-12");
+        assert!(ok.has_conventional_prefix && ok.has_ticket_ref && !ok.is_too_long);
+        assert!(ok.failures.is_empty());
+
+        let bad = validate_commit_message("updated stuff");
+        assert!(!bad.has_conventional_prefix && !bad.has_ticket_ref);
+        assert_eq!(bad.failures, vec!["no conventional prefix", "no ticket reference"]);
+
+        // The limit is 72: 72 passes, 73 fails.
+        let at = |n: usize| validate_commit_message(&format!("fix: {} PROJ-1", "x".repeat(n - 12)));
+        assert_eq!(at(72).subject_length, 72);
+        assert!(!at(72).is_too_long);
+        assert!(at(73).is_too_long);
+        assert!(at(73).failures.contains(&"subject >72 chars".to_string()));
+        // Prefix match is case-insensitive; only the first line is the subject.
+        assert!(validate_commit_message("FIX: thing ABC-1").has_conventional_prefix);
+        assert_eq!(validate_commit_message("fix: a\n\nbody ABC-9").subject_length, 6);
+        assert!(validate_commit_message("fix: a\n\nrefs ABC-9").has_ticket_ref, "ticket may live in the body");
+    }
 
     #[test]
     fn test_should_skip_lint_file() {

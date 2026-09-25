@@ -1,0 +1,21 @@
+## tools/run.py
+
+**Language:** Python | **Branch:** main
+
+### Metrics
+
+| Metric | Value | Assessment |
+|--------|-------|------------|
+| Total lines | 4 | OK |
+| Code lines | 3 | |
+| Comments | 1 (25%) | OK |
+| Blank lines | 0 | |
+| Functions | 1 | OK |
+| Imports | 1 | OK |
+| Max nesting depth | 1 (line 4) | OK |
+
+### Lint: No violations
+
+### Quality Score: 100/100 (Grade A)
+---
+total=4 functions=1 max_nesting=1 violations=0 score=100 grade=A details=[]

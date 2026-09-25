@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.1] - 2026-09-25
+
+### Changed
+- **Caller errors are now tool errors.** Nineteen tools returned validation failures as successful text (`**Error:** …`), so clients saw `isError: false`. They now return a typed user-input error, reported with `isError: true` and kept out of Sentry.
+
+### Fixed
+- **Seven lint rules never fired.** Their patterns used lookaround syntax the `regex` crate rejects, and the loader dropped the compile error. The patterns are rewritten, invalid patterns are logged, and a test fails the build if any rule file does not parse or any pattern does not compile.
+- **File contents are decoded with the `base64` crate.** A hand-rolled decoder cut a file off at the first bad character and scored the rest as if it were the whole file. Malformed content is now an error.
+- **`analyze_file` and `analyze_project` grade a file identically.** The two score calculations had drifted: a double length penalty, and an off-by-one on the last function. Both now use one computation.
+- **The ticket-reference rate in reports matches commit validation.** The report accepted any capital letters (`A-1`, `UTF-8`).
+- **Swift initializers are counted as functions.** `init(` was never matched.
+- **HTML reports escape branch names, display names, project names, language names and SHAs.** Git allows `<` and `>` in branch names.
+- **Medians are correct for an even number of values.** Two reports used the upper middle element.
+- **The same branch-naming typo is listed once** in the developer report, instead of once per non-adjacent commit.
+- **Long non-ASCII file paths no longer panic the project report.** A byte-offset slice could land inside a multi-byte character.
+- **Float sorts use `total_cmp`.** Two sorts would panic on NaN.
+
+### Internal
+- Report renderers are pure functions split into sections and pinned by golden-master snapshots (`tests/golden/`; regenerate with `UPDATE_GOLDEN=1`). See ADR 056.
+- CI test failures now fail the build; previously the test step ended in `|| true`.
+- Optional API fetches log failures (`or_default_logged`) instead of silently defaulting to empty data.
+- `Grade`, `RuleSeverity` and security `Severity` are enums. Regexes are compiled once. `write!` replaces `push_str(&format!(..))`. `tokio::fs` replaces blocking `std::fs` in async code. The binary uses the library crate instead of recompiling every module.
+
 ## [1.11.0] - 2026-09-11
 
 ### Added

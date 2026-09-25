@@ -40,7 +40,7 @@ impl Teams {
         let teams: BTreeMap<String, Team> = match serde_json::from_str(&content) {
             Ok(t) => t,
             Err(e) => {
-                eprintln!("Warning: failed to parse teams.json: {e}");
+                tracing::warn!("failed to parse teams.json, starting with no teams: {e}");
                 return Self::default();
             }
         };
@@ -69,14 +69,14 @@ impl Teams {
         PathBuf::from(home).join(".gl-mcp").join("teams.json")
     }
 
-    /// Save teams to ~/.gl-mcp/teams.json
-    pub fn save(&self) -> std::io::Result<()> {
+    /// Save teams to ~/.gl-mcp/teams.json without blocking a runtime worker thread.
+    pub async fn save(&self) -> std::io::Result<()> {
         let path = Self::config_path();
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+            tokio::fs::create_dir_all(parent).await?;
         }
         let content = serde_json::to_string_pretty(&self.teams)?;
-        std::fs::write(&path, content)
+        tokio::fs::write(&path, content).await
     }
 
     /// Add or update a team.

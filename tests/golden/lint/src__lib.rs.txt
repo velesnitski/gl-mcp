@@ -1,0 +1,29 @@
+## src/lib.rs
+
+**Language:** Rust | **Branch:** main
+
+### Metrics
+
+| Metric | Value | Assessment |
+|--------|-------|------------|
+| Total lines | 66 | OK |
+| Code lines | 64 | |
+| Comments | 2 (3%) | OK |
+| Blank lines | 0 | |
+| Functions | 2 | OK |
+| Imports | 2 | OK |
+| Max nesting depth | 7 (line 63) | Deeply nested — refactor |
+| Lines at 4+ depth | 2 | Complexity indicator |
+
+### Long Functions (>50 lines)
+
+- `fn a() {` — ~57 lines
+
+### Lint Violations (3)
+
+- **[G003]** TODO without ticket: 1 occurrences
+- **[G006]** Deep nesting: 2 occurrences
+
+### Quality Score: 72/100 (Grade C)
+---
+total=66 functions=2 max_nesting=7 violations=3 score=72 grade=C details=[("G006", "Deep nesting"), ("G006", "Deep nesting"), ("G003", "TODO without ticket")]

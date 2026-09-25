@@ -1,7 +1,8 @@
 //! GitLab CI/CD pipeline tools.
 
+use std::fmt::Write as _;
 use crate::client::GitLabClient;
-use crate::error::Result;
+use crate::error::{Error, Result, ResultExt};
 use serde_json::Value;
 
 /// List pipelines for a project.
@@ -332,7 +333,7 @@ pub async fn analyze_pipeline_failures(
                         &[("updated_after", since.as_str()), ("per_page", "100")],
                     )
                     .await
-                    .unwrap_or_default();
+                    .or_default_logged();
                 (*pid, path.clone(), list)
             }
         });
@@ -389,7 +390,7 @@ pub async fn analyze_pipeline_failures(
         .filter(|r| r.automated && r.status == "success")
         .filter_map(|r| r.wall.or(if r.duration > 0.0 { Some(r.duration) } else { None }))
         .collect();
-    durs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    durs.sort_by(|a, b| a.total_cmp(b));
     // Bridge/child pipelines report a null duration, so this can legitimately be
     // empty — say so rather than printing a confident "0s".
     let median = match durs.get(durs.len() / 2) {
@@ -450,7 +451,7 @@ pub async fn analyze_pipeline_failures(
                     &[("per_page", "100")],
                 )
                 .await
-                .unwrap_or_default();
+                .or_default_logged();
             let failed = jobs
                 .iter()
                 .find(|j| j["status"].as_str() == Some("failed"))
@@ -468,7 +469,7 @@ pub async fn analyze_pipeline_failures(
                                 &[],
                             )
                             .await
-                            .unwrap_or_default(),
+                            .or_default_logged(),
                     );
                     // Keep a bounded tail for classification — the decisive
                     // evidence sits below the Error: header that names the cluster.
@@ -746,13 +747,12 @@ pub async fn get_pipeline(
         let queued = p["queued_duration"].as_f64().unwrap_or(0.0);
         let mut line = format!("**Wall clock:** {} (created → finished)", human_secs(wall));
         if queued >= 1.0 {
-            line.push_str(&format!(" · **queued {}**", human_secs(queued)));
+            let _ = write!(line, " · **queued {}**", human_secs(queued));
         }
         // Long idle with little execution is the signature of runner starvation.
         if wall > 300.0 && duration > 0.0 && wall > duration * 10.0 {
-            line.push_str(&format!(
-                " ⚠️ only {duration:.0}s executing — the rest was waiting"
-            ));
+            let _ = write!(line, " ⚠️ only {duration:.0}s executing — the rest was waiting"
+            );
         }
         parts.push(line);
     }
@@ -806,7 +806,7 @@ pub async fn get_pipeline(
                 if status == "failed" {
                     if let Some(reason) = job["failure_reason"].as_str() {
                         if !reason.is_empty() {
-                            line.push_str(&format!(" — {reason}"));
+                            let _ = write!(line, " — {reason}");
                         }
                     }
                 }
@@ -825,12 +825,12 @@ pub async fn get_pipeline(
     let mut bridges: Vec<Value> = client
         .get(&format!("{path}/trigger_jobs"), &[("per_page", "100")])
         .await
-        .unwrap_or_default();
+        .or_default_logged();
     if bridges.is_empty() {
         bridges = client
             .get(&format!("{path}/bridges"), &[("per_page", "100")])
             .await
-            .unwrap_or_default();
+            .or_default_logged();
     }
     if !bridges.is_empty() {
         parts.push(String::new());
@@ -865,7 +865,7 @@ pub async fn get_pipeline(
     let vars: Vec<Value> = client
         .get(&format!("{path}/variables"), &[])
         .await
-        .unwrap_or_default();
+        .or_default_logged();
     if !vars.is_empty() {
         parts.push(String::new());
         parts.push(format!("## Trigger variables ({})", vars.len()));
@@ -976,11 +976,7 @@ pub async fn get_job_log(
             .build()
         {
             Ok(re) => re,
-            Err(e) => {
-                return Ok(format!(
-                    "## Job #{job_id}: {name}\n{meta}\n\n**Invalid pattern** `{pattern}`: {e}"
-                ));
-            }
+            Err(e) => return Err(Error::user_input(format!("invalid pattern `{pattern}`: {e}"))),
         };
         let total_lines = log_text.lines().count();
         let (total, hits) = grep_lines(&log_text, &re, tail);
@@ -1040,9 +1036,9 @@ pub async fn create_pipeline_schedule(
     active: bool,
 ) -> Result<String> {
     if cron.split_whitespace().count() != 5 {
-        return Ok(format!(
-            "**Error:** `{cron}` is not a 5-field cron expression (minute hour day month weekday). Nothing was created."
-        ));
+        return Err(Error::user_input(format!(
+            "`{cron}` is not a 5-field cron expression (minute hour day month weekday). Nothing was created."
+        )));
     }
     let enc = urlencoding::encode(project_id);
 
@@ -1055,9 +1051,9 @@ pub async fn create_pipeline_schedule(
         )
         .await;
     if resolved.is_err() {
-        return Ok(format!(
-            "**Error:** ref `{ref_name}` does not resolve in {project_id}, so a schedule on it would be accepted by GitLab and then never fire. Nothing was created."
-        ));
+        return Err(Error::user_input(format!(
+            "ref `{ref_name}` does not resolve in {project_id}, so a schedule on it would be accepted by GitLab and then never fire. Nothing was created."
+        )));
     }
 
     let body = serde_json::json!({
@@ -1133,7 +1129,7 @@ pub async fn get_mr_pipelines(
         let status = p["status"].as_str().unwrap_or("?");
         let ref_name = p["ref"].as_str().unwrap_or("?");
         let sha = p["sha"].as_str().unwrap_or("?");
-        let sha_short = if sha.len() > 8 { &sha[..8] } else { sha };
+        let sha_short = sha.get(..8).unwrap_or(sha);
         let created = p["created_at"].as_str().unwrap_or("?");
 
         let status_icon = match status {
@@ -1208,9 +1204,9 @@ pub async fn set_ci_variable(
 ) -> Result<String> {
     let valid_types = ["env_var", "file"];
     if !valid_types.contains(&variable_type) {
-        return Ok(format!(
-            "**Error:** Invalid variable_type '{variable_type}'. Use 'env_var' or 'file'."
-        ));
+        return Err(Error::user_input(format!(
+            "Invalid variable_type '{variable_type}'. Use 'env_var' or 'file'."
+        )));
     }
 
     let path = format!(
@@ -1249,9 +1245,9 @@ pub async fn update_ci_variable(
     if let Some(vt) = variable_type {
         let valid_types = ["env_var", "file"];
         if !valid_types.contains(&vt) {
-            return Ok(format!(
-                "**Error:** Invalid variable_type '{vt}'. Use 'env_var' or 'file'."
-            ));
+            return Err(Error::user_input(format!(
+                "Invalid variable_type '{vt}'. Use 'env_var' or 'file'."
+            )));
         }
     }
 

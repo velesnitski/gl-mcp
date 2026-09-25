@@ -1,0 +1,24 @@
+## cmd/main.go
+
+**Language:** Go | **Branch:** main
+
+### Metrics
+
+| Metric | Value | Assessment |
+|--------|-------|------------|
+| Total lines | 11 | OK |
+| Code lines | 11 | |
+| Comments | 0 (0%) | No comments |
+| Blank lines | 0 | |
+| Functions | 1 | OK |
+| Imports | 1 | OK |
+| Max nesting depth | 4 (line 7) | Consider flattening |
+| Lines at 4+ depth | 1 | Complexity indicator |
+
+### Lint Violations (1)
+
+- **[GO002]** fmt.Println left in code: 1 occurrences
+
+### Quality Score: 89/100 (Grade B)
+---
+total=11 functions=1 max_nesting=4 violations=1 score=89 grade=B details=[("GO002", "fmt.Println left in code")]

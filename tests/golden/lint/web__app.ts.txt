@@ -1,0 +1,21 @@
+## web/app.ts
+
+**Language:** TypeScript | **Branch:** main
+
+### Metrics
+
+| Metric | Value | Assessment |
+|--------|-------|------------|
+| Total lines | 4 | OK |
+| Code lines | 4 | |
+| Comments | 0 (0%) | No comments |
+| Blank lines | 0 | |
+| Functions | 3 | OK |
+| Imports | 1 | OK |
+| Max nesting depth | 0 (line 0) | OK |
+
+### Lint: No violations
+
+### Quality Score: 100/100 (Grade A)
+---
+total=4 functions=3 max_nesting=0 violations=0 score=100 grade=A details=[]

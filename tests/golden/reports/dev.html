@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ada Example — <TODAY></title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f0f13;color:#e0e0e0;line-height:1.6}
+.c{max-width:860px;margin:0 auto;padding:20px}
+.hdr{background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);padding:28px;border-radius:14px;margin-bottom:18px;border:1px solid #1e2a3a}
+.hdr h1{font-size:22px;color:#fff} .hdr .sub{color:#7a8ba5;font-size:12px;margin-top:2px}
+.stats{display:flex;gap:14px;margin-top:16px;flex-wrap:wrap}
+.stat{background:rgba(255,255,255,.04);border:1px solid #1e2a3a;border-radius:8px;padding:10px 14px;min-width:80px;text-align:center}
+.stat b{font-size:20px;display:block;color:#fff} .stat small{font-size:9px;text-transform:uppercase;color:#5a6a7a;letter-spacing:.5px}
+.card{background:#161620;border:1px solid #1e2030;border-radius:10px;padding:20px;margin-bottom:14px}
+.card h2{font-size:13px;color:#8892a5;text-transform:uppercase;letter-spacing:.8px;border-bottom:1px solid #1e2030;padding-bottom:8px;margin-bottom:14px}
+.commit{margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid #1a1a2a}.commit:last-child{border:none;margin-bottom:0;padding-bottom:0}
+.cm-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sha{font-family:monospace;background:#1a1a2e;border:1px solid #252540;padding:2px 7px;border-radius:4px;font-size:11px;color:#64b5f6}
+.cm-msg{font-weight:600;color:#e0e0e0;font-size:13px}.cm-time{font-size:11px;color:#555;margin-left:auto}
+.badge{display:inline-block;padding:1px 7px;border-radius:3px;font-size:10px;font-weight:600}
+.b-lang{background:#1a1a3e;color:#7c8cf5;border:1px solid #2a2a50}
+.b-new{background:#0a2a1a;color:#4caf50;border:1px solid #1a4a2a}
+.b-open{background:#0a2a1a;color:#4caf50;border:1px solid #1a4a2a}
+.b-draft{background:#2a1a00;color:#ff9800;border:1px solid #4a3000}
+.b-rc{background:#1a0a2a;color:#ab47bc;border:1px solid #2a1a4a}
+.file{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px}
+.fp{font-family:monospace;color:#9aa0b0;font-size:11px}.add{color:#4caf50}.del{color:#ef5350}
+.fs{font-family:monospace;font-size:11px}
+.proj-tag{font-family:monospace;font-size:10px;color:#64b5f6;background:#0d1b2a;border:1px solid #1e2a3a;padding:1px 6px;border-radius:4px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;padding:6px 10px;color:#5a6a7a;font-size:10px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid #1e2030}
+td{padding:6px 10px;border-bottom:1px solid #151520}
+.alert{background:#1a0a0a;border:1px solid #3a1a1a;border-radius:8px;padding:12px 16px;margin-top:12px;font-size:12px;color:#ef9a9a}.alert b{color:#ef5350}
+.obs{border-radius:8px;padding:10px 16px;margin-bottom:8px;font-size:12px;border-left:4px solid}
+.obs-green{background:#0a1a0a;border-left-color:#4caf50;color:#a5d6a7}
+.obs-yellow{background:#1a1a0a;border-left-color:#ff9800;color:#ffe0b2}
+.obs-red{background:#1a0a0a;border-left-color:#ef5350;color:#ef9a9a}
+.foot{text-align:center;padding:24px;color:#3a3a4a;font-size:10px}
+.foot a{color:#4a4a6a;text-decoration:none}
+.grp-title{font-size:11px;color:#5a6a7a;text-transform:uppercase;letter-spacing:.5px;padding:8px 0 4px}
+
+@media print {
+  body { background: #fff !important; color: #000 !important; padding: 16px !important; }
+  h1, h2 { color: #000 !important; border-color: #ccc !important; }
+  .card { border-color: #ddd !important; background: #f8f8f8 !important; }
+  .card-t { color: #666 !important; }
+  .card-v, .card-s { color: #000 !important; }
+  .g, .b { color: #1a7f37 !important; }
+  .r { color: #cf222e !important; }
+  .y { color: #9a6700 !important; }
+  .sub, .m, .issue .m { color: #666 !important; }
+  th { background: #f0f0f0 !important; color: #333 !important; border-color: #ccc !important; }
+  td { border-color: #ddd !important; color: #000 !important; }
+  .issue { background: #f8f8f8 !important; border-color: #ddd !important; }
+  .risk { border-left-color: #cf222e !important; }
+  .warn { border-left-color: #9a6700 !important; }
+  .ok { border-left-color: #1a7f37 !important; }
+  .bar { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  footer { color: #999 !important; border-color: #ddd !important; }
+  footer a { color: #666 !important; }
+  .no-print { display: none !important; }
+  @page { margin: 1cm; }
+}
+
+</style>
+</head>
+<body>
+<div class="no-print" style="position:fixed;top:16px;right:16px;z-index:100">
+<button onclick="window.print()" style="background:#238636;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">Export PDF</button>
+</div>
+<div class="c">
+
+<div class="hdr">
+  <h1>Ada Example</h1>
+  <div class="sub">@ada &middot; Today &middot; <TODAY></div>
+  <div class="stats">
+    <div class="stat"><b>3</b><small>Commits</small></div>
+    <div class="stat"><b>+60 / -12</b><small>Lines</small></div>
+    <div class="stat"><b>4</b><small>Files</small></div>
+    <div class="stat"><b>3</b><small>Open MRs</small></div>
+    <div class="stat"><b>1</b><small>Merged</small></div>
+    <div class="stat"><b>2</b><small>Projects</small></div>
+  </div>
+</div>
+<div class="card">
+  <h2>Commits</h2>
+  <div class="commit">
+    <div class="cm-head">
+      <span class="sha">a1b2c3d4</span>
+      <span class="cm-msg">fix: PROJ-7 hitfix parser</span>
+      <span class="proj-tag">core/api</span>
+      <span class="cm-time">10:15</span>
+    </div>
+    <div style="margin:6px 0">
+      <div class="file"><span class="fp">src/lib.rs</span><span class="fs"><span class="add">+10</span> <span class="del">-2</span></span><span class="badge b-lang">Rust</span></div>
+      <div class="file"><span class="fp">tests/parser_test.rs</span><span class="fs"><span class="add">+10</span> <span class="del">-2</span></span><span class="badge b-lang">Rust</span></div>
+    </div>
+  </div>
+  <div class="commit">
+    <div class="cm-head">
+      <span class="sha">a1b2c3d4</span>
+      <span class="cm-msg">relase prep</span>
+      <span class="proj-tag">core/api</span>
+      <span class="cm-time">10:15</span>
+    </div>
+    <div style="margin:6px 0">
+      <div class="file"><span class="fp">src/new_mod.rs</span><span class="fs"><span class="add">+10</span> <span class="del">-2</span></span><span class="badge b-lang">Rust</span> <span class="badge b-new">NEW</span></div>
+    </div>
+  </div>
+  <div class="commit">
+    <div class="cm-head">
+      <span class="sha">a1b2c3d4</span>
+      <span class="cm-msg">hitfix again &lt;b&gt;</span>
+      <span class="proj-tag">web/site</span>
+      <span class="cm-time">10:15</span>
+    </div>
+    <div style="margin:6px 0">
+      <div class="file"><span class="fp">index.ts</span><span class="fs"><span class="add">+10</span> <span class="del">-2</span></span><span class="badge b-lang">Rust</span></div>
+    </div>
+  </div>
+</div>
+<div class="card">
+  <h2>Open Merge Requests &middot; 3</h2>
+  <div class="grp-title">main (1)</div>
+  <table>
+    <tr><td style="width:60px">!3</td><td>Parser</td><td style="width:60px"><span class="badge b-open">main</span></td></tr>
+  </table>
+  <div class="grp-title">release-RC1 (1)</div>
+  <table>
+    <tr><td style="width:60px">!4</td><td>Release</td><td style="width:60px"><span class="badge b-rc">release-RC1</span></td></tr>
+  </table>
+  <div class="grp-title">Drafts (1)</div>
+  <table>
+    <tr><td style="width:60px">!5</td><td>WIP</td><td style="width:60px"><span class="badge b-draft">Draft</span></td></tr>
+  </table>
+</div>
+<div class="card">
+  <h2>Observations</h2>
+  <div class="obs obs-yellow">&#9888; <b>Self-merging:</b> 1 MR(s) merged by their own author. Consider requiring external review.</div>
+  <div class="obs obs-red">&#10060; <b>Branch naming typos:</b> "hitfix" &rarr; "hotfix", "relase" &rarr; "release"</div>
+  <div class="obs obs-green">&#9989; <b>Test coverage:</b> 1 of 3 commits include test files (33%)</div>
+  <div class="obs obs-yellow">&#9888; <b>Weekend work:</b> 1 event(s) on Saturday/Sunday</div>
+  <div class="obs obs-yellow">&#9888; <b>Off-hours work:</b> 1 event(s) before 7am or after 10pm</div>
+  <div class="obs obs-red">&#10060; <b>Ticket references:</b> 1 of 3 commits reference tickets (33%)</div>
+  <div class="obs obs-red">&#10060; <b>No reviewers assigned:</b> 2 of 3 open MRs have no reviewers (66%)</div>
+</div>
+<div class="foot">made with &lt;3 by Alex Velesnitski &middot; gl-mcp + Claude &middot; <TODAY></div>
+
+</div>
+</body>
+</html>

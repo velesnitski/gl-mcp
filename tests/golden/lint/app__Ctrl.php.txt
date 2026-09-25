@@ -1,0 +1,27 @@
+## app/Ctrl.php
+
+**Language:** PHP | **Branch:** main
+
+### Metrics
+
+| Metric | Value | Assessment |
+|--------|-------|------------|
+| Total lines | 7 | OK |
+| Code lines | 6 | |
+| Comments | 1 (14%) | OK |
+| Blank lines | 0 | |
+| Functions | 1 | OK |
+| Imports | 1 | OK |
+| Max nesting depth | 1 (line 4) | OK |
+
+### Lint Violations (5)
+
+- **[G003]** TODO without ticket: 1 occurrences
+- **[G007]** Magic number: 1 occurrences
+- **[PHP009]** Unvalidated request input: 1 occurrences
+- **[PHP014]** TODO without ticket: 1 occurrences
+- **[PHP016]** God class indicator: 1 occurrences
+
+### Quality Score: 95/100 (Grade A)
+---
+total=7 functions=1 max_nesting=1 violations=5 score=95 grade=A details=[("PHP016", "God class indicator"), ("PHP009", "Unvalidated request input"), ("G003", "TODO without ticket"), ("PHP014", "TODO without ticket"), ("G007", "Magic number")]

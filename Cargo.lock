@@ -461,10 +461,11 @@ dependencies = [
 
 [[package]]
 name = "gl-mcp"
-version = "1.11.0"
+version = "1.11.1"
 dependencies = [
  "anyhow",
  "axum",
+ "base64",
  "chrono",
  "futures",
  "regex",

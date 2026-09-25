@@ -1,0 +1,21 @@
+## src/Main.kt
+
+**Language:** Kotlin | **Branch:** main
+
+### Metrics
+
+| Metric | Value | Assessment |
+|--------|-------|------------|
+| Total lines | 5 | OK |
+| Code lines | 5 | |
+| Comments | 0 (0%) | No comments |
+| Blank lines | 0 | |
+| Functions | 2 | OK |
+| Imports | 1 | OK |
+| Max nesting depth | 1 (line 3) | OK |
+
+### Lint: No violations
+
+### Quality Score: 100/100 (Grade A)
+---
+total=5 functions=2 max_nesting=1 violations=0 score=100 grade=A details=[]

@@ -7,6 +7,7 @@ GitLab MCP server. Rust, single binary, 107 tools.
 ```bash
 cargo build --release          # binary: target/release/gl-mcp (~9MB)
 cargo test -- --test-threads=1 # env var tests must run single-threaded
+UPDATE_GOLDEN=1 cargo test --lib  # regenerate tests/golden/ after an intended report change
 ```
 
 ## Architecture
@@ -34,7 +35,9 @@ src/
     ├── commits.rs       # list_commits, diffs, file_content, user/team/group activity, compare_developers
     ├── repository.rs    # search_code, tree, languages, tags, branches, environments, deploy_frequency, project_stats
     ├── reports.rs       # HTML reports: dev, team, project (with auto-observations, print CSS)
-    └── lint.rs          # validate_commit/mr/mr_changes, analyze_file/project, validate_project_commits
+    ├── lint.rs          # validate_commit/mr/mr_changes, analyze_file/project, validate_project_commits
+    ├── encoding.rs      # base64 file payload decoding (base64 crate; malformed = error)
+    └── stats.rs         # shared numeric helpers (median)
 ```
 
 ## Key Patterns
@@ -62,7 +65,7 @@ src/
 
 ## Adding a New Tool
 
-1. Add function in `src/tools/<module>.rs` — returns `Result<String>`
+1. Add function in `src/tools/<module>.rs` — returns `Result<String>`; caller mistakes are `Err(Error::user_input(..))`, never `Ok("**Error:** ..")`; keep fetching in the async fn and rendering in a pure fn
 2. Add param struct in `src/params.rs` with `#[derive(Debug, Deserialize, JsonSchema)]`
 3. Add `#[tool]` method in `server.rs` using `tool_call!` macro
 4. If write tool: add to `WRITE_TOOLS` in `mod.rs` + add `write_guard!` in method

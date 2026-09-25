@@ -14,7 +14,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --release
-      - run: cargo test -- --nocapture 2>/dev/null || true
+      - run: cargo test -- --test-threads=1
 
   build:
     needs: check

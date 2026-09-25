@@ -6,7 +6,7 @@
 //! N READMEs — the same server-side-scan shape as `get_ai_adoption`.
 
 use crate::client::GitLabClient;
-use crate::error::Result;
+use crate::error::{Result, ResultExt};
 use serde_json::Value;
 
 /// How concurrently we fetch per-repo READMEs. Bounded to be polite to the API
@@ -85,7 +85,7 @@ async fn classify_repo(
             &[("ref", ref_name), ("per_page", "100")],
         )
         .await
-        .unwrap_or_default();
+        .or_default_logged();
 
     let readme = tree.iter().find(|e| {
         e["type"].as_str() == Some("blob")
@@ -109,7 +109,7 @@ async fn classify_repo(
             &[("ref", ref_name)],
         )
         .await
-        .unwrap_or_default();
+        .or_default_logged();
 
     let size = content.len();
     let cyr = cyrillic_pct(&content);
