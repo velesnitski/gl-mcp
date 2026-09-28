@@ -813,6 +813,20 @@ pub async fn get_pipeline(
                 parts.push(line);
             }
         }
+
+        // A pending job renders the same whether it is queued or can never start.
+        // Only when something is pending is the runner list worth one extra call.
+        let pending: Vec<(&str, Vec<String>)> = jobs
+            .iter()
+            .filter(|j| j["status"].as_str() == Some("pending"))
+            .map(|j| (j["name"].as_str().unwrap_or("?"), crate::tools::projects::str_list(&j["tag_list"])))
+            .collect();
+        if !pending.is_empty() {
+            let runners: Result<Vec<Value>> = client
+                .get(&format!("/projects/{encoded}/runners"), &[("per_page", "100")])
+                .await;
+            parts.extend(render_runner_check(&pending, runners.ok().as_deref()));
+        }
     }
 
     // Downstream (multi-project) pipelines. A provisioning run commonly spans
@@ -878,6 +892,25 @@ pub async fn get_pipeline(
     }
 
     Ok(parts.join("\n"))
+}
+
+/// Runner diagnosis for pending jobs. `None` runners means the list could not be read
+/// (it needs Maintainer) — reported as unknown, never as "no runners".
+pub(crate) fn render_runner_check(pending: &[(&str, Vec<String>)], runners: Option<&[Value]>) -> Vec<String> {
+    use crate::tools::projects::{runner_facts, runner_verdict};
+    let mut out = vec![String::new(), format!("## Pending jobs — runner check ({})", pending.len())];
+    let Some(raw) = runners else {
+        out.push("_Runner list unavailable (needs Maintainer on the project) — cannot tell queued from unrunnable._".into());
+        return out;
+    };
+    let facts = runner_facts(raw);
+    for (name, tags) in pending {
+        let verdict = runner_verdict(&facts, tags);
+        let icon = if verdict == crate::tools::projects::RunnerVerdict::Eligible { "⏳" } else { "❌" };
+        let tag_str = if tags.is_empty() { "untagged".to_string() } else { format!("tags `{}`", tags.join("`, `")) };
+        out.push(format!("- {icon} **{name}** ({tag_str}): {}", verdict.pending_note()));
+    }
+    out
 }
 
 /// Remove ANSI escape sequences and carriage returns that GitLab embeds in CI
@@ -1035,26 +1068,9 @@ pub async fn create_pipeline_schedule(
     cron_timezone: &str,
     active: bool,
 ) -> Result<String> {
-    if cron.split_whitespace().count() != 5 {
-        return Err(Error::user_input(format!(
-            "`{cron}` is not a 5-field cron expression (minute hour day month weekday). Nothing was created."
-        )));
-    }
+    validate_cron(cron, "created")?;
+    ensure_ref_resolves(client, project_id, ref_name, "created").await?;
     let enc = urlencoding::encode(project_id);
-
-    // Resolve through the commits endpoint: it accepts a branch, a tag or a SHA, so
-    // one call covers every ref a schedule can legitimately point at.
-    let resolved: std::result::Result<Value, _> = client
-        .get(
-            &format!("/projects/{enc}/repository/commits/{}", urlencoding::encode(ref_name)),
-            &[],
-        )
-        .await;
-    if resolved.is_err() {
-        return Err(Error::user_input(format!(
-            "ref `{ref_name}` does not resolve in {project_id}, so a schedule on it would be accepted by GitLab and then never fire. Nothing was created."
-        )));
-    }
 
     let body = serde_json::json!({
         "description": description,
@@ -1079,6 +1095,183 @@ pub async fn create_pipeline_schedule(
         format!("_Prove it now rather than waiting for the interval: `play_pipeline_schedule` with schedule_id {id}._"),
     ]
     .join("\n"))
+}
+
+/// A schedule's cron must have exactly five fields; GitLab's own error for anything
+/// else is less specific than this.
+fn validate_cron(cron: &str, verb: &str) -> Result<()> {
+    if cron.split_whitespace().count() != 5 {
+        return Err(Error::user_input(format!(
+            "`{cron}` is not a 5-field cron expression (minute hour day month weekday). Nothing was {verb}."
+        )));
+    }
+    Ok(())
+}
+
+/// Refuse a ref that does not resolve: GitLab accepts a schedule on it and then never
+/// fires it. The commits endpoint takes a branch, tag or SHA, so one call covers them.
+async fn ensure_ref_resolves(client: &GitLabClient, project_id: &str, ref_name: &str, verb: &str) -> Result<()> {
+    let path = format!(
+        "/projects/{}/repository/commits/{}",
+        urlencoding::encode(project_id),
+        urlencoding::encode(ref_name)
+    );
+    if client.get::<Value>(&path, &[]).await.is_err() {
+        return Err(Error::user_input(format!(
+            "ref `{ref_name}` does not resolve in {project_id}, so a schedule on it would be accepted by GitLab and then never fire. Nothing was {verb}."
+        )));
+    }
+    Ok(())
+}
+
+/// List a project's pipeline schedules.
+pub async fn list_pipeline_schedules(client: &GitLabClient, project_id: &str) -> Result<String> {
+    let enc = urlencoding::encode(project_id);
+    let schedules: Vec<Value> = client
+        .get(&format!("/projects/{enc}/pipeline_schedules"), &[("per_page", "100")])
+        .await?;
+    Ok(render_schedules(project_id, &schedules))
+}
+
+/// Schedule table with the states that stop a schedule from running called out.
+///
+/// A schedule runs as its owner; when the owner is blocked or deactivated, or the
+/// schedule has no owner, it silently stops producing pipelines while still showing a
+/// next-run time. That is the same "accepted, then never fires" shape as a bad ref.
+pub(crate) fn render_schedules(project_id: &str, schedules: &[Value]) -> String {
+    if schedules.is_empty() {
+        return format!("No pipeline schedules on **{project_id}**.");
+    }
+    let mut lines = vec![
+        format!("**Pipeline schedules on {project_id}: {}**\n", schedules.len()),
+        "| ID | Description | Ref | Cron | Next run | Owner | State |".to_string(),
+        "|----|-------------|-----|------|----------|-------|-------|".to_string(),
+    ];
+    for sc in schedules {
+        let owner = &sc["owner"];
+        let owner_name = owner["username"].as_str();
+        let owner_state = owner["state"].as_str().unwrap_or("active");
+        let state = match (sc["active"].as_bool().unwrap_or(false), owner_name, owner_state) {
+            (false, _, _) => "inactive".to_string(),
+            (true, None, _) => "⚠️ no owner — will not run".to_string(),
+            (true, Some(_), "active") => "active".to_string(),
+            (true, Some(_), other) => format!("⚠️ owner {other} — will not run"),
+        };
+        lines.push(format!(
+            "| {} | {} | {} | `{}` {} | {} | {} | {state} |",
+            sc["id"].as_u64().unwrap_or(0),
+            sc["description"].as_str().unwrap_or(""),
+            sc["ref"].as_str().unwrap_or("?"),
+            sc["cron"].as_str().unwrap_or("?"),
+            sc["cron_timezone"].as_str().unwrap_or("UTC"),
+            sc["next_run_at"].as_str().unwrap_or("–"),
+            owner_name.map_or("–".to_string(), |n| format!("@{n}")),
+        ));
+    }
+    lines.join("\n")
+}
+
+/// Update a pipeline schedule. A new cron or ref is validated exactly as on creation.
+#[allow(clippy::too_many_arguments)]
+pub async fn update_pipeline_schedule(
+    client: &GitLabClient,
+    project_id: &str,
+    schedule_id: u64,
+    description: Option<&str>,
+    ref_name: Option<&str>,
+    cron: Option<&str>,
+    cron_timezone: Option<&str>,
+    active: Option<bool>,
+) -> Result<String> {
+    let mut body = serde_json::Map::new();
+    if let Some(d) = description {
+        body.insert("description".into(), d.into());
+    }
+    if let Some(c) = cron {
+        validate_cron(c, "updated")?;
+        body.insert("cron".into(), c.into());
+    }
+    if let Some(tz) = cron_timezone {
+        body.insert("cron_timezone".into(), tz.into());
+    }
+    if let Some(a) = active {
+        body.insert("active".into(), a.into());
+    }
+    if let Some(r) = ref_name {
+        ensure_ref_resolves(client, project_id, r, "updated").await?;
+        body.insert("ref".into(), r.into());
+    }
+    if body.is_empty() {
+        return Err(Error::user_input(
+            "nothing to update — pass at least one of description, ref_name, cron, cron_timezone, active.",
+        ));
+    }
+    let changed: Vec<String> = body.keys().cloned().collect();
+    let enc = urlencoding::encode(project_id);
+    let sc: Value = client
+        .put(&format!("/projects/{enc}/pipeline_schedules/{schedule_id}"), &Value::Object(body))
+        .await?;
+    Ok(format!(
+        "Schedule **{schedule_id}** on **{project_id}** updated ({}).\n\n{}",
+        changed.join(", "),
+        render_schedules(project_id, std::slice::from_ref(&sc))
+    ))
+}
+
+/// Delete a pipeline schedule.
+pub async fn delete_pipeline_schedule(client: &GitLabClient, project_id: &str, schedule_id: u64) -> Result<String> {
+    let enc = urlencoding::encode(project_id);
+    client.delete(&format!("/projects/{enc}/pipeline_schedules/{schedule_id}")).await?;
+    Ok(format!("Schedule **{schedule_id}** deleted from **{project_id}**."))
+}
+
+/// Create or update a variable on a pipeline schedule. The value is never echoed back.
+pub async fn set_pipeline_schedule_variable(
+    client: &GitLabClient,
+    project_id: &str,
+    schedule_id: u64,
+    key: &str,
+    value: &str,
+    variable_type: &str,
+) -> Result<String> {
+    let enc = urlencoding::encode(project_id);
+    let base = format!("/projects/{enc}/pipeline_schedules/{schedule_id}");
+    let sc: Value = client.get(&base, &[]).await?;
+    let exists = sc["variables"]
+        .as_array()
+        .is_some_and(|vars| vars.iter().any(|v| v["key"].as_str() == Some(key)));
+    let body = serde_json::json!({
+        "key": key,
+        "value": value,
+        "variable_type": if variable_type.is_empty() { "env_var" } else { variable_type },
+    });
+    let verb = if exists {
+        let _: Value = client
+            .put(&format!("{base}/variables/{}", urlencoding::encode(key)), &body)
+            .await?;
+        "updated"
+    } else {
+        let _: Value = client.post(&format!("{base}/variables"), &body).await?;
+        "created"
+    };
+    Ok(format!("Variable `{key}` {verb} on schedule **{schedule_id}** ({project_id}). Value not shown."))
+}
+
+/// Delete a variable from a pipeline schedule.
+pub async fn delete_pipeline_schedule_variable(
+    client: &GitLabClient,
+    project_id: &str,
+    schedule_id: u64,
+    key: &str,
+) -> Result<String> {
+    let enc = urlencoding::encode(project_id);
+    client
+        .delete(&format!(
+            "/projects/{enc}/pipeline_schedules/{schedule_id}/variables/{}",
+            urlencoding::encode(key)
+        ))
+        .await?;
+    Ok(format!("Variable `{key}` deleted from schedule **{schedule_id}** ({project_id})."))
 }
 
 /// Run a pipeline schedule immediately.
@@ -1335,7 +1528,8 @@ pub async fn get_ci_variables(
 mod tests {
     use super::{
         error_signature, failure_class, grep_lines, http_status, human_secs,
-        is_automated_source, normalize_signature, pipeline_end_ts, redact_log, render_variable,
+        is_automated_source, normalize_signature, pipeline_end_ts, redact_log, render_runner_check,
+        render_schedules, render_variable,
         strip_ansi, wall_clock_secs,
     };
 
@@ -1667,5 +1861,37 @@ U1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==
         for s in ["push", "merge_request_event"] {
             assert!(!is_automated_source(s), "{s} should count as dev CI");
         }
+    }
+
+    #[test]
+    fn schedules_that_cannot_run_are_called_out() {
+        use serde_json::json;
+        let out = render_schedules("g/p", &[
+            json!({"id": 1, "description": "nightly", "ref": "main", "cron": "0 3 * * *", "cron_timezone": "UTC",
+                   "next_run_at": "2026-01-02T03:00:00Z", "active": true, "owner": {"username": "ada", "state": "active"}}),
+            json!({"id": 2, "description": "weekly", "ref": "main", "cron": "0 4 * * 1", "active": true,
+                   "owner": {"username": "bob", "state": "blocked"}}),
+            json!({"id": 3, "description": "orphan", "ref": "main", "cron": "0 5 * * *", "active": true, "owner": null}),
+            json!({"id": 4, "description": "off", "ref": "main", "cron": "0 6 * * *", "active": false, "owner": {"username": "ada"}}),
+        ]);
+        assert!(out.contains("| @ada | active |"));
+        assert!(out.contains("⚠️ owner blocked — will not run"));
+        assert!(out.contains("⚠️ no owner — will not run"));
+        assert!(out.contains("| inactive |"));
+        assert_eq!(render_schedules("g/p", &[]), "No pipeline schedules on **g/p**.");
+    }
+
+    #[test]
+    fn runner_check_tells_queued_from_unrunnable_and_unknown() {
+        use serde_json::json;
+        let pending = vec![("build", vec!["docker".to_string()]), ("lint", vec![])];
+        let runners = vec![json!({"online": true, "tag_list": ["docker"], "run_untagged": false})];
+        let out = render_runner_check(&pending, Some(&runners)).join("\n");
+        assert!(out.contains("⏳ **build** (tags `docker`): an online runner matches"));
+        assert!(out.contains("❌ **lint** (untagged): no online runner accepts"));
+        // Nothing attached is a different verdict from "could not look".
+        assert!(render_runner_check(&pending, Some(&[])).join("\n").contains("no runner is attached"));
+        let unknown = render_runner_check(&pending, None).join("\n");
+        assert!(unknown.contains("unavailable") && !unknown.contains("no runner is attached"));
     }
 }

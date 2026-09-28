@@ -425,6 +425,76 @@ impl GlMcpServer {
         )
     }
 
+    #[tool(description = "List a project's pipeline schedules with ref, cron, next run and owner. Flags schedules that will not run despite showing a next-run time: a schedule runs as its owner, so a blocked/deactivated or missing owner silently stops it.")]
+    async fn list_pipeline_schedules(&self, Parameters(p): Parameters<ProjectOnlyParams>) -> Result<CallToolResult, McpError> {
+        simple_tool!(self, p, "list_pipeline_schedules", &p.project_id, |client|
+            tools::pipelines::list_pipeline_schedules(client, &p.project_id).await
+        )
+    }
+
+    #[tool(description = "Update a pipeline schedule (description, ref, cron, timezone, active). A new ref or cron is validated exactly as on creation — an unresolvable ref is refused instead of saved to never fire.")]
+    async fn update_pipeline_schedule(&self, Parameters(p): Parameters<UpdatePipelineScheduleParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "update_pipeline_schedule");
+        simple_tool!(self, p, "update_pipeline_schedule", &p.project_id, |client|
+            tools::pipelines::update_pipeline_schedule(
+                client,
+                &p.project_id,
+                p.schedule_id,
+                p.description.as_deref(),
+                p.ref_name.as_deref(),
+                p.cron.as_deref(),
+                p.cron_timezone.as_deref(),
+                p.active,
+            ).await
+        )
+    }
+
+    #[tool(description = "Delete a pipeline schedule.")]
+    async fn delete_pipeline_schedule(&self, Parameters(p): Parameters<PlayPipelineScheduleParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "delete_pipeline_schedule");
+        simple_tool!(self, p, "delete_pipeline_schedule", &p.project_id, |client|
+            tools::pipelines::delete_pipeline_schedule(client, &p.project_id, p.schedule_id).await
+        )
+    }
+
+    #[tool(description = "Create or update a variable on a pipeline schedule (upsert by key). The value is never echoed back.")]
+    async fn set_pipeline_schedule_variable(&self, Parameters(p): Parameters<SetPipelineScheduleVariableParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "set_pipeline_schedule_variable");
+        simple_tool!(self, p, "set_pipeline_schedule_variable", &p.project_id, |client|
+            tools::pipelines::set_pipeline_schedule_variable(
+                client,
+                &p.project_id,
+                p.schedule_id,
+                &p.key,
+                &p.value,
+                p.variable_type.as_deref().unwrap_or(""),
+            ).await
+        )
+    }
+
+    #[tool(description = "Delete a variable from a pipeline schedule.")]
+    async fn delete_pipeline_schedule_variable(&self, Parameters(p): Parameters<DeletePipelineScheduleVariableParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "delete_pipeline_schedule_variable");
+        simple_tool!(self, p, "delete_pipeline_schedule_variable", &p.project_id, |client|
+            tools::pipelines::delete_pipeline_schedule_variable(client, &p.project_id, p.schedule_id, &p.key).await
+        )
+    }
+
+    #[tool(description = "List a project's access tokens: name, role, scopes, expiry (tokens expiring within 7 days flagged), last use, state. Metadata only — GitLab never returns a token value after creation.")]
+    async fn list_project_access_tokens(&self, Parameters(p): Parameters<ProjectOnlyParams>) -> Result<CallToolResult, McpError> {
+        simple_tool!(self, p, "list_project_access_tokens", &p.project_id, |client|
+            tools::projects::list_project_access_tokens(client, &p.project_id).await
+        )
+    }
+
+    #[tool(description = "Revoke a project access token. Irreversible, so confirm_name must exactly equal the token's name; an id typo cannot revoke a neighbouring token.")]
+    async fn revoke_project_access_token(&self, Parameters(p): Parameters<RevokeProjectAccessTokenParams>) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "revoke_project_access_token");
+        simple_tool!(self, p, "revoke_project_access_token", &p.project_id, |client|
+            tools::projects::revoke_project_access_token(client, &p.project_id, p.token_id, &p.confirm_name).await
+        )
+    }
+
     #[tool(description = "List the runners that can take a project's jobs, and say whether anything can actually run a given job. A job no runner can accept sits `pending (0s)` — output identical to a job in a busy queue — so the verdict distinguishes: no runners attached, all offline, no tag match, or genuinely queued.")]
     async fn list_project_runners(&self, Parameters(p): Parameters<ListProjectRunnersParams>) -> Result<CallToolResult, McpError> {
         let tags: Vec<String> = p.job_tags.as_deref().unwrap_or("").split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
@@ -737,7 +807,7 @@ impl GlMcpServer {
         )
     }
 
-    #[tool(description = "Get pipeline details including all jobs grouped by stage, plus trigger variables (secret-ish values redacted) — for trigger/API pipelines these link a CI run to the business object it was acting on.")]
+    #[tool(description = "Get pipeline details including all jobs grouped by stage; when a job is pending, says whether any runner can take it (queued vs never-starting), plus trigger variables (secret-ish values redacted) — for trigger/API pipelines these link a CI run to the business object it was acting on.")]
     async fn get_pipeline(&self, Parameters(p): Parameters<GetPipelineParams>) -> Result<CallToolResult, McpError> {
         simple_tool!(self, p, "get_pipeline", "", |client|
             tools::pipelines::get_pipeline(client, &p.project_id, p.pipeline_id).await

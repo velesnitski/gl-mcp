@@ -1625,3 +1625,71 @@ pub struct AuditCiSecurityParams {
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ProjectOnlyParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RevokeProjectAccessTokenParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Token ID (from list_project_access_tokens)")]
+    pub token_id: u64,
+    #[schemars(description = "Safety confirmation: must EXACTLY equal the token's name. Revocation is refused if it does not match.")]
+    pub confirm_name: String,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdatePipelineScheduleParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Schedule ID")]
+    pub schedule_id: u64,
+    #[schemars(description = "New description")]
+    pub description: Option<String>,
+    #[schemars(description = "New branch or tag — validated to resolve before the update")]
+    pub ref_name: Option<String>,
+    #[schemars(description = "New 5-field cron expression")]
+    pub cron: Option<String>,
+    #[schemars(description = "New cron timezone")]
+    pub cron_timezone: Option<String>,
+    #[schemars(description = "Activate or deactivate")]
+    pub active: Option<bool>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetPipelineScheduleVariableParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Schedule ID")]
+    pub schedule_id: u64,
+    #[schemars(description = "Variable key")]
+    pub key: String,
+    #[schemars(description = "Variable value (never echoed back)")]
+    pub value: String,
+    #[schemars(description = "env_var (default) or file")]
+    pub variable_type: Option<String>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DeletePipelineScheduleVariableParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Schedule ID")]
+    pub schedule_id: u64,
+    #[schemars(description = "Variable key")]
+    pub key: String,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}

@@ -1571,7 +1571,7 @@ fn render_html(o: &AuditOutcome) -> String {
 
     let mut h = String::new();
     h.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n");
-    let _ = write!(h, "<title>Spec-drift audit — {pid} — {date_str}</title>\n");
+    let _ = writeln!(h, "<title>Spec-drift audit — {pid} — {date_str}</title>");
     h.push_str("<style>\n");
     h.push_str(SPEC_STYLE);
     h.push_str(PRINT_CSS);
@@ -1579,15 +1579,15 @@ fn render_html(o: &AuditOutcome) -> String {
     h.push_str(EXPORT_BUTTON);
     h.push_str(AUTO_OPEN_SCRIPT);
 
-    let _ = write!(h, "<h1>Spec-drift audit — {pid}</h1>\n");
-    let _ = write!(h, "<div class=\"sub\">Ref <code>{}</code> &middot; {} routes parsed from spec &middot; {date_str}</div>\n",
+    let _ = writeln!(h, "<h1>Spec-drift audit — {pid}</h1>");
+    let _ = writeln!(h, "<div class=\"sub\">Ref <code>{}</code> &middot; {} routes parsed from spec &middot; {date_str}</div>",
         esc(&o.search_ref),
         o.audits.len()
     );
 
     // Summary cards.
     h.push_str("<div class=\"grid\">\n");
-    let _ = write!(h, "<div class=\"card\"><div class=\"card-t\">Version</div><div class=\"card-v {vclass}\"><a href=\"#version\">{vword}</a></div><div class=\"card-s\">spec vs latest tag</div></div>\n"
+    let _ = writeln!(h, "<div class=\"card\"><div class=\"card-t\">Version</div><div class=\"card-v {vclass}\"><a href=\"#version\">{vword}</a></div><div class=\"card-s\">spec vs latest tag</div></div>"
     );
     let card = |title: &str, n: usize, cls: &str, href: &str, sub: &str| -> String {
         format!("<div class=\"card\"><div class=\"card-t\">{title}</div><div class=\"card-v {cls}\"><a href=\"{href}\">{n}</a></div><div class=\"card-s\">{sub}</div></div>\n")
@@ -1602,7 +1602,7 @@ fn render_html(o: &AuditOutcome) -> String {
     // Version.
     h.push_str("<h2 id=\"version\">Version</h2>\n");
     let vcls = if o.version_verdict == VersionVerdict::DocBehind { "risk" } else if o.version_verdict == VersionVerdict::InSync { "ok" } else { "warn" };
-    let _ = write!(h, "<div class=\"issue {vcls}\"><b>spec <code>{}</code> &middot; latest tag <code>{}</code></b><div class=\"m\">{}</div></div>\n",
+    let _ = writeln!(h, "<div class=\"issue {vcls}\"><b>spec <code>{}</code> &middot; latest tag <code>{}</code></b><div class=\"m\">{}</div></div>",
         esc(o.doc_version.as_deref().unwrap_or("?")),
         esc(o.latest_tag.as_deref().unwrap_or("none")),
         match o.version_verdict {
@@ -1615,12 +1615,12 @@ fn render_html(o: &AuditOutcome) -> String {
 
     // Changes since last audit.
     if let Some((since, lines)) = &o.changes {
-        let _ = write!(h, "<h2 id=\"changes\">Changes since last audit ({})</h2>\n", esc(since));
+        let _ = writeln!(h, "<h2 id=\"changes\">Changes since last audit ({})</h2>", esc(since));
         if lines.is_empty() {
             h.push_str("<div class=\"issue ok\"><div class=\"m\">No changes.</div></div>\n");
         } else {
             for l in lines {
-                let _ = write!(h, "<div class=\"issue\"><div class=\"m\">{}</div></div>\n", esc(l));
+                let _ = writeln!(h, "<div class=\"issue\"><div class=\"m\">{}</div></div>", esc(l));
             }
         }
     }
@@ -1630,8 +1630,8 @@ fn render_html(o: &AuditOutcome) -> String {
         if rows.is_empty() {
             return;
         }
-        let _ = write!(h, "<h2 id=\"{id}\">{title} ({})</h2>\n", rows.len());
-        let _ = write!(h, "<p class=\"sub\">{blurb}</p>\n");
+        let _ = writeln!(h, "<h2 id=\"{id}\">{title} ({})</h2>", rows.len());
+        let _ = writeln!(h, "<p class=\"sub\">{blurb}</p>");
         for a in rows {
             let label = if !a.route.label.is_empty() && a.route.label != a.route.path {
                 format!(" <span class=\"gr\">({})</span>", esc(&a.route.label))
@@ -1644,7 +1644,7 @@ fn render_html(o: &AuditOutcome) -> String {
             } else {
                 String::new()
             };
-            let _ = write!(h, "<div class=\"issue {cls}\"><b><code>{}</code></b>{label}{hits}</div>\n",
+            let _ = writeln!(h, "<div class=\"issue {cls}\"><b><code>{}</code></b>{label}{hits}</div>",
                 esc(&a.route.path)
             );
         }
@@ -1655,35 +1655,35 @@ fn render_html(o: &AuditOutcome) -> String {
 
     // Reverse drift.
     if !o.undocumented.is_empty() {
-        let _ = write!(h, "<h2 id=\"undocumented\">Undocumented endpoints ({})</h2>\n", o.undocumented.len());
+        let _ = writeln!(h, "<h2 id=\"undocumented\">Undocumented endpoints ({})</h2>", o.undocumented.len());
         let blurb = if o.harvest_mode == "search" {
             "In code, not in the spec. Harvested by search within documented namespaces — pass a routes file for full coverage."
         } else {
             "In code, not in the spec — shadow surface that escaped the doc."
         };
-        let _ = write!(h, "<p class=\"sub\">{blurb}</p>\n");
+        let _ = writeln!(h, "<p class=\"sub\">{blurb}</p>");
         h.push_str("<table>\n<tr><th>Endpoint</th><th>Location</th></tr>\n");
         for (path, line, file) in &o.undocumented {
-            let _ = write!(h, "<tr><td><code>{}</code></td><td>{}</td></tr>\n", esc(path), blob(file, *line));
+            let _ = writeln!(h, "<tr><td><code>{}</code></td><td>{}</td></tr>", esc(path), blob(file, *line));
         }
         h.push_str("</table>\n");
     }
 
     // Security.
     if !o.secrets.is_empty() {
-        let _ = write!(h, "<h2 id=\"security\">Security ({})</h2>\n", o.secrets.len());
+        let _ = writeln!(h, "<h2 id=\"security\">Security ({})</h2>", o.secrets.len());
         h.push_str("<p class=\"sub\">Secret material in an org-readable doc. Rotate and restrict access; values are masked.</p>\n");
         let mut ordered: Vec<&SecretAudit> = o.secrets.iter().collect();
         ordered.sort_by_key(|s| s.hardcoded_in.is_empty());
         for s in ordered {
             let kind = s.finding.kind.label();
             if s.hardcoded_in.is_empty() {
-                let _ = write!(h, "<div class=\"issue warn\"><b><code>{}</code> [{kind}]</b><div class=\"m\">Doc-only leak — rotate the secret and restrict the doc.</div></div>\n",
+                let _ = writeln!(h, "<div class=\"issue warn\"><b><code>{}</code> [{kind}]</b><div class=\"m\">Doc-only leak — rotate the secret and restrict the doc.</div></div>",
                     esc(&s.finding.masked)
                 );
             } else {
                 let loc = s.hardcoded_in.iter().map(|(f, l)| blob(f, *l)).collect::<Vec<_>>().join(", ");
-                let _ = write!(h, "<div class=\"issue risk\"><b><code>{}</code> [{kind}]</b><div class=\"m\">Also hardcoded in code at {loc} — rotate AND remove from code.</div></div>\n",
+                let _ = writeln!(h, "<div class=\"issue risk\"><b><code>{}</code> [{kind}]</b><div class=\"m\">Also hardcoded in code at {loc} — rotate AND remove from code.</div></div>",
                     esc(&s.finding.masked)
                 );
             }
@@ -1693,18 +1693,18 @@ fn render_html(o: &AuditOutcome) -> String {
     // Needs review.
     let review_rows = by(Verdict::NeedsReview);
     if !review_rows.is_empty() {
-        let _ = write!(h, "<h2 id=\"review\">Needs review ({review})</h2>\n");
+        let _ = writeln!(h, "<h2 id=\"review\">Needs review ({review})</h2>");
         h.push_str("<p class=\"sub\">Path too generic to match reliably — check by hand.</p>\n");
         for a in &review_rows {
-            let _ = write!(h, "<div class=\"issue\"><b><code>{}</code></b> <span class=\"gr\">({})</span></div>\n", esc(&a.route.path), esc(&a.route.label));
+            let _ = writeln!(h, "<div class=\"issue\"><b><code>{}</code></b> <span class=\"gr\">({})</span></div>", esc(&a.route.path), esc(&a.route.label));
         }
     }
 
     // In sync (collapsible).
     let synced = by(Verdict::InSync);
-    let _ = write!(h, "<details id=\"insync\"><summary>In sync ({in_sync})</summary>\n");
+    let _ = writeln!(h, "<details id=\"insync\"><summary>In sync ({in_sync})</summary>");
     for a in &synced {
-        let _ = write!(h, "<div><code>{}</code></div>\n", esc(&a.route.path));
+        let _ = writeln!(h, "<div><code>{}</code></div>", esc(&a.route.path));
     }
     h.push_str("</details>\n");
 
@@ -1784,7 +1784,7 @@ fn render_sweep_html(teams: &[(String, Option<AuditOutcome>)]) -> String {
     let mut approx_seen = false;
     for (label, o) in teams {
         match o {
-            None => { let _ = write!(h, "<tr><td><b>{}</b></td><td class=\"r\">failed to audit</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>\n", esc(label)); },
+            None => { let _ = writeln!(h, "<tr><td><b>{}</b></td><td class=\"r\">failed to audit</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>", esc(label)); },
             Some(o) => {
                 if o.harvest_mode == "search" { approx_seen = true; }
                 let undoc = if o.harvest_mode == "search" { format!("{}~", o.undocumented.len()) } else { o.undocumented.len().to_string() };
@@ -1794,7 +1794,7 @@ fn render_sweep_html(teams: &[(String, Option<AuditOutcome>)]) -> String {
                     VersionVerdict::DocAhead => "y",
                     VersionVerdict::Unknown => "gr",
                 };
-                let _ = write!(h, "<tr><td><b><a href=\"#{}\">{}</a></b></td><td class=\"{vcls}\">{}</td><td>{}</td><td>{}</td><td>{}</td><td>{undoc}</td><td>{} ({} hc)</td><td>{}</td></tr>\n",
+                let _ = writeln!(h, "<tr><td><b><a href=\"#{}\">{}</a></b></td><td class=\"{vcls}\">{}</td><td>{}</td><td>{}</td><td>{}</td><td>{undoc}</td><td>{} ({} hc)</td><td>{}</td></tr>",
                     anchor_of(label), esc(label), vshort(o.version_verdict),
                     count(o, Verdict::CleanupDebt), count(o, Verdict::Drift), count(o, Verdict::StaleDoc),
                     o.secrets.len(), hc(o), count(o, Verdict::InSync)
@@ -1819,34 +1819,34 @@ fn render_sweep_html(teams: &[(String, Option<AuditOutcome>)]) -> String {
             let d = count(o, Verdict::Drift); if d > 0 { notes.push(format!("{d} drift")); }
             let c = count(o, Verdict::CleanupDebt); if c > 0 { notes.push(format!("{c} cleanup-debt")); }
             if hc(o) > 0 { notes.push(format!("{} hardcoded secret(s)", hc(o))); }
-            let _ = write!(h, "<div class=\"issue warn\"><b><a href=\"#{}\">{}</a></b><div class=\"m\">{}</div></div>\n", anchor_of(label), esc(label), notes.join(", "));
+            let _ = writeln!(h, "<div class=\"issue warn\"><b><a href=\"#{}\">{}</a></b><div class=\"m\">{}</div></div>", anchor_of(label), esc(label), notes.join(", "));
         }
     }
 
     // Per-team detail.
     for (label, o) in teams {
         let Some(o) = o else { continue };
-        let _ = write!(h, "<details id=\"{}\"><summary>{} — {} routes, {} undocumented</summary>\n", anchor_of(label), esc(label), o.audits.len(), o.undocumented.len());
-        let _ = write!(h, "<div class=\"m\">Version: spec <code>{}</code> vs tag <code>{}</code> ({})</div>\n",
+        let _ = writeln!(h, "<details id=\"{}\"><summary>{} — {} routes, {} undocumented</summary>", anchor_of(label), esc(label), o.audits.len(), o.undocumented.len());
+        let _ = writeln!(h, "<div class=\"m\">Version: spec <code>{}</code> vs tag <code>{}</code> ({})</div>",
             esc(o.doc_version.as_deref().unwrap_or("?")), esc(o.latest_tag.as_deref().unwrap_or("none")), vshort(o.version_verdict)
         );
         let routes_of = |v: Verdict| -> String {
             o.audits.iter().filter(|x| x.verdict == v).map(|x| format!("<code>{}</code>", esc(&x.route.path))).collect::<Vec<_>>().join(", ")
         };
         let drift = routes_of(Verdict::Drift);
-        if !drift.is_empty() { let _ = write!(h, "<div class=\"m\"><b>Drift (active, missing):</b> {drift}</div>\n"); }
+        if !drift.is_empty() { let _ = writeln!(h, "<div class=\"m\"><b>Drift (active, missing):</b> {drift}</div>"); }
         let stale = routes_of(Verdict::StaleDoc);
-        if !stale.is_empty() { let _ = write!(h, "<div class=\"m\"><b>Stale doc rows:</b> {stale}</div>\n"); }
+        if !stale.is_empty() { let _ = writeln!(h, "<div class=\"m\"><b>Stale doc rows:</b> {stale}</div>"); }
         if !o.undocumented.is_empty() {
-            let _ = write!(h, "<div class=\"m\"><b>Undocumented endpoints ({}):</b></div>\n", o.undocumented.len());
+            let _ = writeln!(h, "<div class=\"m\"><b>Undocumented endpoints ({}):</b></div>", o.undocumented.len());
             for (p, line, file) in o.undocumented.iter().take(15) {
-                let _ = write!(h, "<div class=\"m\">&middot; <code>{}</code> &rarr; {}</div>\n", esc(p), blob(&o.web_url, &o.search_ref, file, *line));
+                let _ = writeln!(h, "<div class=\"m\">&middot; <code>{}</code> &rarr; {}</div>", esc(p), blob(&o.web_url, &o.search_ref, file, *line));
             }
-            if o.undocumented.len() > 15 { let _ = write!(h, "<div class=\"m\">&hellip; and {} more</div>\n", o.undocumented.len() - 15); }
+            if o.undocumented.len() > 15 { let _ = writeln!(h, "<div class=\"m\">&hellip; and {} more</div>", o.undocumented.len() - 15); }
         }
         if !o.secrets.is_empty() {
             let secs = o.secrets.iter().map(|s| format!("<code>{}</code>{}", esc(&s.finding.masked), if s.hardcoded_in.is_empty() { "" } else { " (hardcoded)" })).collect::<Vec<_>>().join(", ");
-            let _ = write!(h, "<div class=\"m\"><b>Secrets ({}):</b> {secs}</div>\n", o.secrets.len());
+            let _ = writeln!(h, "<div class=\"m\"><b>Secrets ({}):</b> {secs}</div>", o.secrets.len());
         }
         h.push_str("</details>\n");
     }

@@ -1335,6 +1335,36 @@ pub(crate) struct RunnerFacts {
     pub run_untagged: bool,
 }
 
+/// String list from a JSON array field (`tag_list`, `scopes`); empty when absent.
+pub(crate) fn str_list(v: &Value) -> Vec<String> {
+    v.as_array()
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+        .unwrap_or_default()
+}
+
+/// Runner facts from `GET /projects/:id/runners`.
+pub(crate) fn runner_facts(raw: &[Value]) -> Vec<RunnerFacts> {
+    raw.iter()
+        .map(|r| RunnerFacts {
+            online: r["online"].as_bool().unwrap_or(false) || r["status"].as_str() == Some("online"),
+            tags: str_list(&r["tag_list"]),
+            run_untagged: r["run_untagged"].as_bool().unwrap_or(true),
+        })
+        .collect()
+}
+
+impl RunnerVerdict {
+    /// One-line diagnosis for a pending job.
+    pub(crate) fn pending_note(&self) -> &'static str {
+        match self {
+            Self::NoRunners => "no runner is attached to this project — it will wait forever, not fail",
+            Self::AllOffline => "every attached runner is offline",
+            Self::NoTagMatch => "no online runner accepts this job's tags",
+            Self::Eligible => "an online runner matches — genuinely queued",
+        }
+    }
+}
+
 /// Decide whether a job carrying `job_tags` can be picked up at all.
 pub(crate) fn runner_verdict(runners: &[RunnerFacts], job_tags: &[String]) -> RunnerVerdict {
     if runners.is_empty() {
@@ -1372,22 +1402,7 @@ pub async fn list_project_runners(
         .get(&format!("/projects/{enc}/runners"), &[("per_page", "100")])
         .await?;
 
-    let facts: Vec<RunnerFacts> = raw
-        .iter()
-        .map(|r| RunnerFacts {
-            online: r["online"].as_bool().unwrap_or(false)
-                || r["status"].as_str() == Some("online"),
-            tags: r["tag_list"]
-                .as_array()
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str().map(str::to_string))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            run_untagged: r["run_untagged"].as_bool().unwrap_or(true),
-        })
-        .collect();
+    let facts = runner_facts(&raw);
 
     let verdict = runner_verdict(&facts, job_tags);
     let scope = if job_tags.is_empty() {
@@ -1510,11 +1525,99 @@ pub async fn update_project(
     Ok(lines.join("\n"))
 }
 
+/// List a project's access tokens — metadata only; GitLab never returns the value again.
+pub async fn list_project_access_tokens(client: &GitLabClient, project_id: &str) -> Result<String> {
+    let enc = urlencoding::encode(project_id);
+    let tokens: Vec<Value> = client
+        .get(&format!("/projects/{enc}/access_tokens"), &[("per_page", "100")])
+        .await?;
+    Ok(render_access_tokens(project_id, &tokens, chrono::Utc::now().date_naive()))
+}
+
+/// Access-token table, soonest expiry first among active tokens, then inactive ones.
+///
+/// Pure so the expiry arithmetic is testable against a fixed `today`.
+pub(crate) fn render_access_tokens(project_id: &str, tokens: &[Value], today: chrono::NaiveDate) -> String {
+    if tokens.is_empty() {
+        return format!("No access tokens on **{project_id}**.");
+    }
+    let expiry = |t: &Value| {
+        t["expires_at"].as_str().and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+    };
+    let is_active = |t: &Value| t["active"].as_bool().unwrap_or(false) && !t["revoked"].as_bool().unwrap_or(false);
+    let mut sorted: Vec<&Value> = tokens.iter().collect();
+    sorted.sort_by_key(|t| (!is_active(t), expiry(t).unwrap_or(chrono::NaiveDate::MAX)));
+
+    let active = tokens.iter().filter(|t| is_active(t)).count();
+    let mut lines = vec![
+        format!("**Access tokens on {project_id}: {} ({active} active)**\n", tokens.len()),
+        "| ID | Name | Role | Scopes | Expires | Last used | State |".to_string(),
+        "|----|------|------|--------|---------|-----------|-------|".to_string(),
+    ];
+    for t in sorted {
+        let expires = match expiry(t) {
+            Some(d) if is_active(t) => {
+                let days = (d - today).num_days();
+                if days <= 7 {
+                    format!("{d} ⚠️ {days}d")
+                } else {
+                    d.to_string()
+                }
+            }
+            Some(d) => d.to_string(),
+            None => "never".to_string(),
+        };
+        let state = if t["revoked"].as_bool().unwrap_or(false) {
+            "revoked"
+        } else if is_active(t) {
+            "active"
+        } else {
+            "expired"
+        };
+        let last_used = t["last_used_at"].as_str().and_then(|d| d.get(..10)).unwrap_or("never");
+        lines.push(format!(
+            "| {} | {} | {} | {} | {expires} | {last_used} | {state} |",
+            t["id"].as_u64().unwrap_or(0),
+            t["name"].as_str().unwrap_or("?"),
+            access_level_name(t["access_level"].as_u64().unwrap_or(0)),
+            str_list(&t["scopes"]).join(", "),
+        ));
+    }
+    lines.join("\n")
+}
+
+/// Revoke a project access token, guarded by its exact name.
+///
+/// Revocation cannot be undone and breaks whatever holds the token, so the caller must
+/// name the token it means — an id typo must not silently revoke a neighbour.
+pub async fn revoke_project_access_token(
+    client: &GitLabClient,
+    project_id: &str,
+    token_id: u64,
+    confirm_name: &str,
+) -> Result<String> {
+    let path = format!("/projects/{}/access_tokens/{token_id}", urlencoding::encode(project_id));
+    let token: Value = client.get(&path, &[]).await?;
+    let name = token["name"].as_str().unwrap_or("");
+    if name != confirm_name {
+        return Err(Error::user_input(format!(
+            "token {token_id} on {project_id} is named `{name}`, not `{confirm_name}`. Nothing was revoked."
+        )));
+    }
+    if token["revoked"].as_bool().unwrap_or(false) {
+        return Err(Error::user_input(format!("token {token_id} (`{name}`) is already revoked.")));
+    }
+    client.delete(&path).await?;
+    Ok(format!(
+        "Access token **{name}** (id {token_id}) on **{project_id}** revoked.\n\n_Anything still using it will now fail authentication — including CI variables it was stored in; delete or replace those too._"
+    ))
+}
+
 #[cfg(test)]
 mod pat_tests {
     use super::{
-        pat_request_error, render_credential, runner_verdict, CredentialDelivery, RunnerFacts,
-        RunnerVerdict,
+        pat_request_error, render_access_tokens, render_credential, runner_facts, runner_verdict,
+        CredentialDelivery, RunnerFacts, RunnerVerdict,
     };
 
     /// Key-shaped literals never live in the repo, not even fake ones — assembled here.
@@ -1633,5 +1736,38 @@ mod pat_tests {
         assert!(err.contains("Nothing was created"), "{err}");
         assert!(pat_request_error(&["api"], 30, "MY KEY", false).is_some());
         assert!(pat_request_error(&["api"], 30, "CI_PUSH_TOKEN", false).is_none());
+    }
+
+    #[test]
+    fn access_tokens_sort_active_by_expiry_and_flag_the_imminent() {
+        use serde_json::json;
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 1, 10).unwrap();
+        let tokens = vec![
+            json!({"id": 1, "name": "old", "active": false, "revoked": true, "access_level": 30, "scopes": ["api"], "expires_at": "2026-01-01"}),
+            json!({"id": 2, "name": "later", "active": true, "revoked": false, "access_level": 40, "scopes": ["read_api"], "expires_at": "2026-06-01", "last_used_at": "2026-01-09T08:00:00Z"}),
+            json!({"id": 3, "name": "soon", "active": true, "revoked": false, "access_level": 30, "scopes": ["write_repository"], "expires_at": "2026-01-15"}),
+            json!({"id": 4, "name": "lapsed", "active": false, "revoked": false, "access_level": 30, "scopes": [], "expires_at": "2026-01-05"}),
+        ];
+        let out = render_access_tokens("g/p", &tokens, today);
+        assert!(out.contains("4 (2 active)"));
+        let pos = |n: &str| out.find(&format!("| {n} |")).unwrap();
+        assert!(pos("soon") < pos("later"), "active, soonest expiry first");
+        assert!(pos("later") < pos("old") && pos("later") < pos("lapsed"), "inactive last");
+        assert!(out.contains("2026-01-15 ⚠️ 5d"), "expiry within 7 days flagged");
+        assert!(!out.contains("2026-06-01 ⚠️"));
+        assert!(out.contains("| revoked |") && out.contains("| expired |"));
+        assert!(out.contains("Maintainer") && out.contains("| 2026-01-09 |"));
+        assert_eq!(render_access_tokens("g/p", &[], today), "No access tokens on **g/p**.");
+    }
+
+    #[test]
+    fn runner_facts_read_tags_and_status_forms() {
+        use serde_json::json;
+        let f = runner_facts(&[
+            json!({"status": "online", "tag_list": ["docker", "linux"], "run_untagged": false}),
+            json!({"online": false, "tag_list": []}),
+        ]);
+        assert!(f[0].online && f[0].tags == ["docker", "linux"] && !f[0].run_untagged);
+        assert!(!f[1].online && f[1].run_untagged, "run_untagged defaults to true");
     }
 }

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-09-28
+
+### Added
+- **Access-token lifecycle.** `list_project_access_tokens` shows role, scopes, expiry and last use, flags active tokens expiring within 7 days, and returns metadata only. `revoke_project_access_token` requires the token's exact name (`confirm_name`), so a mistyped id cannot revoke a neighbouring token. See ADR 057.
+- **Pipeline-schedule lifecycle.** `list_pipeline_schedules`, `update_pipeline_schedule`, `delete_pipeline_schedule`, `set_pipeline_schedule_variable` (upsert; the value is never echoed) and `delete_pipeline_schedule_variable`. Updates validate a new ref and cron exactly as creation does. The list marks schedules that will not run despite showing a next-run time, because their owner is blocked, deactivated or missing.
+- **`get_pipeline` explains pending jobs.** When a job is pending, one extra call checks the project's runners, and each pending job is labelled as queued, no runner attached, all runners offline, or no tag match. If the runner list cannot be read (it needs Maintainer), the check says so rather than reporting "no runners".
+
+### Internal
+- `search_code` passing `ref_name` through to GitLab is now covered by a test.
+- Test modules sit at the end of their files (`items_after_test_module`).
+- `writeln!` replaces `write!(…"\n")` (83 sites); report output is unchanged, pinned by the golden masters.
+
 ## [1.11.1] - 2026-09-25
 
 ### Changed

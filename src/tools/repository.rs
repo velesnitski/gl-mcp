@@ -49,19 +49,27 @@ async fn search_project_blobs(
     per_page: u32,
 ) -> Vec<Value> {
     let encoded = urlencoding::encode(project);
-    let per_page_str = per_page.to_string();
-    let mut params: Vec<(&str, &str)> = vec![
-        ("scope", "blobs"),
-        ("search", query),
-        ("per_page", &per_page_str),
-    ];
-    if !ref_name.is_empty() {
-        params.push(("ref", ref_name));
-    }
+    let owned = blob_search_params(query, ref_name, per_page);
+    let params: Vec<(&str, &str)> = owned.iter().map(|(k, v)| (*k, v.as_str())).collect();
     client
         .get::<Vec<Value>>(&format!("/projects/{encoded}/search"), &params)
         .await
         .or_default_logged()
+}
+
+/// Query for `GET /projects/:id/search`. A non-empty `ref_name` must reach GitLab as
+/// `ref`: dropping it would search the default branch and return a plausible, wrong
+/// answer for an audit against a deployed branch.
+pub(crate) fn blob_search_params(query: &str, ref_name: &str, per_page: u32) -> Vec<(&'static str, String)> {
+    let mut params = vec![
+        ("scope", "blobs".to_string()),
+        ("search", query.to_string()),
+        ("per_page", per_page.to_string()),
+    ];
+    if !ref_name.is_empty() {
+        params.push(("ref", ref_name.to_string()));
+    }
+    params
 }
 
 /// Search code across every project in a group.
@@ -726,69 +734,6 @@ pub async fn update_file(
     Ok(lines.join("\n"))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn alternation_is_recognised_only_when_it_is_really_alternation() {
-        // These would silently return nothing: GitLab matches the `|` literally,
-        // and an empty result reads as "this string appears nowhere".
-        assert!(looks_like_alternation("foo|bar"));
-        assert!(looks_like_alternation("a|b|c"));
-        assert!(looks_like_alternation(" left | right "));
-
-        // A plain term must never be split — the retry costs API calls and would
-        // relabel a legitimately empty result as something it is not.
-        assert!(!looks_like_alternation("connection_config"));
-        // A dangling pipe leaves only one real alternative; splitting adds nothing.
-        assert!(!looks_like_alternation("foo|"));
-        assert!(!looks_like_alternation("|foo"));
-        assert!(!looks_like_alternation("|"));
-    }
-
-    #[test]
-    fn subject_only_message_has_no_description() {
-        let (title, desc) = split_commit_message("docs: add README");
-        assert_eq!(title, "docs: add README");
-        assert_eq!(desc, None);
-    }
-
-    #[test]
-    fn body_goes_to_description_not_title() {
-        let (title, desc) = split_commit_message(
-            "docs: rewrite README\n\nThe old one claimed Xcode 9.4.\nIt has been wrong for years.",
-        );
-        assert_eq!(title, "docs: rewrite README");
-        assert_eq!(
-            desc.unwrap(),
-            "The old one claimed Xcode 9.4.\nIt has been wrong for years."
-        );
-    }
-
-    #[test]
-    fn overlong_subject_is_truncated_to_gitlab_limit() {
-        let long = "x".repeat(400);
-        let (title, _) = split_commit_message(&long);
-        assert_eq!(title.chars().count(), 255, "GitLab rejects titles over 255");
-        assert!(title.ends_with('…'));
-    }
-
-    /// Byte-slicing a Cyrillic subject at 255 would land mid-codepoint and panic.
-    #[test]
-    fn overlong_cyrillic_subject_truncates_on_a_char_boundary() {
-        let long = "я".repeat(400);
-        let (title, _) = split_commit_message(&long);
-        assert_eq!(title.chars().count(), 255);
-        assert!(title.len() > 255, "sanity: this is multi-byte per char");
-    }
-
-    #[test]
-    fn empty_subject_yields_empty_title_for_caller_to_backfill() {
-        let (title, _) = split_commit_message("\n\nbody only");
-        assert!(title.is_empty());
-    }
-}
 
 /// List project environments (deployments).
 pub async fn list_environments(
@@ -1226,4 +1171,84 @@ pub async fn get_deploy_frequency(
     }
 
     Ok(lines.join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn alternation_is_recognised_only_when_it_is_really_alternation() {
+        // These would silently return nothing: GitLab matches the `|` literally,
+        // and an empty result reads as "this string appears nowhere".
+        assert!(looks_like_alternation("foo|bar"));
+        assert!(looks_like_alternation("a|b|c"));
+        assert!(looks_like_alternation(" left | right "));
+
+        // A plain term must never be split — the retry costs API calls and would
+        // relabel a legitimately empty result as something it is not.
+        assert!(!looks_like_alternation("connection_config"));
+        // A dangling pipe leaves only one real alternative; splitting adds nothing.
+        assert!(!looks_like_alternation("foo|"));
+        assert!(!looks_like_alternation("|foo"));
+        assert!(!looks_like_alternation("|"));
+    }
+
+    #[test]
+    fn subject_only_message_has_no_description() {
+        let (title, desc) = split_commit_message("docs: add README");
+        assert_eq!(title, "docs: add README");
+        assert_eq!(desc, None);
+    }
+
+    #[test]
+    fn body_goes_to_description_not_title() {
+        let (title, desc) = split_commit_message(
+            "docs: rewrite README\n\nThe old one claimed Xcode 9.4.\nIt has been wrong for years.",
+        );
+        assert_eq!(title, "docs: rewrite README");
+        assert_eq!(
+            desc.unwrap(),
+            "The old one claimed Xcode 9.4.\nIt has been wrong for years."
+        );
+    }
+
+    #[test]
+    fn overlong_subject_is_truncated_to_gitlab_limit() {
+        let long = "x".repeat(400);
+        let (title, _) = split_commit_message(&long);
+        assert_eq!(title.chars().count(), 255, "GitLab rejects titles over 255");
+        assert!(title.ends_with('…'));
+    }
+
+    /// Byte-slicing a Cyrillic subject at 255 would land mid-codepoint and panic.
+    #[test]
+    fn overlong_cyrillic_subject_truncates_on_a_char_boundary() {
+        let long = "я".repeat(400);
+        let (title, _) = split_commit_message(&long);
+        assert_eq!(title.chars().count(), 255);
+        assert!(title.len() > 255, "sanity: this is multi-byte per char");
+    }
+
+    #[test]
+    fn empty_subject_yields_empty_title_for_caller_to_backfill() {
+        let (title, _) = split_commit_message("\n\nbody only");
+        assert!(title.is_empty());
+    }
+
+    #[test]
+    fn blob_search_passes_ref_through_only_when_given() {
+        let with = super::blob_search_params("needle", "release/1.2", 20);
+        assert!(with.contains(&("ref", "release/1.2".to_string())));
+        assert!(with.contains(&("scope", "blobs".to_string())));
+        let without = super::blob_search_params("needle", "", 20);
+        assert!(without.iter().all(|(k, _)| *k != "ref"), "no ref means the default branch");
+    }
+
+    #[test]
+    fn search_code_params_accept_ref_name() {
+        let p: crate::params::SearchCodeParams =
+            serde_json::from_value(serde_json::json!({"query": "x", "project_id": "g/p", "ref_name": "feat/a"})).unwrap();
+        assert_eq!(p.ref_name.as_deref(), Some("feat/a"));
+    }
 }

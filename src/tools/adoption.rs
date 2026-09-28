@@ -377,11 +377,11 @@ pub(crate) fn render_benchmark_html(b: &Benchmark, esc: impl Fn(&str) -> String)
     if !b.suggestions.is_empty() {
         s.push_str("  <div class=\"bench-adv\">To advance:</div>\n  <ol class=\"bench-adv-list\">\n");
         for sug in &b.suggestions {
-            let _ = write!(s, "    <li>{}</li>\n", esc(sug));
+            let _ = writeln!(s, "    <li>{}</li>", esc(sug));
         }
         s.push_str("  </ol>\n");
     }
-    let _ = write!(s, "  <div class=\"bench-note\">{}</div>\n", esc(BENCH_BANDS));
+    let _ = writeln!(s, "  <div class=\"bench-note\">{}</div>", esc(BENCH_BANDS));
     s.push_str(
         "  <div class=\"bench-note\">Benchmarks &amp; practices: <a href=\"https://www.anthropic.com/engineering/claude-code-best-practices\">Claude Code best practices</a> &middot; <a href=\"https://agents.md/\">AGENTS.md</a> &middot; <a href=\"https://github.com/humanlayer/12-factor-agents\">12-Factor Agents</a> &middot; <a href=\"https://newsletter.pragmaticengineer.com/p/ai-tooling-2026\">Pragmatic Engineer: AI tooling survey</a> &middot; <a href=\"https://dora.dev/dora-report-2025/\">DORA 2025: State of AI-assisted development</a></div>\n",
     );
@@ -2084,7 +2084,7 @@ fn html_funnel(level_counts: [usize; 4], in_flight: usize, active_count: usize) 
         } else {
             count_text
         };
-        let _ = write!(html, "<div style=\"margin:6px 0;display:flex;align-items:center;gap:10px\"><span style=\"width:110px;font-weight:700;color:{color}\">{label}</span><span class=\"bar\" style=\"width:{width}px;background:{color}\"></span><span style=\"color:#8b949e;font-size:13px\">{count_html}</span></div>\n"
+        let _ = writeln!(html, "<div style=\"margin:6px 0;display:flex;align-items:center;gap:10px\"><span style=\"width:110px;font-weight:700;color:{color}\">{label}</span><span class=\"bar\" style=\"width:{width}px;background:{color}\"></span><span style=\"color:#8b949e;font-size:13px\">{count_html}</span></div>"
         );
     }
     html
@@ -2154,7 +2154,7 @@ fn html_team_table(teams: &BTreeMap<String, TeamStats>, origin: Option<&str>, gr
         } else {
             format!("{}/{}", s.ai_devs.len(), s.all_devs.len())
         };
-        let _ = write!(html, "<tr><td><b>{}</b></td><td>{}</td><td>{devs_cell}</td><td>{ai_active_cell}</td><td>{adopting_cell}</td><td class=\"{level_class}\"><b>L{}</b></td><td>{traj_str}</td><td>{avg_pct}</td><td>{dormant_cell}</td></tr>\n",
+        let _ = writeln!(html, "<tr><td><b>{}</b></td><td>{}</td><td>{devs_cell}</td><td>{ai_active_cell}</td><td>{adopting_cell}</td><td class=\"{level_class}\"><b>L{}</b></td><td>{traj_str}</td><td>{avg_pct}</td><td>{dormant_cell}</td></tr>",
             link(&team_url, &esc(name)),
             s.repos,
             s.best_level,
@@ -2223,7 +2223,7 @@ fn html_adopting(results: &[RepoResult], group_path: &str) -> String {
                 esc(&flags.join(", "))
             };
             let short_path = short_path(&r.path, group_path);
-            let _ = write!(html, "<tr><td><b>{}</b></td><td class=\"{level_class}\"><b>L{level}</b></td><td>{traj_cell}</td><td>{}</td><td>{usage}</td><td>{flags_str}</td></tr>\n",
+            let _ = writeln!(html, "<tr><td><b>{}</b></td><td class=\"{level_class}\"><b>L{level}</b></td><td>{traj_cell}</td><td>{}</td><td>{usage}</td><td>{flags_str}</td></tr>",
                 link(&r.web_url, &esc(short_path)),
                 markers_html(m, &r.web_url, &r.default_branch),
             );
@@ -2256,7 +2256,7 @@ fn html_in_flight(in_flight: &[&RepoResult], group_path: &str) -> String {
                 &r.web_url,
                 &format!("/-/tree/{}", urlencoding::encode(branch)),
             );
-            let _ = write!(html, "<div class=\"issue warn\"><b>{}</b> &mdash; branch <code>{}</code><div class=\"m\">Last activity {last} &middot; adoption pipeline: AI work in flight, expect config to land on default.</div></div>\n",
+            let _ = writeln!(html, "<div class=\"issue warn\"><b>{}</b> &mdash; branch <code>{}</code><div class=\"m\">Last activity {last} &middot; adoption pipeline: AI work in flight, expect config to land on default.</div></div>",
                 link(&r.web_url, &esc(short_path)),
                 link(&branch_url, &esc(branch)),
             );
@@ -2292,7 +2292,7 @@ fn html_invisible(invisible: &[&RepoResult], group_path: &str) -> String {
                     )
                 })
                 .unwrap_or_default();
-            let _ = write!(html, "<tr><td><b>{}</b>{sample}</td><td>{:.0}% ({}/{})</td><td>{}</td><td>{attribution}</td></tr>\n",
+            let _ = writeln!(html, "<tr><td><b>{}</b>{sample}</td><td>{:.0}% ({}/{})</td><td>{}</td><td>{attribution}</td></tr>",
                 link(&r.web_url, &esc(short_path)),
                 m.ai_pct(),
                 m.ai_commits,
@@ -2423,7 +2423,7 @@ fn html_dormant(dormant: &[DormantRepo], group_path: &str, dormant_days: u32) ->
             } else {
                 esc(&d.last_activity)
             };
-            let _ = write!(html, "<tr><td><b>{}</b></td><td>{}</td><td>{last}</td></tr>\n",
+            let _ = writeln!(html, "<tr><td><b>{}</b></td><td>{}</td><td>{last}</td></tr>",
                 link(&d.web_url, &esc(short_path)),
                 esc(&d.team),
             );

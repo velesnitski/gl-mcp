@@ -304,7 +304,7 @@ pub(crate) fn render_dev_report(d: DevReportData<'_>) -> String {
     if !observations.is_empty() {
         html.push_str("<div class=\"card\">\n  <h2>Observations</h2>\n");
         for (css, msg) in &observations {
-            let _ = write!(html, "  <div class=\"obs {}\">{}</div>\n", css, msg);
+            let _ = writeln!(html, "  <div class=\"obs {}\">{}</div>", css, msg);
         }
         html.push_str("</div>\n");
     }
@@ -379,8 +379,7 @@ fn dev_commits_card(all_commits: &[(String, DevCommit)]) -> String {
             );
             for f in &c.files {
                 let new_badge = if f.is_new { r#" <span class="badge b-new">NEW</span>"# } else { "" };
-                let _ = write!(html, r#"      <div class="file"><span class="fp">{}</span><span class="fs"><span class="add">+{}</span> <span class="del">-{}</span></span><span class="badge b-lang">{}</span>{}</div>
-"#,
+                let _ = writeln!(html, r#"      <div class="file"><span class="fp">{}</span><span class="fs"><span class="add">+{}</span> <span class="del">-{}</span></span><span class="badge b-lang">{}</span>{}</div>"#,
                     htmlescape(&f.path), f.additions, f.deletions, f.lang, new_badge
                 );
             }
@@ -415,7 +414,7 @@ fn dev_mrs_card(mrs: &[Value], total_mr_merged: u64) -> String {
             for mr in target_mrs {
                 let iid = mr["iid"].as_u64().unwrap_or(0);
                 let title = mr["title"].as_str().unwrap_or("?");
-                let _ = write!(html, "    <tr><td style=\"width:60px\">!{}</td><td>{}</td><td style=\"width:60px\"><span class=\"badge {}\">{}</span></td></tr>\n",
+                let _ = writeln!(html, "    <tr><td style=\"width:60px\">!{}</td><td>{}</td><td style=\"width:60px\"><span class=\"badge {}\">{}</span></td></tr>",
                     iid, htmlescape(title), badge_class, target_esc
                 );
             }
@@ -427,7 +426,7 @@ fn dev_mrs_card(mrs: &[Value], total_mr_merged: u64) -> String {
             for mr in &draft_mrs {
                 let iid = mr["iid"].as_u64().unwrap_or(0);
                 let title = mr["title"].as_str().unwrap_or("?");
-                let _ = write!(html, "    <tr><td style=\"width:60px\">!{}</td><td>{}</td><td style=\"width:60px\"><span class=\"badge b-draft\">Draft</span></td></tr>\n",
+                let _ = writeln!(html, "    <tr><td style=\"width:60px\">!{}</td><td>{}</td><td style=\"width:60px\"><span class=\"badge b-draft\">Draft</span></td></tr>",
                     iid, htmlescape(title)
                 );
             }
@@ -435,7 +434,7 @@ fn dev_mrs_card(mrs: &[Value], total_mr_merged: u64) -> String {
         }
 
         if mrs.len() > 5 {
-            let _ = write!(html, "  <div class=\"alert\"><b>{} open MRs, {} merged.</b> Review bottleneck &mdash; consider assigning reviewers.</div>\n",
+            let _ = writeln!(html, "  <div class=\"alert\"><b>{} open MRs, {} merged.</b> Review bottleneck &mdash; consider assigning reviewers.</div>",
                 mrs.len(), total_mr_merged
             );
         }
@@ -877,7 +876,7 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
         } else {
             format!("{:.1}h", d.avg_merge_hours)
         };
-        let _ = write!(html, "<tr><td><b>@{}</b></td><td>{}</td><td class=\"g\">+{}</td><td class=\"r\">-{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+        let _ = writeln!(html, "<tr><td><b>@{}</b></td><td>{}</td><td class=\"g\">+{}</td><td class=\"r\">-{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
             htmlescape(&d.username),
             d.commits,
             d.additions,
@@ -924,13 +923,13 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
     html.push_str("<h2>MR Size Distribution</h2>\n");
     if total_sized > 0 {
         html.push_str("<div class=\"grid\">\n");
-        let _ = write!(html, "  <div class=\"card\"><div class=\"card-t\">Small (&lt;10 files)</div><div class=\"card-v g\">{total_small}</div><div class=\"card-s\">{:.0}%</div></div>\n",
+        let _ = writeln!(html, "  <div class=\"card\"><div class=\"card-t\">Small (&lt;10 files)</div><div class=\"card-v g\">{total_small}</div><div class=\"card-s\">{:.0}%</div></div>",
             total_small as f64 / total_sized as f64 * 100.0
         );
-        let _ = write!(html, "  <div class=\"card\"><div class=\"card-t\">Medium (10–50 files)</div><div class=\"card-v y\">{total_medium}</div><div class=\"card-s\">{:.0}%</div></div>\n",
+        let _ = writeln!(html, "  <div class=\"card\"><div class=\"card-t\">Medium (10–50 files)</div><div class=\"card-v y\">{total_medium}</div><div class=\"card-s\">{:.0}%</div></div>",
             total_medium as f64 / total_sized as f64 * 100.0
         );
-        let _ = write!(html, "  <div class=\"card\"><div class=\"card-t\">Large (&gt;50 files)</div><div class=\"card-v r\">{total_large}</div><div class=\"card-s\">{:.0}%</div></div>\n",
+        let _ = writeln!(html, "  <div class=\"card\"><div class=\"card-t\">Large (&gt;50 files)</div><div class=\"card-v r\">{total_large}</div><div class=\"card-s\">{:.0}%</div></div>",
             total_large as f64 / total_sized as f64 * 100.0
         );
         html.push_str("</div>\n");
@@ -938,7 +937,7 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
         // Per-developer breakdown
         html.push_str("<table>\n<tr><th>Developer</th><th>Small</th><th>Medium</th><th>Large</th></tr>\n");
         for d in &dev_results {
-            let _ = write!(html, "<tr><td>@{}</td><td class=\"g\">{}</td><td class=\"y\">{}</td><td class=\"r\">{}</td></tr>\n",
+            let _ = writeln!(html, "<tr><td>@{}</td><td class=\"g\">{}</td><td class=\"y\">{}</td><td class=\"r\">{}</td></tr>",
                 htmlescape(&d.username), d.mr_sizes.0, d.mr_sizes.1, d.mr_sizes.2,
             );
         }
@@ -956,13 +955,13 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
         let median_hours = crate::tools::stats::median(&mut turnaround_stats.iter().map(|t| t.hours).collect::<Vec<_>>());
 
         html.push_str("<div class=\"grid\">\n");
-        let _ = write!(html, "  <div class=\"card\"><div class=\"card-t\">Average</div><div class=\"card-v\">{:.1}h</div></div>\n",
+        let _ = writeln!(html, "  <div class=\"card\"><div class=\"card-t\">Average</div><div class=\"card-v\">{:.1}h</div></div>",
             avg_hours
         );
-        let _ = write!(html, "  <div class=\"card\"><div class=\"card-t\">Median</div><div class=\"card-v\">{:.1}h</div></div>\n",
+        let _ = writeln!(html, "  <div class=\"card\"><div class=\"card-t\">Median</div><div class=\"card-v\">{:.1}h</div></div>",
             median_hours
         );
-        let _ = write!(html, "  <div class=\"card\"><div class=\"card-t\">MRs Analyzed</div><div class=\"card-v\">{}</div></div>\n",
+        let _ = writeln!(html, "  <div class=\"card\"><div class=\"card-t\">MRs Analyzed</div><div class=\"card-v\">{}</div></div>",
             turnaround_stats.len()
         );
         html.push_str("</div>\n");
@@ -977,7 +976,7 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
             } else {
                 format!("{:.1}h", t.hours)
             };
-            let _ = write!(html, "<tr><td>!{}</td><td>{}</td><td>@{}</td><td class=\"{}\">{}</td></tr>\n",
+            let _ = writeln!(html, "<tr><td>!{}</td><td>{}</td><td>@{}</td><td class=\"{}\">{}</td></tr>",
                 t.iid,
                 htmlescape(&t.title),
                 htmlescape(&t.author),
@@ -1010,7 +1009,7 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
     // Zero review participation
     for d in &dev_results {
         if d.mrs_reviewed == 0 && d.commits > 10 {
-            let _ = write!(html, "<div class=\"issue risk\"><b>@{} — no review participation</b><div class=\"m\">{} commits but 0 reviews given. Consider requiring cross-reviews.</div></div>\n",
+            let _ = writeln!(html, "<div class=\"issue risk\"><b>@{} — no review participation</b><div class=\"m\">{} commits but 0 reviews given. Consider requiring cross-reviews.</div></div>",
                 htmlescape(&d.username), d.commits,
             );
             issues_found += 1;
@@ -1022,7 +1021,7 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
         if d.mrs_merged > 0 {
             let avg_files_per_mr = d.files_changed as f64 / d.mrs_merged as f64;
             if avg_files_per_mr > 50.0 {
-                let _ = write!(html, "<div class=\"issue warn\"><b>@{} — MRs too large</b><div class=\"m\">Average {:.0} files/MR. Break down into smaller, reviewable chunks.</div></div>\n",
+                let _ = writeln!(html, "<div class=\"issue warn\"><b>@{} — MRs too large</b><div class=\"m\">Average {:.0} files/MR. Break down into smaller, reviewable chunks.</div></div>",
                     htmlescape(&d.username), avg_files_per_mr,
                 );
                 issues_found += 1;
@@ -1043,7 +1042,7 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
             .filter(|d| d.commits == 0 && d.mrs_merged == 0 && d.mrs_reviewed == 0)
             .map(|d| d.username.as_str())
             .collect();
-        let _ = write!(html, "<div class=\"issue warn\"><b>{} inactive member(s)</b><div class=\"m\">No commits, MRs, or reviews: {}. May be on leave or assigned to other projects.</div></div>\n",
+        let _ = writeln!(html, "<div class=\"issue warn\"><b>{} inactive member(s)</b><div class=\"m\">No commits, MRs, or reviews: {}. May be on leave or assigned to other projects.</div></div>",
             inactive_count,
             inactive_names.iter().map(|n| format!("@{}", htmlescape(n))).collect::<Vec<_>>().join(", "),
         );
@@ -1413,19 +1412,19 @@ fn issue_counts(metrics: &[FileMetricsPub]) -> Vec<((String, String), usize)> {
 
 fn rp_cards(avg_score: f64, total_files: usize, total_source: usize, repo_size: u64, contributors: usize, recent_commits: usize) -> String {
     let mut html = String::from("<div class=\"grid\">\n");
-    let _ = write!(html, "  <div class=\"card\"><div class=\"card-t\">Avg Quality</div><div class=\"card-v{}\">{:.0}/100</div></div>\n",
+    let _ = writeln!(html, "  <div class=\"card\"><div class=\"card-t\">Avg Quality</div><div class=\"card-v{}\">{:.0}/100</div></div>",
         if avg_score >= 75.0 { " g" } else if avg_score >= 60.0 { " y" } else { " r" },
         avg_score,
     );
-    let _ = write!(html, "  <div class=\"card\"><div class=\"card-t\">Total Files</div><div class=\"card-v\">{total_files}</div><div class=\"card-s\">{total_source} source</div></div>\n",
+    let _ = writeln!(html, "  <div class=\"card\"><div class=\"card-t\">Total Files</div><div class=\"card-v\">{total_files}</div><div class=\"card-s\">{total_source} source</div></div>",
     );
-    let _ = write!(html, "  <div class=\"card\"><div class=\"card-t\">Repo Size</div><div class=\"card-v\">{}</div></div>\n",
+    let _ = writeln!(html, "  <div class=\"card\"><div class=\"card-t\">Repo Size</div><div class=\"card-v\">{}</div></div>",
         format_size(repo_size),
     );
-    let _ = write!(html, "  <div class=\"card\"><div class=\"card-t\">Contributors</div><div class=\"card-v\">{}</div></div>\n",
+    let _ = writeln!(html, "  <div class=\"card\"><div class=\"card-t\">Contributors</div><div class=\"card-v\">{}</div></div>",
         contributors,
     );
-    let _ = write!(html, "  <div class=\"card\"><div class=\"card-t\">Commits (14d)</div><div class=\"card-v\">{}</div></div>\n",
+    let _ = writeln!(html, "  <div class=\"card\"><div class=\"card-t\">Commits (14d)</div><div class=\"card-v\">{}</div></div>",
         recent_commits,
     );
     html.push_str("</div>\n");
@@ -1451,7 +1450,7 @@ fn rp_grade_distribution(all_metrics: &[FileMetricsPub]) -> String {
         ] {
             let width = if max_grade > 0 { count * bar_max / max_grade } else { 0 };
             let pct = count as f64 / total_analyzed as f64 * 100.0;
-            let _ = write!(html, "<div style=\"margin:6px 0;display:flex;align-items:center;gap:10px\"><span style=\"width:24px;font-weight:700;color:{color}\">{label}</span><span class=\"bar\" style=\"width:{width}px;background:{color}\"></span><span style=\"color:#8b949e;font-size:13px\">{count} ({pct:.0}%)</span></div>\n"
+            let _ = writeln!(html, "<div style=\"margin:6px 0;display:flex;align-items:center;gap:10px\"><span style=\"width:24px;font-weight:700;color:{color}\">{label}</span><span class=\"bar\" style=\"width:{width}px;background:{color}\"></span><span style=\"color:#8b949e;font-size:13px\">{count} ({pct:.0}%)</span></div>"
             );
         }
     }
@@ -1473,7 +1472,7 @@ fn rp_languages(langs: &Value) -> String {
             for (i, (lang, pct)) in lang_entries.iter().enumerate() {
                 let color = lang_colors.get(i).unwrap_or(&"#8b949e");
                 let width = (*pct * 3.0) as u32; // 100% = 300px
-                let _ = write!(html, "<div style=\"margin:6px 0;display:flex;align-items:center;gap:10px\"><span style=\"width:100px;text-align:right;font-size:13px\">{}</span><span class=\"bar\" style=\"width:{width}px;background:{color}\"></span><span style=\"color:#8b949e;font-size:13px\">{pct:.1}%</span></div>\n",
+                let _ = writeln!(html, "<div style=\"margin:6px 0;display:flex;align-items:center;gap:10px\"><span style=\"width:100px;text-align:right;font-size:13px\">{}</span><span class=\"bar\" style=\"width:{width}px;background:{color}\"></span><span style=\"color:#8b949e;font-size:13px\">{pct:.1}%</span></div>",
                     htmlescape(lang),
                 );
             }
@@ -1487,7 +1486,7 @@ fn rp_file_table(all_metrics: &[FileMetricsPub], total_source: usize) -> String 
     let total_analyzed = all_metrics.len();
     if !all_metrics.is_empty() {
         html.push_str("<h2>File Quality</h2>\n");
-        let _ = write!(html, "<div class=\"sub\">{total_analyzed} of {total_source} source files analyzed</div>\n");
+        let _ = writeln!(html, "<div class=\"sub\">{total_analyzed} of {total_source} source files analyzed</div>");
         html.push_str("<table>\n<tr><th>File</th><th>Lines</th><th>Functions</th><th>Max Nesting</th><th>Violations</th><th>Score</th><th>Grade</th></tr>\n");
 
         for m in all_metrics {
@@ -1498,7 +1497,7 @@ fn rp_file_table(all_metrics: &[FileMetricsPub], total_source: usize) -> String 
                 Grade::C => "color:#d29922;font-weight:700",
                 Grade::D | Grade::F => "color:#f85149;font-weight:700",
             };
-            let _ = write!(html, "<tr><td title=\"{}\">{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td style=\"{}\">{}</td></tr>\n",
+            let _ = writeln!(html, "<tr><td title=\"{}\">{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td style=\"{}\">{}</td></tr>",
                 htmlescape(&m.path),
                 htmlescape(&short_path),
                 m.total_lines,
@@ -1521,7 +1520,7 @@ fn rp_top_issues(issues: &[((String, String), usize)]) -> String {
         html.push_str("<h2>Top Issues</h2>\n");
         for ((rule_id, name), count) in issues.iter().take(15) {
             let border_class = if *count > 10 { "risk" } else if *count > 3 { "warn" } else { "ok" };
-            let _ = write!(html, "<div class=\"issue {border_class}\"><b>[{rule_id}] {}</b><div class=\"m\">{count} occurrences across analyzed files</div></div>\n",
+            let _ = writeln!(html, "<div class=\"issue {border_class}\"><b>[{rule_id}] {}</b><div class=\"m\">{count} occurrences across analyzed files</div></div>",
                 htmlescape(name),
             );
         }
@@ -1532,14 +1531,14 @@ fn rp_top_issues(issues: &[((String, String), usize)]) -> String {
 fn rp_binary_files(binary_files: &[String]) -> String {
     let mut html = String::new();
     if !binary_files.is_empty() {
-        let _ = write!(html, "<h2>Binary Files ({})</h2>\n", binary_files.len());
+        let _ = writeln!(html, "<h2>Binary Files ({})</h2>", binary_files.len());
         html.push_str("<div class=\"issue warn\"><b>Binary files detected in repository</b><div class=\"m\">Consider using Git LFS for binary assets to keep repository size small.</div></div>\n");
         html.push_str("<table>\n<tr><th>File Path</th></tr>\n");
         for f in binary_files.iter().take(30) {
-            let _ = write!(html, "<tr><td>{}</td></tr>\n", htmlescape(f));
+            let _ = writeln!(html, "<tr><td>{}</td></tr>", htmlescape(f));
         }
         if binary_files.len() > 30 {
-            let _ = write!(html, "<tr><td>...and {} more</td></tr>\n", binary_files.len() - 30);
+            let _ = writeln!(html, "<tr><td>...and {} more</td></tr>", binary_files.len() - 30);
         }
         html.push_str("</table>\n");
     }
@@ -1551,35 +1550,35 @@ fn rp_commit_quality(c: &CommitStats, failing_messages: &[(String, String, Vec<S
     let (conv_pct, ticket_pct, length_pct) = (c.pct(conventional_pass), c.pct(ticket_pass), c.pct(length_pass));
     let mut html = String::from("<h2>Commit Quality</h2>\n");
     if commit_total > 0 {
-        let _ = write!(html, "<div class=\"sub\">{commit_total} non-merge commits in the last 14 days</div>\n");
+        let _ = writeln!(html, "<div class=\"sub\">{commit_total} non-merge commits in the last 14 days</div>");
         html.push_str("<table>\n<tr><th>Check</th><th>Pass</th><th>Fail</th><th>%</th></tr>\n");
-        let _ = write!(html, "<tr><td>Conventional format</td><td class=\"g\">{conventional_pass}</td><td class=\"r\">{}</td><td{}>{conv_pct:.0}%</td></tr>\n",
+        let _ = writeln!(html, "<tr><td>Conventional format</td><td class=\"g\">{conventional_pass}</td><td class=\"r\">{}</td><td{}>{conv_pct:.0}%</td></tr>",
             commit_total - conventional_pass,
             if conv_pct >= 80.0 { "" } else { " class=\"r\"" },
         );
-        let _ = write!(html, "<tr><td>Ticket reference</td><td class=\"g\">{ticket_pass}</td><td class=\"r\">{}</td><td{}>{ticket_pct:.0}%</td></tr>\n",
+        let _ = writeln!(html, "<tr><td>Ticket reference</td><td class=\"g\">{ticket_pass}</td><td class=\"r\">{}</td><td{}>{ticket_pct:.0}%</td></tr>",
             commit_total - ticket_pass,
             if ticket_pct >= 80.0 { "" } else { " class=\"r\"" },
         );
-        let _ = write!(html, "<tr><td>Subject length &lt;72</td><td class=\"g\">{length_pass}</td><td class=\"r\">{}</td><td{}>{length_pct:.0}%</td></tr>\n",
+        let _ = writeln!(html, "<tr><td>Subject length &lt;72</td><td class=\"g\">{length_pass}</td><td class=\"r\">{}</td><td{}>{length_pct:.0}%</td></tr>",
             commit_total - length_pass,
             if length_pct >= 80.0 { "" } else { " class=\"r\"" },
         );
         html.push_str("</table>\n");
 
         if !failing_messages.is_empty() {
-            let _ = write!(html, "<h2>Failing Commit Messages ({})</h2>\n", failing_messages.len());
+            let _ = writeln!(html, "<h2>Failing Commit Messages ({})</h2>", failing_messages.len());
             html.push_str("<table>\n<tr><th>SHA</th><th>Subject</th><th>Issues</th></tr>\n");
             for (sha, subject, issues) in failing_messages.iter().take(20) {
                 let short_subject: String = subject.chars().take(50).collect();
-                let _ = write!(html, "<tr><td><code>{}</code></td><td>{}</td><td class=\"r\">{}</td></tr>\n",
+                let _ = writeln!(html, "<tr><td><code>{}</code></td><td>{}</td><td class=\"r\">{}</td></tr>",
                     htmlescape(sha),
                     htmlescape(&short_subject),
                     issues.join(", "),
                 );
             }
             if failing_messages.len() > 20 {
-                let _ = write!(html, "<tr><td colspan=\"3\">...and {} more</td></tr>\n", failing_messages.len() - 20);
+                let _ = writeln!(html, "<tr><td colspan=\"3\">...and {} more</td></tr>", failing_messages.len() - 20);
             }
             html.push_str("</table>\n");
         }
@@ -1599,12 +1598,12 @@ fn rp_contributors(contributors: &[Value]) -> String {
             let commits_count = c["commits"].as_u64().unwrap_or(0);
             let additions = c["additions"].as_u64().unwrap_or(0);
             let deletions = c["deletions"].as_u64().unwrap_or(0);
-            let _ = write!(html, "<tr><td>{}</td><td>{commits_count}</td><td class=\"g\">+{additions}</td><td class=\"r\">-{deletions}</td></tr>\n",
+            let _ = writeln!(html, "<tr><td>{}</td><td>{commits_count}</td><td class=\"g\">+{additions}</td><td class=\"r\">-{deletions}</td></tr>",
                 htmlescape(name),
             );
         }
         if contributors.len() > 20 {
-            let _ = write!(html, "<tr><td colspan=\"4\">...and {} more</td></tr>\n", contributors.len() - 20);
+            let _ = writeln!(html, "<tr><td colspan=\"4\">...and {} more</td></tr>", contributors.len() - 20);
         }
         html.push_str("</table>\n");
     }
@@ -1626,7 +1625,7 @@ fn rp_recommendations(all_metrics: &[FileMetricsPub], binary_files: &[String], c
             } else {
                 format!("Grade {}, {} violations &mdash; needs cleanup", m.grade, m.violations)
             };
-            let _ = write!(html, "<div class=\"issue risk\"><b>{}</b><div class=\"m\">{reason}</div></div>\n",
+            let _ = writeln!(html, "<div class=\"issue risk\"><b>{}</b><div class=\"m\">{reason}</div></div>",
                 htmlescape(short),
             );
             rec_count += 1;
@@ -1634,20 +1633,20 @@ fn rp_recommendations(all_metrics: &[FileMetricsPub], binary_files: &[String], c
     }
 
     if !binary_files.is_empty() {
-        let _ = write!(html, "<div class=\"issue warn\"><b>{} binary files in repository</b><div class=\"m\">Move to Git LFS or generate via CI to reduce repo size.</div></div>\n",
+        let _ = writeln!(html, "<div class=\"issue warn\"><b>{} binary files in repository</b><div class=\"m\">Move to Git LFS or generate via CI to reduce repo size.</div></div>",
             binary_files.len(),
         );
         rec_count += 1;
     }
 
     if commit_total > 0 && ticket_pct < 50.0 {
-        let _ = write!(html, "<div class=\"issue warn\"><b>Low ticket reference rate ({ticket_pct:.0}%)</b><div class=\"m\">Only {ticket_pass}/{commit_total} commits reference a ticket. Enforce ticket IDs in commit messages.</div></div>\n"
+        let _ = writeln!(html, "<div class=\"issue warn\"><b>Low ticket reference rate ({ticket_pct:.0}%)</b><div class=\"m\">Only {ticket_pass}/{commit_total} commits reference a ticket. Enforce ticket IDs in commit messages.</div></div>"
         );
         rec_count += 1;
     }
 
     if commit_total > 0 && conv_pct < 50.0 {
-        let _ = write!(html, "<div class=\"issue warn\"><b>Low conventional commit rate ({conv_pct:.0}%)</b><div class=\"m\">Only {conventional_pass}/{commit_total} commits use conventional format. Consider adopting commitlint.</div></div>\n"
+        let _ = writeln!(html, "<div class=\"issue warn\"><b>Low conventional commit rate ({conv_pct:.0}%)</b><div class=\"m\">Only {conventional_pass}/{commit_total} commits use conventional format. Consider adopting commitlint.</div></div>"
         );
         rec_count += 1;
     }
@@ -1659,7 +1658,7 @@ fn rp_recommendations(all_metrics: &[FileMetricsPub], binary_files: &[String], c
         .map(|(_, c)| *c)
         .sum();
     if force_unwrap_count > 0 {
-        let _ = write!(html, "<div class=\"issue risk\"><b>{force_unwrap_count} force unwraps/casts detected</b><div class=\"m\">Replace with safe alternatives (guard let, if let, as?) to prevent runtime crashes.</div></div>\n"
+        let _ = writeln!(html, "<div class=\"issue risk\"><b>{force_unwrap_count} force unwraps/casts detected</b><div class=\"m\">Replace with safe alternatives (guard let, if let, as?) to prevent runtime crashes.</div></div>"
         );
         rec_count += 1;
     }
