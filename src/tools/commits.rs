@@ -321,12 +321,15 @@ pub async fn list_commits(
 
     if summary_only {
         // Compact: one line per commit
-        let mut lines = vec![format!("{} commits", commits.len())];
+        let mut lines = vec![format!("{} commits (sha|date|author|title)", commits.len())];
         for c in &commits {
             let sha = c["short_id"].as_str().unwrap_or("?");
             let title = c["title"].as_str().unwrap_or("?");
             let author = c["author_name"].as_str().unwrap_or("?");
-            lines.push(format!("{sha}|{author}|{title}"));
+            // Date is what a scan is usually ordered and filtered by — without it every
+            // interesting commit needs a second call just to place it in time.
+            let date = c["committed_date"].as_str().and_then(|d| d.get(..10)).unwrap_or("?");
+            lines.push(format!("{sha}|{date}|{author}|{title}"));
         }
         return Ok(lines.join("\n"));
     }

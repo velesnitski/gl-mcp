@@ -249,30 +249,82 @@ async fn search_code_once(
         return Ok((format!("No results for '{query}' in {project_id}."), 0));
     }
 
-    let mut lines = vec![format!(
-        "**Search '{query}' in {project_id}: {} results**\n",
-        results.len()
-    )];
-
-    for r in &results {
-        let path = r["path"].as_str().unwrap_or("?");
-        let startline = r["startline"].as_u64().unwrap_or(0);
-        let data = r["data"].as_str().unwrap_or("").trim();
-
-        // Truncate long matches
-        let preview = if data.len() > 200 {
-            let truncated: String = data.chars().take(200).collect();
-            format!("{truncated}...")
-        } else {
-            data.to_string()
-        };
-
-        lines.push(format!("**{}:{}**", path, startline));
-        lines.push(format!("```\n{}\n```\n", preview));
-    }
+    let lines = vec![render_search_hits(query, project_id, &results)];
 
     let n = results.len();
     Ok((lines.join("\n"), n))
+}
+
+/// Extensions whose content is never readable as a snippet.
+const BINARY_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "webp", "ico", "bmp", "svgz", "pdf", "zip", "gz", "jar", "aar",
+    "apk", "so", "dylib", "dll", "exe", "bin", "ttf", "otf", "woff", "woff2", "mp3", "mp4", "jks",
+    "keystore", "p12",
+];
+
+/// Dependency lockfiles: matches there are almost never what a code search is after.
+const LOCKFILES: &[&str] = &[
+    "bun.lock", "bun.lockb", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock",
+    "composer.lock", "Gemfile.lock", "poetry.lock", "go.sum",
+];
+
+fn file_name(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+/// Binary by extension, or by content GitLab returned as text anyway: control bytes or
+/// replacement characters make up more than a tenth of the snippet.
+pub(crate) fn is_binary_hit(path: &str, data: &str) -> bool {
+    let ext = file_name(path).rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
+    if ext.is_some_and(|e| BINARY_EXTENSIONS.contains(&e.as_str())) {
+        return true;
+    }
+    let total = data.chars().count();
+    let junk = data
+        .chars()
+        .filter(|c| *c == '\u{FFFD}' || (c.is_control() && !matches!(c, '\n' | '\r' | '\t')))
+        .count();
+    total > 0 && junk * 10 > total
+}
+
+pub(crate) fn is_lockfile(path: &str) -> bool {
+    LOCKFILES.contains(&file_name(path))
+}
+
+/// Project search results: source hits first with snippets; lockfile hits listed after
+/// them by path only; binary hits by path only — raw image bytes are noise, not evidence.
+pub(crate) fn render_search_hits(query: &str, project_id: &str, results: &[Value]) -> String {
+    let mut lines = vec![format!("**Search '{query}' in {project_id}: {} results**\n", results.len())];
+    let mut lockfiles = Vec::new();
+    let mut binaries = Vec::new();
+    for r in results {
+        let path = r["path"].as_str().unwrap_or("?");
+        let startline = r["startline"].as_u64().unwrap_or(0);
+        let data = r["data"].as_str().unwrap_or("").trim();
+        if is_binary_hit(path, data) {
+            binaries.push(path);
+            continue;
+        }
+        if is_lockfile(path) {
+            lockfiles.push(format!("{path}:{startline}"));
+            continue;
+        }
+        let preview = if data.chars().count() > 200 {
+            format!("{}...", data.chars().take(200).collect::<String>())
+        } else {
+            data.to_string()
+        };
+        lines.push(format!("**{path}:{startline}**"));
+        lines.push(format!("```\n{preview}\n```\n"));
+    }
+    if !lockfiles.is_empty() {
+        lines.push(format!("_Also in lockfiles ({}):_ {}", lockfiles.len(), lockfiles.join(", ")));
+    }
+    if !binaries.is_empty() {
+        binaries.dedup();
+        lines.push(format!("_Also in binary files ({}), preview omitted:_ {}", binaries.len(), binaries.join(", ")));
+    }
+    lines.join("\n")
 }
 
 /// Get project language breakdown.
@@ -348,6 +400,12 @@ pub async fn get_tree(
         "**{project_id}:{path_label}** ({} entries)\n",
         entries.len()
     )];
+    // A full page is indistinguishable from "that was everything" unless we say so.
+    if entries.len() as u64 >= u64::from(per_page) {
+        lines.push(format!(
+            "⚠️ Listing stopped at per_page={per_page} — there are probably more entries. Raise per_page or narrow `path`.\n"
+        ));
+    }
 
     for entry in &entries {
         let name = entry["name"].as_str().unwrap_or("?");
@@ -1250,5 +1308,31 @@ mod tests {
         let p: crate::params::SearchCodeParams =
             serde_json::from_value(serde_json::json!({"query": "x", "project_id": "g/p", "ref_name": "feat/a"})).unwrap();
         assert_eq!(p.ref_name.as_deref(), Some("feat/a"));
+    }
+
+    #[test]
+    fn search_hits_put_source_first_and_collapse_binaries_and_lockfiles() {
+        use serde_json::json;
+        let out = super::render_search_hits("needle", "g/p", &[
+            json!({"path": "assets/icon.webp", "startline": 1, "data": "RIFF\u{FFFD}\u{FFFD}WEBPVP8"}),
+            json!({"path": "bun.lock", "startline": 62, "data": "\"needle\": \"1.0\""}),
+            json!({"path": "src/app.ts", "startline": 7, "data": "const needle = 1;"}),
+            json!({"path": "data/blob.dat", "startline": 1, "data": "\u{1}\u{2}\u{3}ab"}),
+        ]);
+        assert!(out.contains("4 results"));
+        assert!(out.contains("**src/app.ts:7**") && out.contains("const needle = 1;"));
+        assert!(out.contains("_Also in lockfiles (1):_ bun.lock:62"));
+        assert!(out.contains("_Also in binary files (2), preview omitted:_ assets/icon.webp, data/blob.dat"));
+        assert!(!out.contains("WEBPVP8"), "no raw bytes in the output");
+        assert!(out.find("src/app.ts").unwrap() < out.find("bun.lock").unwrap());
+    }
+
+    #[test]
+    fn binary_detection_by_extension_and_content() {
+        assert!(super::is_binary_hit("a/B.PNG", "text"));
+        assert!(!super::is_binary_hit("a/b.rs", "fn main() {}\n\tlet x = 1;"));
+        assert!(super::is_binary_hit("a/b", "\u{0}\u{0}\u{0}x"));
+        assert!(!super::is_binary_hit("a/b.txt", ""));
+        assert!(super::is_lockfile("web/package-lock.json") && !super::is_lockfile("src/lock.rs"));
     }
 }
