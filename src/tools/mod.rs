@@ -2,21 +2,21 @@
 //!
 //! Mirrors yt-mcp: WRITE_TOOLS frozenset, read-only mode, disabled tools.
 
-pub mod projects;
-pub mod issues;
-pub mod merge_requests;
-pub mod pipelines;
-pub mod commits;
-pub mod reports;
-pub mod repository;
-pub mod lint;
 pub mod adoption;
-pub mod spec;
-pub mod users;
+pub mod commits;
 pub mod docs;
 pub(crate) mod encoding;
-pub(crate) mod stats;
+pub mod issues;
+pub mod lint;
+pub mod merge_requests;
+pub mod pipelines;
+pub mod projects;
+pub mod reports;
+pub mod repository;
 pub mod security;
+pub mod spec;
+pub(crate) mod stats;
+pub mod users;
 
 /// Tools that modify data — blocked in read-only mode.
 pub const WRITE_TOOLS: &[&str] = &[

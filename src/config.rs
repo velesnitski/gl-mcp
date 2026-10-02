@@ -16,8 +16,8 @@
 //!                         set are pruned from tools/list entirely (schema-token
 //!                         savings for clients that load all schemas up front)
 
-use std::collections::HashMap;
 use crate::error::{Error, Result};
+use std::collections::HashMap;
 use std::env;
 
 /// Single GitLab instance configuration (immutable after creation).
@@ -98,13 +98,15 @@ impl Config {
                 });
             }
             if result.is_empty() {
-                return Err(Error::Config("GITLAB_INSTANCES is set but no valid instances configured".into()));
+                return Err(Error::Config(
+                    "GITLAB_INSTANCES is set but no valid instances configured".into(),
+                ));
             }
             result
         } else {
             // Single instance mode
-            let url = env::var("GITLAB_URL")
-                .map_err(|_| Error::Config("GITLAB_URL not set".into()))?;
+            let url =
+                env::var("GITLAB_URL").map_err(|_| Error::Config("GITLAB_URL not set".into()))?;
             let token = env::var("GITLAB_TOKEN")
                 .map_err(|_| Error::Config("GITLAB_TOKEN not set".into()))?;
 
@@ -146,7 +148,10 @@ fn validate_url(url: &str) -> Result<()> {
     if url.starts_with("http://localhost") || url.starts_with("http://127.0.0.1") {
         return Ok(());
     }
-    if env::var("GITLAB_ALLOW_HTTP").map(|v| is_truthy(&v)).unwrap_or(false) {
+    if env::var("GITLAB_ALLOW_HTTP")
+        .map(|v| is_truthy(&v))
+        .unwrap_or(false)
+    {
         return Ok(());
     }
     Err(Error::Config(format!(

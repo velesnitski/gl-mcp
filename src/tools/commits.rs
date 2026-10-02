@@ -1,29 +1,39 @@
 //! GitLab commit and diff tools with smart filtering and token compression.
 
-use std::fmt::Write as _;
 use crate::client::GitLabClient;
 use crate::error::{Error, Result, ResultExt};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 // ─── Smart filtering ───
 
 const SKIP_FILES: &[&str] = &[
-    "package-lock.json", "yarn.lock", "composer.lock",
-    "go.sum", "Cargo.lock", "Gemfile.lock",
-    "pnpm-lock.yaml", "poetry.lock", "Pipfile.lock",
+    "package-lock.json",
+    "yarn.lock",
+    "composer.lock",
+    "go.sum",
+    "Cargo.lock",
+    "Gemfile.lock",
+    "pnpm-lock.yaml",
+    "poetry.lock",
+    "Pipfile.lock",
 ];
 
 const SKIP_PATTERNS: &[&str] = &[
-    ".min.js", ".min.css", ".map",
-    "vendor/", "node_modules/",
-    "__generated__", ".pb.go",
-    "dist/", "build/",
+    ".min.js",
+    ".min.css",
+    ".map",
+    "vendor/",
+    "node_modules/",
+    "__generated__",
+    ".pb.go",
+    "dist/",
+    "build/",
 ];
 
 fn should_skip_file(path: &str) -> bool {
-    SKIP_FILES.iter().any(|f| path.ends_with(f))
-        || SKIP_PATTERNS.iter().any(|p| path.contains(p))
+    SKIP_FILES.iter().any(|f| path.ends_with(f)) || SKIP_PATTERNS.iter().any(|p| path.contains(p))
 }
 
 pub fn detect_language(path: &str) -> &str {
@@ -120,7 +130,10 @@ fn process_diffs(
         };
 
         // File filter: only include matching file
-        if !file_filter.is_empty() && !new_path.contains(file_filter) && !old_path.contains(file_filter) {
+        if !file_filter.is_empty()
+            && !new_path.contains(file_filter)
+            && !old_path.contains(file_filter)
+        {
             continue;
         }
 
@@ -154,10 +167,7 @@ fn process_diffs(
 }
 
 /// Format files as summary only (no diff content) — minimal tokens.
-fn format_summary(
-    files: &[DiffFile],
-    skipped: &[(String, usize, usize)],
-) -> Vec<String> {
+fn format_summary(files: &[DiffFile], skipped: &[(String, usize, usize)]) -> Vec<String> {
     let mut by_lang: BTreeMap<&str, (usize, usize, usize)> = BTreeMap::new();
     for f in files {
         let e = by_lang.entry(&f.lang).or_default();
@@ -211,11 +221,17 @@ fn format_full_diffs(
         let total_del: usize = lang_files.iter().map(|f| f.deletions).sum();
 
         if compact {
-            parts.push(format!("{lang}|{}f|+{total_add}|-{total_del}", lang_files.len()));
+            parts.push(format!(
+                "{lang}|{}f|+{total_add}|-{total_del}",
+                lang_files.len()
+            ));
         } else {
             parts.push(format!(
                 "### {} ({} files, +{} -{})",
-                lang, lang_files.len(), total_add, total_del,
+                lang,
+                lang_files.len(),
+                total_add,
+                total_del,
             ));
         }
         parts.push(String::new());
@@ -224,7 +240,10 @@ fn format_full_diffs(
             let (display_diff, truncated) = truncate_diff(&f.diff_text, max_lines_per_file);
 
             if compact {
-                parts.push(format!("{}{}|+{}|-{}", f.path, f.status, f.additions, f.deletions));
+                parts.push(format!(
+                    "{}{}|+{}|-{}",
+                    f.path, f.status, f.additions, f.deletions
+                ));
                 if !display_diff.is_empty() {
                     parts.push(display_diff);
                 }
@@ -249,11 +268,16 @@ fn format_full_diffs(
         let total_add: usize = skipped.iter().map(|(_, a, _)| a).sum();
         let total_del: usize = skipped.iter().map(|(_, _, d)| d).sum();
         if compact {
-            parts.push(format!("Skipped|{}f|+{total_add}|-{total_del}", skipped.len()));
+            parts.push(format!(
+                "Skipped|{}f|+{total_add}|-{total_del}",
+                skipped.len()
+            ));
         } else {
             parts.push(format!(
                 "### Skipped ({} files, +{} -{})",
-                skipped.len(), total_add, total_del,
+                skipped.len(),
+                total_add,
+                total_del,
             ));
         }
         for (path, add, del) in skipped {
@@ -308,11 +332,14 @@ pub async fn list_commits(
         all_commits.iter().collect()
     } else {
         let query = author.to_lowercase();
-        all_commits.iter().filter(|c| {
-            let name = c["author_name"].as_str().unwrap_or("").to_lowercase();
-            let email = c["author_email"].as_str().unwrap_or("").to_lowercase();
-            name.contains(&query) || email.contains(&query)
-        }).collect()
+        all_commits
+            .iter()
+            .filter(|c| {
+                let name = c["author_name"].as_str().unwrap_or("").to_lowercase();
+                let email = c["author_email"].as_str().unwrap_or("").to_lowercase();
+                name.contains(&query) || email.contains(&query)
+            })
+            .collect()
     };
 
     if commits.is_empty() {
@@ -328,7 +355,10 @@ pub async fn list_commits(
             let author = c["author_name"].as_str().unwrap_or("?");
             // Date is what a scan is usually ordered and filtered by — without it every
             // interesting commit needs a second call just to place it in time.
-            let date = c["committed_date"].as_str().and_then(|d| d.get(..10)).unwrap_or("?");
+            let date = c["committed_date"]
+                .as_str()
+                .and_then(|d| d.get(..10))
+                .unwrap_or("?");
             lines.push(format!("{sha}|{date}|{author}|{title}"));
         }
         return Ok(lines.join("\n"));
@@ -343,7 +373,11 @@ pub async fn list_commits(
     let mut lines = vec![format!("**Found: {} commits**\n", commits.len())];
     lines.push("### By author".to_string());
     for (author, author_commits) in &by_author {
-        lines.push(format!("- **{}**: {} commits", author, author_commits.len()));
+        lines.push(format!(
+            "- **{}**: {} commits",
+            author,
+            author_commits.len()
+        ));
     }
     lines.push(String::new());
     lines.push("### Commits".to_string());
@@ -377,9 +411,11 @@ pub async fn get_commit_diff(
     let encoded = urlencoding::encode(project_id);
 
     let commit: Value = client
-        .get(&format!("/projects/{encoded}/repository/commits/{sha}"), &[])
-        .await
-        ?;
+        .get(
+            &format!("/projects/{encoded}/repository/commits/{sha}"),
+            &[],
+        )
+        .await?;
 
     let _title = commit["title"].as_str().unwrap_or("?");
     let author = commit["author_name"].as_str().unwrap_or("?");
@@ -389,9 +425,11 @@ pub async fn get_commit_diff(
     let stats_del = commit["stats"]["deletions"].as_u64().unwrap_or(0);
 
     let diffs: Vec<Value> = client
-        .get(&format!("/projects/{encoded}/repository/commits/{sha}/diff"), &[])
-        .await
-        ?;
+        .get(
+            &format!("/projects/{encoded}/repository/commits/{sha}/diff"),
+            &[],
+        )
+        .await?;
 
     let (files, skipped) = process_diffs(&diffs, skip_generated, file_filter);
 
@@ -407,7 +445,10 @@ pub async fn get_commit_diff(
             format!("## Commit `{sha}` in {project_id}"),
             format!("**Author:** {author} | **Date:** {date}"),
             format!("**Message:** {message}"),
-            format!("**Stats:** +{stats_add} -{stats_del} in {} files", diffs.len()),
+            format!(
+                "**Stats:** +{stats_add} -{stats_del} in {} files",
+                diffs.len()
+            ),
             String::new(),
         ]
     };
@@ -415,7 +456,12 @@ pub async fn get_commit_diff(
     if summary_only {
         parts.extend(format_summary(&files, &skipped));
     } else {
-        parts.extend(format_full_diffs(&files, &skipped, max_lines_per_file, compact));
+        parts.extend(format_full_diffs(
+            &files,
+            &skipped,
+            max_lines_per_file,
+            compact,
+        ));
     }
 
     let result = parts.join("\n");
@@ -437,8 +483,7 @@ pub async fn get_mr_changes(
 
     let mr: Value = client
         .get(&format!("/projects/{encoded}/merge_requests/{mr_iid}"), &[])
-        .await
-        ?;
+        .await?;
 
     let title = mr["title"].as_str().unwrap_or("?");
     let author = mr["author"]["username"].as_str().unwrap_or("?");
@@ -447,11 +492,16 @@ pub async fn get_mr_changes(
     let state = mr["state"].as_str().unwrap_or("?");
 
     let changes_data: Value = client
-        .get(&format!("/projects/{encoded}/merge_requests/{mr_iid}/changes"), &[])
-        .await
-        ?;
+        .get(
+            &format!("/projects/{encoded}/merge_requests/{mr_iid}/changes"),
+            &[],
+        )
+        .await?;
 
-    let changes = changes_data["changes"].as_array().cloned().unwrap_or_default();
+    let changes = changes_data["changes"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let (files, skipped) = process_diffs(&changes, skip_generated, file_filter);
 
     let mut parts = if compact {
@@ -473,7 +523,12 @@ pub async fn get_mr_changes(
     if summary_only {
         parts.extend(format_summary(&files, &skipped));
     } else {
-        parts.extend(format_full_diffs(&files, &skipped, max_lines_per_file, compact));
+        parts.extend(format_full_diffs(
+            &files,
+            &skipped,
+            max_lines_per_file,
+            compact,
+        ));
     }
 
     let result = parts.join("\n");
@@ -518,7 +573,11 @@ pub(crate) fn select_lines(
     let total = lines.len();
     if start.is_none() && end.is_none() {
         return Ok((
-            lines.into_iter().enumerate().map(|(i, l)| (i + 1, l)).collect(),
+            lines
+                .into_iter()
+                .enumerate()
+                .map(|(i, l)| (i + 1, l))
+                .collect(),
             total,
         ));
     }
@@ -536,7 +595,11 @@ pub(crate) fn select_lines(
         return Err(format!("`end_line` {e} is before `start_line` {s}."));
     }
     Ok((
-        lines[s - 1..e].iter().enumerate().map(|(i, l)| (s + i, *l)).collect(),
+        lines[s - 1..e]
+            .iter()
+            .enumerate()
+            .map(|(i, l)| (s + i, *l))
+            .collect(),
         total,
     ))
 }
@@ -559,8 +622,7 @@ pub async fn get_file_content(
             &format!("/projects/{encoded_project}/repository/files/{encoded_file}"),
             &[("ref", ref_name)],
         )
-        .await
-        ?;
+        .await?;
 
     let size = data["size"].as_u64().unwrap_or(0);
     let lang = detect_language(file_path);
@@ -581,9 +643,16 @@ pub async fn get_file_content(
     // A pattern answers "where is X"; a line window answers "show me here". When
     // both are given the search wins, since a window would silently constrain it.
     if !pattern.is_empty() {
-        let re = match regex::RegexBuilder::new(pattern).case_insensitive(true).build() {
+        let re = match regex::RegexBuilder::new(pattern)
+            .case_insensitive(true)
+            .build()
+        {
             Ok(re) => re,
-            Err(e) => return Err(Error::user_input(format!("invalid pattern `{pattern}`: {e}"))),
+            Err(e) => {
+                return Err(Error::user_input(format!(
+                    "invalid pattern `{pattern}`: {e}"
+                )));
+            }
         };
         let (found, hits) = crate::tools::pipelines::grep_lines(&content, &re, 400);
         if found == 0 {
@@ -648,11 +717,7 @@ pub async fn fetch_user_events(
     since_ts: i64,
 ) -> Result<Vec<Value>> {
     let all_events: Vec<Value> = client
-        .get_all_pages(
-            &format!("/users/{user_id}/events"),
-            &[("sort", "desc")],
-            10,
-        )
+        .get_all_pages(&format!("/users/{user_id}/events"), &[("sort", "desc")], 10)
         .await?;
 
     Ok(all_events
@@ -674,19 +739,27 @@ pub async fn resolve_project_names(
 ) -> BTreeMap<u64, String> {
     use futures::future::join_all;
 
-    let futures: Vec<_> = project_ids.iter().map(|&pid| {
-        let client = client.clone();
-        async move {
-            let cache_key = format!("project:{pid}");
-            let name = client
-                .get_cached::<Value>(&cache_key, &format!("/projects/{pid}"), &[("simple", "true")], 60)
-                .await
-                .ok()
-                .and_then(|proj| proj["path_with_namespace"].as_str().map(|s| s.to_string()))
-                .unwrap_or_else(|| "?".to_string());
-            (pid, name)
-        }
-    }).collect();
+    let futures: Vec<_> = project_ids
+        .iter()
+        .map(|&pid| {
+            let client = client.clone();
+            async move {
+                let cache_key = format!("project:{pid}");
+                let name = client
+                    .get_cached::<Value>(
+                        &cache_key,
+                        &format!("/projects/{pid}"),
+                        &[("simple", "true")],
+                        60,
+                    )
+                    .await
+                    .ok()
+                    .and_then(|proj| proj["path_with_namespace"].as_str().map(|s| s.to_string()))
+                    .unwrap_or_else(|| "?".to_string());
+                (pid, name)
+            }
+        })
+        .collect();
 
     join_all(futures).await.into_iter().collect()
 }
@@ -704,7 +777,15 @@ struct DayProjectStats {
 
 impl DayProjectStats {
     fn new() -> Self {
-        Self { pushes: 0, commits: 0, merges: 0, mr_opened: 0, mr_merged: 0, mr_approved: 0, other_events: 0 }
+        Self {
+            pushes: 0,
+            commits: 0,
+            merges: 0,
+            mr_opened: 0,
+            mr_merged: 0,
+            mr_approved: 0,
+            other_events: 0,
+        }
     }
     fn total(&self) -> u64 {
         self.pushes + self.mr_opened + self.mr_merged + self.mr_approved + self.other_events
@@ -720,11 +801,14 @@ pub async fn get_user_activity(
     let cache_key = format!("user:{username}");
     let users: Vec<Value> = client
         .get_cached(&cache_key, "/users", &[("username", username)], 60)
-        .await
-        ?;
+        .await?;
 
-    let user = users.first().ok_or_else(|| Error::NotFound(format!("User @{username} not found")))?;
-    let user_id = user["id"].as_u64().ok_or(Error::UserInput("User has no ID".into()))?;
+    let user = users
+        .first()
+        .ok_or_else(|| Error::NotFound(format!("User @{username} not found")))?;
+    let user_id = user["id"]
+        .as_u64()
+        .ok_or(Error::UserInput("User has no ID".into()))?;
     let display_name = user["name"].as_str().unwrap_or(username);
 
     let since = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
@@ -762,7 +846,11 @@ pub async fn get_user_activity(
         let action = event["action_name"].as_str().unwrap_or("");
         let target_type = event["target_type"].as_str().unwrap_or("");
 
-        let stats = by_day.entry(date).or_default().entry(pid).or_insert_with(DayProjectStats::new);
+        let stats = by_day
+            .entry(date)
+            .or_default()
+            .entry(pid)
+            .or_insert_with(DayProjectStats::new);
 
         if action == "pushed to" || action == "pushed new" {
             let raw_count = event["push_data"]["commit_count"].as_u64().unwrap_or(1);
@@ -771,16 +859,32 @@ pub async fn get_user_activity(
             let display_count = if is_merge { 1 } else { raw_count };
             stats.pushes += 1;
             stats.commits += display_count;
-            if is_merge { stats.merges += 1; }
+            if is_merge {
+                stats.merges += 1;
+            }
             total.pushes += 1;
             total.commits += display_count;
-            if is_merge { total.merges += 1; }
+            if is_merge {
+                total.merges += 1;
+            }
         } else if target_type == "MergeRequest" {
             match action {
-                "opened" => { stats.mr_opened += 1; total.mr_opened += 1; }
-                "accepted" => { stats.mr_merged += 1; total.mr_merged += 1; }
-                "approved" => { stats.mr_approved += 1; total.mr_approved += 1; }
-                _ => { stats.other_events += 1; total.other_events += 1; }
+                "opened" => {
+                    stats.mr_opened += 1;
+                    total.mr_opened += 1;
+                }
+                "accepted" => {
+                    stats.mr_merged += 1;
+                    total.mr_merged += 1;
+                }
+                "approved" => {
+                    stats.mr_approved += 1;
+                    total.mr_approved += 1;
+                }
+                _ => {
+                    stats.other_events += 1;
+                    total.other_events += 1;
+                }
             }
         } else {
             stats.other_events += 1;
@@ -798,7 +902,12 @@ pub async fn get_user_activity(
         ),
         format!(
             "**Totals:** {} pushes ({} commits, {} branch merges), {} MRs opened, {} merged, {} approved",
-            total.pushes, total.commits, total.merges, total.mr_opened, total.mr_merged, total.mr_approved
+            total.pushes,
+            total.commits,
+            total.merges,
+            total.mr_opened,
+            total.mr_merged,
+            total.mr_approved
         ),
         String::new(),
     ];
@@ -807,7 +916,9 @@ pub async fn get_user_activity(
     for (day, projects) in by_day.iter().rev() {
         let day_total: u64 = projects.values().map(|s| s.total()).sum();
         let day_commits: u64 = projects.values().map(|s| s.commits).sum();
-        lines.push(format!("### {day} ({day_total} events, {day_commits} commits)"));
+        lines.push(format!(
+            "### {day} ({day_total} events, {day_commits} commits)"
+        ));
 
         for (pid, stats) in projects {
             let proj_name = project_names
@@ -831,7 +942,10 @@ pub async fn get_user_activity(
                 } else {
                     String::new()
                 };
-                parts.push(format!("{} pushes ({} commits{})", stats.pushes, stats.commits, merge_note));
+                parts.push(format!(
+                    "{} pushes ({} commits{})",
+                    stats.pushes, stats.commits, merge_note
+                ));
             }
             if stats.mr_opened > 0 {
                 parts.push(format!("{} MR opened", stats.mr_opened));
@@ -878,27 +992,30 @@ pub async fn get_team_activity(
     let mut all_project_ids: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
 
     // Resolve all users and fetch events concurrently
-    let user_futures: Vec<_> = usernames.iter().map(|&username| {
-        let client = client.clone();
-        async move {
-            let cache_key = format!("user:{username}");
-            let users: Vec<serde_json::Value> = match client
-                .get_cached(&cache_key, "/users", &[("username", username)], 60)
-                .await
-            {
-                Ok(u) => u,
-                Err(_) => return None,
-            };
+    let user_futures: Vec<_> = usernames
+        .iter()
+        .map(|&username| {
+            let client = client.clone();
+            async move {
+                let cache_key = format!("user:{username}");
+                let users: Vec<serde_json::Value> = match client
+                    .get_cached(&cache_key, "/users", &[("username", username)], 60)
+                    .await
+                {
+                    Ok(u) => u,
+                    Err(_) => return None,
+                };
 
-            let user = users.first()?;
-            let user_id = user["id"].as_u64()?;
-            let display_name = user["name"].as_str().unwrap_or(username).to_string();
+                let user = users.first()?;
+                let user_id = user["id"].as_u64()?;
+                let display_name = user["name"].as_str().unwrap_or(username).to_string();
 
-            let events = fetch_user_events(&client, user_id, since_ts).await.ok()?;
+                let events = fetch_user_events(&client, user_id, since_ts).await.ok()?;
 
-            Some((username.to_string(), display_name, events))
-        }
-    }).collect();
+                Some((username.to_string(), display_name, events))
+            }
+        })
+        .collect();
 
     let results = futures::future::join_all(user_futures).await;
 
@@ -908,8 +1025,12 @@ pub async fn get_team_activity(
         let mut summary = UserSummary {
             display_name,
             events: events.len() as u64,
-            pushes: 0, commits: 0, merges: 0,
-            mr_opened: 0, mr_merged: 0, mr_approved: 0,
+            pushes: 0,
+            commits: 0,
+            merges: 0,
+            mr_opened: 0,
+            mr_merged: 0,
+            mr_approved: 0,
             projects: std::collections::BTreeSet::new(),
         };
 
@@ -927,7 +1048,9 @@ pub async fn get_team_activity(
                 let is_merge = raw > 20;
                 summary.pushes += 1;
                 summary.commits += if is_merge { 1 } else { raw };
-                if is_merge { summary.merges += 1; }
+                if is_merge {
+                    summary.merges += 1;
+                }
             } else if target_type == "MergeRequest" {
                 match action {
                     "opened" => summary.mr_opened += 1,
@@ -953,25 +1076,34 @@ pub async fn get_team_activity(
     let total_commits: u64 = user_summaries.iter().map(|(_, s)| s.commits).sum();
 
     let mut lines = vec![
-        format!("## Team Activity ({} members, last {hours}h)", user_summaries.len()),
-        format!("**Total:** {total_events} events, {total_commits} commits, {} projects\n", all_project_ids.len()),
         format!(
-            "| Developer | Events | Commits | MRs opened | MRs merged | Approved | Projects |"
+            "## Team Activity ({} members, last {hours}h)",
+            user_summaries.len()
         ),
-        "|-----------|--------|---------|------------|------------|----------|----------|".to_string(),
+        format!(
+            "**Total:** {total_events} events, {total_commits} commits, {} projects\n",
+            all_project_ids.len()
+        ),
+        format!("| Developer | Events | Commits | MRs opened | MRs merged | Approved | Projects |"),
+        "|-----------|--------|---------|------------|------------|----------|----------|"
+            .to_string(),
     ];
 
     // Sort by events descending
     user_summaries.sort_by(|a, b| b.1.events.cmp(&a.1.events));
 
     for (username, s) in &user_summaries {
-        let proj_names: Vec<String> = s.projects.iter().filter_map(|pid_str| {
-            pid_str.parse::<u64>().ok().and_then(|pid| {
-                project_names.get(&pid).map(|name| {
-                    name.rsplit('/').next().unwrap_or(name).to_string()
+        let proj_names: Vec<String> = s
+            .projects
+            .iter()
+            .filter_map(|pid_str| {
+                pid_str.parse::<u64>().ok().and_then(|pid| {
+                    project_names
+                        .get(&pid)
+                        .map(|name| name.rsplit('/').next().unwrap_or(name).to_string())
                 })
             })
-        }).collect();
+            .collect();
 
         let proj_str = if proj_names.is_empty() {
             "–".to_string()
@@ -981,13 +1113,20 @@ pub async fn get_team_activity(
 
         lines.push(format!(
             "| @{} ({}) | {} | {} | {} | {} | {} | {} |",
-            username, s.display_name,
-            s.events, s.commits, s.mr_opened, s.mr_merged, s.mr_approved, proj_str
+            username,
+            s.display_name,
+            s.events,
+            s.commits,
+            s.mr_opened,
+            s.mr_merged,
+            s.mr_approved,
+            proj_str
         ));
     }
 
     // Flag inactive users
-    let inactive: Vec<&str> = user_summaries.iter()
+    let inactive: Vec<&str> = user_summaries
+        .iter()
         .filter(|(_, s)| s.events == 0)
         .map(|(u, _)| u.as_str())
         .collect();
@@ -1018,28 +1157,35 @@ pub async fn get_group_activity(
     let since = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
     let since_ts = since.timestamp();
 
-    let mut lines = vec![format!("**Group activity: {group_path}**\nPeriod: last {hours}h\n")];
+    let mut lines = vec![format!(
+        "**Group activity: {group_path}**\nPeriod: last {hours}h\n"
+    )];
     let mut total_commits = 0u64;
     let mut total_mrs = 0u64;
     let mut active_count = 0u32;
 
     // Fetch all members' events concurrently (same pattern as get_team_activity).
-    let member_futures: Vec<_> = members.iter().filter_map(|member| {
-        let username = member["username"].as_str()?.to_string();
-        let name = member["name"].as_str().unwrap_or(&username).to_string();
-        let user_id = member["id"].as_u64()?;
+    let member_futures: Vec<_> = members
+        .iter()
+        .filter_map(|member| {
+            let username = member["username"].as_str()?.to_string();
+            let name = member["name"].as_str().unwrap_or(&username).to_string();
+            let user_id = member["id"].as_u64()?;
 
-        // Skip bots
-        if username.contains("bot") || username.starts_with("group_") {
-            return None;
-        }
+            // Skip bots
+            if username.contains("bot") || username.starts_with("group_") {
+                return None;
+            }
 
-        let client = client.clone();
-        Some(async move {
-            let events = fetch_user_events(&client, user_id, since_ts).await.or_default_logged();
-            (username, name, events)
+            let client = client.clone();
+            Some(async move {
+                let events = fetch_user_events(&client, user_id, since_ts)
+                    .await
+                    .or_default_logged();
+                (username, name, events)
+            })
         })
-    }).collect();
+        .collect();
 
     let results = futures::future::join_all(member_futures).await;
 
@@ -1074,8 +1220,12 @@ pub async fn get_group_activity(
                 }
             }
             if target_type == "MergeRequest" {
-                if action == "opened" { mrs_opened += 1; }
-                if action == "accepted" { mrs_merged += 1; }
+                if action == "opened" {
+                    mrs_opened += 1;
+                }
+                if action == "accepted" {
+                    mrs_merged += 1;
+                }
             }
             if project_id > 0 {
                 project_ids.insert(project_id);
@@ -1108,8 +1258,16 @@ pub async fn get_group_activity(
         }
     }
 
-    lines.insert(1, format!("Active: {active_count}/{} members | {total_commits} commits, {total_mrs} MRs\n",
-        members.iter().filter(|m| !m["username"].as_str().unwrap_or("").contains("bot")).count()));
+    lines.insert(
+        1,
+        format!(
+            "Active: {active_count}/{} members | {total_commits} commits, {total_mrs} MRs\n",
+            members
+                .iter()
+                .filter(|m| !m["username"].as_str().unwrap_or("").contains("bot"))
+                .count()
+        ),
+    );
 
     Ok(lines.join("\n"))
 }
@@ -1168,7 +1326,6 @@ pub async fn list_group_projects(
     Ok(lines.join("\n"))
 }
 
-
 /// Compare multiple developers' performance in a project over a given period.
 pub async fn compare_developers(
     client: &GitLabClient,
@@ -1184,7 +1341,11 @@ pub async fn compare_developers(
         .to_string();
 
     // Support comma-separated project IDs
-    let projects: Vec<&str> = project_id.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    let projects: Vec<&str> = project_id
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
 
     struct DevStats {
         username: String,
@@ -1392,11 +1553,20 @@ pub async fn compare_developers(
     if summary_only {
         let mut lines: Vec<String> = Vec::new();
         for s in &results {
-            let merge_str = if s.mrs_merged == 0 { "–".to_string() } else { format!("{:.1}h avg merge", s.avg_merge_hours) };
+            let merge_str = if s.mrs_merged == 0 {
+                "–".to_string()
+            } else {
+                format!("{:.1}h avg merge", s.avg_merge_hours)
+            };
             lines.push(format!(
                 "@{}: {} commits, +{}/-{} LOC, {} MRs merged, {} reviewed, {}",
-                s.username, s.commits, s.additions, s.deletions,
-                s.mrs_merged, s.mrs_reviewed, merge_str
+                s.username,
+                s.commits,
+                s.additions,
+                s.deletions,
+                s.mrs_merged,
+                s.mrs_reviewed,
+                merge_str
             ));
         }
         return Ok(lines.join("\n"));
@@ -1435,22 +1605,59 @@ pub async fn compare_developers(
 
     let metrics: Vec<(&str, Box<dyn Fn(&DevStats) -> String>)> = vec![
         ("Commits", Box::new(|s: &DevStats| s.commits.to_string())),
-        ("Lines added", Box::new(|s: &DevStats| format!("+{}", s.additions))),
-        ("Lines deleted", Box::new(|s: &DevStats| format!("-{}", s.deletions))),
-        ("Files changed", Box::new(|s: &DevStats| s.files_changed.to_string())),
-        ("MRs opened", Box::new(|s: &DevStats| s.mrs_opened.to_string())),
-        ("MRs merged", Box::new(|s: &DevStats| s.mrs_merged.to_string())),
-        ("MR sizes (S/M/L)", Box::new(|s: &DevStats| format!("{}/{}/{}", s.mr_sizes.0, s.mr_sizes.1, s.mr_sizes.2))),
-        ("MRs reviewed", Box::new(|s: &DevStats| s.mrs_reviewed.to_string())),
-        ("Approvals given", Box::new(|s: &DevStats| s.approvals_given.to_string())),
-        ("Avg merge time", Box::new(|s: &DevStats| {
-            if s.mrs_merged == 0 { "–".to_string() } else { format!("{:.1}h", s.avg_merge_hours) }
-        })),
-        ("Comments on MRs", Box::new(|s: &DevStats| s.mr_comments.to_string())),
+        (
+            "Lines added",
+            Box::new(|s: &DevStats| format!("+{}", s.additions)),
+        ),
+        (
+            "Lines deleted",
+            Box::new(|s: &DevStats| format!("-{}", s.deletions)),
+        ),
+        (
+            "Files changed",
+            Box::new(|s: &DevStats| s.files_changed.to_string()),
+        ),
+        (
+            "MRs opened",
+            Box::new(|s: &DevStats| s.mrs_opened.to_string()),
+        ),
+        (
+            "MRs merged",
+            Box::new(|s: &DevStats| s.mrs_merged.to_string()),
+        ),
+        (
+            "MR sizes (S/M/L)",
+            Box::new(|s: &DevStats| format!("{}/{}/{}", s.mr_sizes.0, s.mr_sizes.1, s.mr_sizes.2)),
+        ),
+        (
+            "MRs reviewed",
+            Box::new(|s: &DevStats| s.mrs_reviewed.to_string()),
+        ),
+        (
+            "Approvals given",
+            Box::new(|s: &DevStats| s.approvals_given.to_string()),
+        ),
+        (
+            "Avg merge time",
+            Box::new(|s: &DevStats| {
+                if s.mrs_merged == 0 {
+                    "–".to_string()
+                } else {
+                    format!("{:.1}h", s.avg_merge_hours)
+                }
+            }),
+        ),
+        (
+            "Comments on MRs",
+            Box::new(|s: &DevStats| s.mr_comments.to_string()),
+        ),
     ];
 
     let mut lines = vec![
-        format!("## Developer Comparison: {} (last {} days)\n", project_label, days),
+        format!(
+            "## Developer Comparison: {} (last {} days)\n",
+            project_label, days
+        ),
         header,
         separator,
     ];
@@ -1488,7 +1695,11 @@ pub async fn compare_developers(
             let mut row = format!("| @{}", reviewer.username);
             for author_name in &all_usernames {
                 let count = reviewer.reviewed_authors.get(*author_name).unwrap_or(&0);
-                let cell = if *count == 0 { "–".to_string() } else { count.to_string() };
+                let cell = if *count == 0 {
+                    "–".to_string()
+                } else {
+                    count.to_string()
+                };
                 let _ = write!(row, " | {cell}");
             }
             row.push_str(" |");
@@ -1554,9 +1765,8 @@ pub async fn get_code_hotspots(
                 let author = author.clone();
                 async move {
                     let diff_path = format!("/projects/{encoded}/repository/commits/{sha}/diff");
-                    let diffs: std::result::Result<Vec<Value>, _> = client
-                        .get(&diff_path, &[("per_page", "100")])
-                        .await;
+                    let diffs: std::result::Result<Vec<Value>, _> =
+                        client.get(&diff_path, &[("per_page", "100")]).await;
                     (author, diffs)
                 }
             })
@@ -1588,7 +1798,10 @@ pub async fn get_code_hotspots(
     }
 
     if file_changes.is_empty() {
-        return Ok(format!("No file changes found in {days} days ({} commits scanned).", commits.len()));
+        return Ok(format!(
+            "No file changes found in {days} days ({} commits scanned).",
+            commits.len()
+        ));
     }
 
     // Sort by change count descending
@@ -1603,7 +1816,8 @@ pub async fn get_code_hotspots(
 
     if summary_only {
         let hot_count = top.iter().filter(|(_, count, _)| *count > 5).count();
-        let top_str = top.first()
+        let top_str = top
+            .first()
             .map(|(path, count, _)| format!("top hotspot {path} ({count} changes)"))
             .unwrap_or_else(|| "no hotspots".to_string());
         return Ok(format!(
@@ -1612,7 +1826,10 @@ pub async fn get_code_hotspots(
     }
 
     let mut lines = vec![
-        format!("**Code Hotspots** — {project_id} (last {days} days, {} commits)\n", commits.len()),
+        format!(
+            "**Code Hotspots** — {project_id} (last {days} days, {} commits)\n",
+            commits.len()
+        ),
         "| # | File | Changes | Last Modified By |".to_string(),
         "|---|------|---------|------------------|".to_string(),
     ];
@@ -1625,18 +1842,16 @@ pub async fn get_code_hotspots(
 }
 
 /// Get the branches and tags that contain a specific commit.
-pub async fn get_commit_refs(
-    client: &GitLabClient,
-    project_id: &str,
-    sha: &str,
-) -> Result<String> {
+pub async fn get_commit_refs(client: &GitLabClient, project_id: &str, sha: &str) -> Result<String> {
     let path = format!(
         "/projects/{}/repository/commits/{}/refs",
         urlencoding::encode(project_id),
         urlencoding::encode(sha)
     );
 
-    let refs: Vec<Value> = client.get(&path, &[("type", "all"), ("per_page", "100")]).await?;
+    let refs: Vec<Value> = client
+        .get(&path, &[("type", "all"), ("per_page", "100")])
+        .await?;
 
     if refs.is_empty() {
         return Ok(format!("No refs contain commit `{sha}` in {project_id}."));
@@ -1701,7 +1916,10 @@ pub async fn revert_commit(
     let body = serde_json::json!({ "branch": branch });
     let result: Value = client.post(&path, &body).await?;
 
-    let new_sha = result["short_id"].as_str().or(result["id"].as_str()).unwrap_or("?");
+    let new_sha = result["short_id"]
+        .as_str()
+        .or(result["id"].as_str())
+        .unwrap_or("?");
     let title = result["title"].as_str().unwrap_or("");
     let message = result["message"].as_str().unwrap_or(title);
     let author = result["author_name"].as_str().unwrap_or("?");
@@ -1743,22 +1961,26 @@ pub async fn get_team_timezone(
     let since_ts = since.timestamp();
 
     // Resolve user IDs
-    let user_lookups: Vec<_> = usernames.iter().map(|&u| {
-        let client = client.clone();
-        let username = u.to_string();
-        async move {
-            let cache_key = format!("user:{username}");
-            let users: Result<Vec<Value>> = client
-                .get_cached(&cache_key, "/users", &[("username", &username)], 60)
-                .await;
-            match users {
-                Ok(list) => list.into_iter().next().map(|u| (username, u)),
-                Err(_) => None,
+    let user_lookups: Vec<_> = usernames
+        .iter()
+        .map(|&u| {
+            let client = client.clone();
+            let username = u.to_string();
+            async move {
+                let cache_key = format!("user:{username}");
+                let users: Result<Vec<Value>> = client
+                    .get_cached(&cache_key, "/users", &[("username", &username)], 60)
+                    .await;
+                match users {
+                    Ok(list) => list.into_iter().next().map(|u| (username, u)),
+                    Err(_) => None,
+                }
             }
-        }
-    }).collect();
+        })
+        .collect();
 
-    let resolved: Vec<(String, Value)> = join_all(user_lookups).await.into_iter().flatten().collect();
+    let resolved: Vec<(String, Value)> =
+        join_all(user_lookups).await.into_iter().flatten().collect();
 
     if resolved.is_empty() {
         return Ok("No users found.".to_string());
@@ -1883,14 +2105,18 @@ pub async fn get_team_timezone(
         let mut tz_counts: BTreeMap<String, u32> = BTreeMap::new();
         let mut weekend_pcts: Vec<f64> = Vec::new();
         for r in &results {
-            if r.total_events == 0 { continue; }
+            if r.total_events == 0 {
+                continue;
+            }
             let (start, _) = find_peak_window(&r.hour_buckets);
             let tz = likely_tz(start);
             *tz_counts.entry(tz).or_default() += 1;
             let weekend_pct = (r.weekend_total as f64 / r.total_events as f64) * 100.0;
             weekend_pcts.push(weekend_pct);
         }
-        let common_tz = tz_counts.iter().max_by_key(|(_, c)| *c)
+        let common_tz = tz_counts
+            .iter()
+            .max_by_key(|(_, c)| *c)
             .map(|(tz, count)| format!("{tz} ({count} devs)"))
             .unwrap_or_else(|| "–".to_string());
         let avg_weekend = if weekend_pcts.is_empty() {
@@ -1938,7 +2164,10 @@ pub async fn get_team_timezone(
     ));
 
     // Suppress unused-field warning
-    let _ = (results.first().map(|r| r.display_name.as_str()), results.first().map(|r| r.weekday_total));
+    let _ = (
+        results.first().map(|r| r.display_name.as_str()),
+        results.first().map(|r| r.weekday_total),
+    );
 
     Ok(lines.join("\n"))
 }
@@ -1982,12 +2211,18 @@ mod file_window_tests {
 
         let err = select_lines(SRC, Some(900), None).unwrap_err();
         assert!(err.contains("900"), "{err}");
-        assert!(err.contains("5 lines"), "the error must state the real size: {err}");
+        assert!(
+            err.contains("5 lines"),
+            "the error must state the real size: {err}"
+        );
     }
 
     #[test]
     fn inverted_and_zero_windows_are_refused() {
-        assert!(select_lines(SRC, Some(4), Some(2)).is_err(), "end before start");
+        assert!(
+            select_lines(SRC, Some(4), Some(2)).is_err(),
+            "end before start"
+        );
         assert!(select_lines(SRC, Some(0), None).is_err(), "0 is not a line");
     }
 }

@@ -1,10 +1,10 @@
 //! GitLab merge request tools.
 
-use std::fmt::Write as _;
 use crate::client::GitLabClient;
 use crate::error::{Error, Result, ResultExt};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 /// Extract the project path (e.g. `group/subgroup/project`) from an MR JSON object.
 ///
@@ -125,9 +125,15 @@ pub async fn list_merge_requests(
             let state = mr["state"].as_str().unwrap_or("?");
             let author = mr["author"]["username"].as_str().unwrap_or("?");
             let reference = mr_reference(mr, iid);
-            let draft = if mr["draft"].as_bool().unwrap_or(false) { "D" } else { "" };
+            let draft = if mr["draft"].as_bool().unwrap_or(false) {
+                "D"
+            } else {
+                ""
+            };
             let assignee = assignee_display(mr);
-            lines.push(format!("{reference}|{state}{draft}|{author}|{assignee}|{title}"));
+            lines.push(format!(
+                "{reference}|{state}{draft}|{author}|{assignee}|{title}"
+            ));
             if include_descriptions {
                 let desc = mr["description"].as_str().unwrap_or("").trim();
                 if !desc.is_empty() {
@@ -151,9 +157,7 @@ pub async fn list_merge_requests(
         let source = mr["source_branch"].as_str().unwrap_or("?");
         let target = mr["target_branch"].as_str().unwrap_or("?");
         let fallback = format!("!{iid}");
-        let project = mr["references"]["full"]
-            .as_str()
-            .unwrap_or(&fallback);
+        let project = mr["references"]["full"].as_str().unwrap_or(&fallback);
 
         let draft = if mr["draft"].as_bool().unwrap_or(false) {
             " [DRAFT]"
@@ -164,14 +168,32 @@ pub async fn list_merge_requests(
         let created = mr["created_at"].as_str().unwrap_or("?");
         let created_short = created.get(..10).unwrap_or(created);
 
-        let pipeline_status = mr["head_pipeline"]["status"].as_str().or(mr["pipeline"]["status"].as_str()).unwrap_or("none");
-        let ci = if pipeline_status != "none" { format!(" [CI: {pipeline_status}]") } else { String::new() };
+        let pipeline_status = mr["head_pipeline"]["status"]
+            .as_str()
+            .or(mr["pipeline"]["status"].as_str())
+            .unwrap_or("none");
+        let ci = if pipeline_status != "none" {
+            format!(" [CI: {pipeline_status}]")
+        } else {
+            String::new()
+        };
 
         let reviewers: Vec<&str> = mr["reviewers"]
             .as_array()
             .map(|a| a.iter().filter_map(|v| v["username"].as_str()).collect())
             .unwrap_or_default();
-        let rev_str = if reviewers.is_empty() { String::new() } else { format!(" reviewers: {}", reviewers.iter().map(|r| format!("@{r}")).collect::<Vec<_>>().join(", ")) };
+        let rev_str = if reviewers.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " reviewers: {}",
+                reviewers
+                    .iter()
+                    .map(|r| format!("@{r}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
         let asg_str = format!(" assignee: {}", assignee_display(mr));
 
         lines.push(format!(
@@ -244,9 +266,7 @@ pub async fn create_merge_request(
 
     // 1. Resolve target branch if empty — use project default
     let actual_target = if target_branch.is_empty() {
-        let proj: Value = client
-            .get(&format!("/projects/{enc}"), &[])
-            .await?;
+        let proj: Value = client.get(&format!("/projects/{enc}"), &[]).await?;
         proj["default_branch"]
             .as_str()
             .unwrap_or("main")
@@ -256,10 +276,15 @@ pub async fn create_merge_request(
     };
 
     // 2. Check source branch exists
-    let branches_path = format!("/projects/{enc}/repository/branches/{}", urlencoding::encode(source_branch));
+    let branches_path = format!(
+        "/projects/{enc}/repository/branches/{}",
+        urlencoding::encode(source_branch)
+    );
     let branch_check: std::result::Result<Value, _> = client.get(&branches_path, &[]).await;
     if branch_check.is_err() {
-        return Err(Error::user_input(format!("Source branch `{source_branch}` not found in project `{project_id}`.")));
+        return Err(Error::user_input(format!(
+            "Source branch `{source_branch}` not found in project `{project_id}`."
+        )));
     }
 
     // 3. Check for existing open MR with same source→target
@@ -346,7 +371,11 @@ pub async fn create_merge_request(
 
     if !reviewers.is_empty() {
         let mut reviewer_ids = Vec::new();
-        for username in reviewers.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        for username in reviewers
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
             if let Ok(Some(id)) = super::users::lookup_user_id(client, username).await {
                 reviewer_ids.push(Value::Number(id.into()));
             }
@@ -494,7 +523,11 @@ pub async fn get_merge_request(
     if !reviewers.is_empty() {
         parts.push(format!(
             "**Reviewers:** {}",
-            reviewers.iter().map(|r| format!("@{r}")).collect::<Vec<_>>().join(", ")
+            reviewers
+                .iter()
+                .map(|r| format!("@{r}"))
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
 
@@ -515,8 +548,7 @@ pub async fn get_merge_request(
         );
         let notes: Vec<Value> = client
             .get(&notes_path, &[("per_page", "50"), ("sort", "asc")])
-            .await
-            ?;
+            .await?;
 
         let user_notes: Vec<&Value> = notes
             .iter()
@@ -552,18 +584,26 @@ pub async fn get_mr_turnaround(
     let path = if !group_id.is_empty() {
         format!("/groups/{}/merge_requests", urlencoding::encode(group_id))
     } else if !project_id.is_empty() {
-        format!("/projects/{}/merge_requests", urlencoding::encode(project_id))
+        format!(
+            "/projects/{}/merge_requests",
+            urlencoding::encode(project_id)
+        )
     } else {
         "/merge_requests".to_string()
     };
 
-    let mrs: Vec<Value> = client.get(&path, &[
-        ("state", "merged"),
-        ("created_after", &since),
-        ("per_page", "50"),
-        ("order_by", "updated_at"),
-        ("sort", "desc"),
-    ]).await?;
+    let mrs: Vec<Value> = client
+        .get(
+            &path,
+            &[
+                ("state", "merged"),
+                ("created_after", &since),
+                ("per_page", "50"),
+                ("order_by", "updated_at"),
+                ("sort", "desc"),
+            ],
+        )
+        .await?;
 
     if mrs.is_empty() {
         return Ok("No merged MRs found in this period.".to_string());
@@ -588,14 +628,26 @@ pub async fn get_mr_turnaround(
         let merged_dt = chrono::DateTime::parse_from_rfc3339(merged).ok();
 
         if let (Some(c), Some(m)) = (created_dt, merged_dt) {
-            let Some(project) = mr_project_path(mr) else { continue };
+            let Some(project) = mr_project_path(mr) else {
+                continue;
+            };
             let hours = (m - c).num_minutes() as f64 / 60.0;
             let iid = mr["iid"].as_u64().unwrap_or(0);
             let title = mr["title"].as_str().unwrap_or("?").to_string();
             let author = mr["author"]["username"].as_str().unwrap_or("?").to_string();
-            let merged_by = mr["merged_by"]["username"].as_str().unwrap_or("?").to_string();
+            let merged_by = mr["merged_by"]["username"]
+                .as_str()
+                .unwrap_or("?")
+                .to_string();
 
-            stats.push(MrStats { iid, title, author, merged_by, hours_to_merge: hours, project });
+            stats.push(MrStats {
+                iid,
+                title,
+                author,
+                merged_by,
+                hours_to_merge: hours,
+                project,
+            });
         }
     }
 
@@ -605,18 +657,36 @@ pub async fn get_mr_turnaround(
 
     let total: f64 = stats.iter().map(|s| s.hours_to_merge).sum();
     let avg = total / stats.len() as f64;
-    let median = crate::tools::stats::median(&mut stats.iter().map(|s| s.hours_to_merge).collect::<Vec<_>>());
-    let max = stats.iter().map(|s| s.hours_to_merge).fold(0.0f64, f64::max);
-    let min = stats.iter().map(|s| s.hours_to_merge).fold(f64::MAX, f64::min);
+    let median = crate::tools::stats::median(
+        &mut stats.iter().map(|s| s.hours_to_merge).collect::<Vec<_>>(),
+    );
+    let max = stats
+        .iter()
+        .map(|s| s.hours_to_merge)
+        .fold(0.0f64, f64::max);
+    let min = stats
+        .iter()
+        .map(|s| s.hours_to_merge)
+        .fold(f64::MAX, f64::min);
 
     let mut by_author: BTreeMap<String, Vec<f64>> = BTreeMap::new();
     for s in &stats {
-        by_author.entry(s.author.clone()).or_default().push(s.hours_to_merge);
+        by_author
+            .entry(s.author.clone())
+            .or_default()
+            .push(s.hours_to_merge);
     }
 
-    let scope = if !group_id.is_empty() { group_id } else { project_id };
+    let scope = if !group_id.is_empty() {
+        group_id
+    } else {
+        project_id
+    };
     let mut lines = vec![
-        format!("**MR Turnaround: {scope}** (last {days} days, {} MRs)\n", stats.len()),
+        format!(
+            "**MR Turnaround: {scope}** (last {days} days, {} MRs)\n",
+            stats.len()
+        ),
         format!("| Metric | Value |"),
         format!("|--------|-------|"),
         format!("| Average | {:.1}h |", avg),
@@ -629,18 +699,29 @@ pub async fn get_mr_turnaround(
 
     for (author, times) in &by_author {
         let author_avg: f64 = times.iter().sum::<f64>() / times.len() as f64;
-        lines.push(format!("- @{author}: {} MRs, avg {:.1}h", times.len(), author_avg));
+        lines.push(format!(
+            "- @{author}: {} MRs, avg {:.1}h",
+            times.len(),
+            author_avg
+        ));
     }
 
     let mut by_merger: BTreeMap<String, Vec<f64>> = BTreeMap::new();
     for s in &stats {
-        by_merger.entry(s.merged_by.clone()).or_default().push(s.hours_to_merge);
+        by_merger
+            .entry(s.merged_by.clone())
+            .or_default()
+            .push(s.hours_to_merge);
     }
     lines.push(String::new());
     lines.push("**By merger (who merged):**".to_string());
     for (merger, times) in &by_merger {
         let merger_avg: f64 = times.iter().sum::<f64>() / times.len() as f64;
-        lines.push(format!("- @{merger}: {} MRs merged, avg {:.1}h", times.len(), merger_avg));
+        lines.push(format!(
+            "- @{merger}: {} MRs merged, avg {:.1}h",
+            times.len(),
+            merger_avg
+        ));
     }
 
     stats.sort_by(|a, b| b.hours_to_merge.total_cmp(&a.hours_to_merge));
@@ -652,7 +733,10 @@ pub async fn get_mr_turnaround(
         } else {
             format!("{:.1}h", s.hours_to_merge)
         };
-        lines.push(format!("- {}!{} {} (@{}, merged by @{}) — {duration}", s.project, s.iid, s.title, s.author, s.merged_by));
+        lines.push(format!(
+            "- {}!{} {} (@{}, merged by @{}) — {duration}",
+            s.project, s.iid, s.title, s.author, s.merged_by
+        ));
     }
 
     Ok(lines.join("\n"))
@@ -666,12 +750,17 @@ pub async fn get_mr_dashboard(
 ) -> Result<String> {
     let path = format!("/groups/{}/merge_requests", urlencoding::encode(group_id));
 
-    let mrs: Vec<Value> = client.get(&path, &[
-        ("state", "opened"),
-        ("per_page", "100"),
-        ("order_by", "created_at"),
-        ("sort", "asc"),
-    ]).await?;
+    let mrs: Vec<Value> = client
+        .get(
+            &path,
+            &[
+                ("state", "opened"),
+                ("per_page", "100"),
+                ("order_by", "created_at"),
+                ("sort", "asc"),
+            ],
+        )
+        .await?;
 
     if mrs.is_empty() {
         return Ok(format!("No open MRs in group {group_id}."));
@@ -696,7 +785,9 @@ pub async fn get_mr_dashboard(
     let mut project_counts: BTreeMap<String, u32> = BTreeMap::new();
 
     for mr in &mrs {
-        let Some(project) = mr_project_path(mr) else { continue };
+        let Some(project) = mr_project_path(mr) else {
+            continue;
+        };
         let created = mr["created_at"].as_str().unwrap_or("");
         let age_hours = chrono::DateTime::parse_from_rfc3339(created)
             .ok()
@@ -710,7 +801,11 @@ pub async fn get_mr_dashboard(
 
         let reviewers: Vec<String> = mr["reviewers"]
             .as_array()
-            .map(|a| a.iter().filter_map(|v| v["username"].as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v["username"].as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
         *_author_counts.entry(author.clone()).or_default() += 1;
@@ -719,7 +814,15 @@ pub async fn get_mr_dashboard(
             *reviewer_counts.entry(r.clone()).or_default() += 1;
         }
 
-        infos.push(MrInfo { iid, project, title, author, age_hours, reviewers, draft });
+        infos.push(MrInfo {
+            iid,
+            project,
+            title,
+            author,
+            age_hours,
+            reviewers,
+            draft,
+        });
     }
 
     let total = infos.len();
@@ -729,7 +832,8 @@ pub async fn get_mr_dashboard(
     let no_reviewer = infos.iter().filter(|m| m.reviewers.is_empty()).count();
 
     if summary_only {
-        let top_reviewer = reviewer_counts.iter()
+        let top_reviewer = reviewer_counts
+            .iter()
             .max_by_key(|(_, c)| *c)
             .map(|(name, count)| format!("top reviewer: @{name} ({count})"))
             .unwrap_or_else(|| "no reviewers".to_string());
@@ -773,8 +877,19 @@ pub async fn get_mr_dashboard(
         lines.push("**Stale MRs (>7 days):**".to_string());
         for m in infos.iter().filter(|m| m.age_hours > 168.0) {
             let age_days = m.age_hours / 24.0;
-            let rev = if m.reviewers.is_empty() { "no reviewer".to_string() } else { m.reviewers.iter().map(|r| format!("@{r}")).collect::<Vec<_>>().join(", ") };
-            lines.push(format!("- {}!{} {} ({:.0}d old, {rev})", m.project, m.iid, m.title, age_days));
+            let rev = if m.reviewers.is_empty() {
+                "no reviewer".to_string()
+            } else {
+                m.reviewers
+                    .iter()
+                    .map(|r| format!("@{r}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            lines.push(format!(
+                "- {}!{} {} ({:.0}d old, {rev})",
+                m.project, m.iid, m.title, age_days
+            ));
         }
     }
 
@@ -796,18 +911,26 @@ pub async fn get_mr_review_depth(
     let path = if !group_id.is_empty() {
         format!("/groups/{}/merge_requests", urlencoding::encode(group_id))
     } else if !project_id.is_empty() {
-        format!("/projects/{}/merge_requests", urlencoding::encode(project_id))
+        format!(
+            "/projects/{}/merge_requests",
+            urlencoding::encode(project_id)
+        )
     } else {
         "/merge_requests".to_string()
     };
 
-    let mrs: Vec<Value> = client.get(&path, &[
-        ("state", "merged"),
-        ("created_after", &since),
-        ("per_page", "30"),
-        ("order_by", "updated_at"),
-        ("sort", "desc"),
-    ]).await?;
+    let mrs: Vec<Value> = client
+        .get(
+            &path,
+            &[
+                ("state", "merged"),
+                ("created_after", &since),
+                ("per_page", "30"),
+                ("order_by", "updated_at"),
+                ("sort", "desc"),
+            ],
+        )
+        .await?;
 
     if mrs.is_empty() {
         return Ok("No merged MRs found in this period.".to_string());
@@ -825,7 +948,9 @@ pub async fn get_mr_review_depth(
     let mut infos: Vec<ReviewInfo> = Vec::new();
 
     for mr in &mrs {
-        let Some(project) = mr_project_path(mr) else { continue };
+        let Some(project) = mr_project_path(mr) else {
+            continue;
+        };
         let iid = mr["iid"].as_u64().unwrap_or(0);
         let user_notes = mr["user_notes_count"].as_u64().unwrap_or(0);
         let title = mr["title"].as_str().unwrap_or("?").to_string();
@@ -834,14 +959,28 @@ pub async fn get_mr_review_depth(
         // Fetch discussions count from API
         let proj_path = mr["source_project_id"].as_u64().unwrap_or(0);
         let disc_path = format!("/projects/{}/merge_requests/{}/discussions", proj_path, iid);
-        let discussions: Vec<Value> = client.get(&disc_path, &[("per_page", "100")]).await.or_default_logged();
-        let non_system = discussions.iter().filter(|d| {
-            d["notes"].as_array()
-                .map(|notes| notes.iter().any(|n| !n["system"].as_bool().unwrap_or(true)))
-                .unwrap_or(false)
-        }).count() as u64;
+        let discussions: Vec<Value> = client
+            .get(&disc_path, &[("per_page", "100")])
+            .await
+            .or_default_logged();
+        let non_system = discussions
+            .iter()
+            .filter(|d| {
+                d["notes"]
+                    .as_array()
+                    .map(|notes| notes.iter().any(|n| !n["system"].as_bool().unwrap_or(true)))
+                    .unwrap_or(false)
+            })
+            .count() as u64;
 
-        infos.push(ReviewInfo { iid, project, title, author, discussions: non_system, user_notes });
+        infos.push(ReviewInfo {
+            iid,
+            project,
+            title,
+            author,
+            discussions: non_system,
+            user_notes,
+        });
     }
 
     let total_notes: u64 = infos.iter().map(|i| i.user_notes).sum();
@@ -851,22 +990,38 @@ pub async fn get_mr_review_depth(
     let zero_review = infos.iter().filter(|i| i.user_notes == 0).count();
 
     if summary_only {
-        let scope = if !group_id.is_empty() { group_id } else { project_id };
+        let scope = if !group_id.is_empty() {
+            group_id
+        } else {
+            project_id
+        };
         let zero_pct = zero_review as f64 / infos.len() as f64 * 100.0;
         return Ok(format!(
             "{scope}: {} MRs, avg {:.1} comments/MR, {zero_review} zero-comment ({zero_pct:.0}%)",
-            infos.len(), avg_notes
+            infos.len(),
+            avg_notes
         ));
     }
 
-    let scope = if !group_id.is_empty() { group_id } else { project_id };
+    let scope = if !group_id.is_empty() {
+        group_id
+    } else {
+        project_id
+    };
     let mut lines = vec![
-        format!("**Review Depth: {scope}** (last {days}d, {} MRs)\n", infos.len()),
+        format!(
+            "**Review Depth: {scope}** (last {days}d, {} MRs)\n",
+            infos.len()
+        ),
         format!("| Metric | Value |"),
         format!("|--------|-------|"),
         format!("| Avg comments/MR | {:.1} |", avg_notes),
         format!("| Avg discussions/MR | {:.1} |", avg_disc),
-        format!("| Zero-comment MRs | {} ({:.0}%) |", zero_review, zero_review as f64 / infos.len() as f64 * 100.0),
+        format!(
+            "| Zero-comment MRs | {} ({:.0}%) |",
+            zero_review,
+            zero_review as f64 / infos.len() as f64 * 100.0
+        ),
     ];
 
     // Per-author depth
@@ -881,7 +1036,9 @@ pub async fn get_mr_review_depth(
     lines.push("**By author:**".to_string());
     for (author, (mrs_count, notes, disc)) in &by_author {
         let avg = *notes as f64 / *mrs_count as f64;
-        lines.push(format!("- @{author}: {mrs_count} MRs, {notes} comments ({avg:.1} avg), {disc} discussions"));
+        lines.push(format!(
+            "- @{author}: {mrs_count} MRs, {notes} comments ({avg:.1} avg), {disc} discussions"
+        ));
     }
 
     // Most-discussed MRs
@@ -889,7 +1046,10 @@ pub async fn get_mr_review_depth(
     lines.push(String::new());
     lines.push("**Most discussed:**".to_string());
     for i in infos.iter().take(5) {
-        lines.push(format!("- {}!{} {} (@{}) — {} discussions, {} comments", i.project, i.iid, i.title, i.author, i.discussions, i.user_notes));
+        lines.push(format!(
+            "- {}!{} {} (@{}) — {} discussions, {} comments",
+            i.project, i.iid, i.title, i.author, i.discussions, i.user_notes
+        ));
     }
 
     Ok(lines.join("\n"))
@@ -910,19 +1070,27 @@ pub async fn get_mr_categories(
     let path = if !group_id.is_empty() {
         format!("/groups/{}/merge_requests", urlencoding::encode(group_id))
     } else if !project_id.is_empty() {
-        format!("/projects/{}/merge_requests", urlencoding::encode(project_id))
+        format!(
+            "/projects/{}/merge_requests",
+            urlencoding::encode(project_id)
+        )
     } else {
         "/merge_requests".to_string()
     };
 
     let state_param = if state.is_empty() { "all" } else { state };
-    let mrs: Vec<Value> = client.get(&path, &[
-        ("state", state_param),
-        ("created_after", &since),
-        ("per_page", "100"),
-        ("order_by", "created_at"),
-        ("sort", "desc"),
-    ]).await?;
+    let mrs: Vec<Value> = client
+        .get(
+            &path,
+            &[
+                ("state", state_param),
+                ("created_after", &since),
+                ("per_page", "100"),
+                ("order_by", "created_at"),
+                ("sort", "desc"),
+            ],
+        )
+        .await?;
 
     if mrs.is_empty() {
         return Ok("No MRs found in this period.".to_string());
@@ -931,13 +1099,31 @@ pub async fn get_mr_categories(
     fn classify(branch: &str, title: &str) -> &'static str {
         let b = branch.to_lowercase();
         let t = title.to_lowercase();
-        if b.starts_with("hotfix/") || b.starts_with("hotfix-") || t.starts_with("hotfix") { return "hotfix"; }
-        if b.starts_with("bugfix/") || b.starts_with("fix/") || t.starts_with("fix") { return "bugfix"; }
-        if b.starts_with("feature/") || b.starts_with("feat/") || t.starts_with("feat") { return "feature"; }
-        if b.starts_with("chore/") || b.starts_with("refactor/") || t.starts_with("chore") || t.starts_with("refactor") { return "chore"; }
-        if b.starts_with("docs/") || t.starts_with("docs") { return "docs"; }
-        if b.starts_with("test/") || t.starts_with("test") { return "test"; }
-        if b.starts_with("ci/") || b.starts_with("devops/") { return "ci/devops"; }
+        if b.starts_with("hotfix/") || b.starts_with("hotfix-") || t.starts_with("hotfix") {
+            return "hotfix";
+        }
+        if b.starts_with("bugfix/") || b.starts_with("fix/") || t.starts_with("fix") {
+            return "bugfix";
+        }
+        if b.starts_with("feature/") || b.starts_with("feat/") || t.starts_with("feat") {
+            return "feature";
+        }
+        if b.starts_with("chore/")
+            || b.starts_with("refactor/")
+            || t.starts_with("chore")
+            || t.starts_with("refactor")
+        {
+            return "chore";
+        }
+        if b.starts_with("docs/") || t.starts_with("docs") {
+            return "docs";
+        }
+        if b.starts_with("test/") || t.starts_with("test") {
+            return "test";
+        }
+        if b.starts_with("ci/") || b.starts_with("devops/") {
+            return "ci/devops";
+        }
         "other"
     }
 
@@ -950,13 +1136,27 @@ pub async fn get_mr_categories(
         let author = mr["author"]["username"].as_str().unwrap_or("?");
         let mr_state = mr["state"].as_str().unwrap_or("?");
         let cat = classify(branch, title);
-        by_category.entry(cat).or_default().push((title, author, mr_state));
-        *by_author_cat.entry(author.to_string()).or_default().entry(cat).or_default() += 1;
+        by_category
+            .entry(cat)
+            .or_default()
+            .push((title, author, mr_state));
+        *by_author_cat
+            .entry(author.to_string())
+            .or_default()
+            .entry(cat)
+            .or_default() += 1;
     }
 
-    let scope = if !group_id.is_empty() { group_id } else { project_id };
+    let scope = if !group_id.is_empty() {
+        group_id
+    } else {
+        project_id
+    };
     let mut lines = vec![
-        format!("**MR Categories: {scope}** (last {days}d, {} MRs, state: {state_param})\n", mrs.len()),
+        format!(
+            "**MR Categories: {scope}** (last {days}d, {} MRs, state: {state_param})\n",
+            mrs.len()
+        ),
         "| Category | Count | % |".to_string(),
         "|----------|-------|---|".to_string(),
     ];
@@ -974,7 +1174,10 @@ pub async fn get_mr_categories(
     lines.push(String::new());
     lines.push("**By author:**".to_string());
     for (author, cats) in &by_author_cat {
-        let parts: Vec<String> = cats.iter().map(|(cat, count)| format!("{cat}: {count}")).collect();
+        let parts: Vec<String> = cats
+            .iter()
+            .map(|(cat, count)| format!("{cat}: {count}"))
+            .collect();
         lines.push(format!("- @{author}: {}", parts.join(", ")));
     }
 
@@ -996,18 +1199,26 @@ pub async fn get_mr_timeline(
     let path = if !group_id.is_empty() {
         format!("/groups/{}/merge_requests", urlencoding::encode(group_id))
     } else if !project_id.is_empty() {
-        format!("/projects/{}/merge_requests", urlencoding::encode(project_id))
+        format!(
+            "/projects/{}/merge_requests",
+            urlencoding::encode(project_id)
+        )
     } else {
         "/merge_requests".to_string()
     };
 
-    let mrs: Vec<Value> = client.get(&path, &[
-        ("state", "merged"),
-        ("created_after", &since),
-        ("per_page", "30"),
-        ("order_by", "updated_at"),
-        ("sort", "desc"),
-    ]).await?;
+    let mrs: Vec<Value> = client
+        .get(
+            &path,
+            &[
+                ("state", "merged"),
+                ("created_after", &since),
+                ("per_page", "30"),
+                ("order_by", "updated_at"),
+                ("sort", "desc"),
+            ],
+        )
+        .await?;
 
     if mrs.is_empty() {
         return Ok("No merged MRs found in this period.".to_string());
@@ -1019,8 +1230,8 @@ pub async fn get_mr_timeline(
         title: String,
         author: String,
         total_hours: f64,
-        queue_hours: f64,   // creation → first non-author action
-        review_hours: f64,  // first non-author action → merge
+        queue_hours: f64,  // creation → first non-author action
+        review_hours: f64, // first non-author action → merge
         had_review: bool,
     }
 
@@ -1031,9 +1242,13 @@ pub async fn get_mr_timeline(
         let merged_str = mr["merged_at"].as_str().unwrap_or("");
         let created = chrono::DateTime::parse_from_rfc3339(created_str).ok();
         let merged = chrono::DateTime::parse_from_rfc3339(merged_str).ok();
-        let (Some(created_dt), Some(merged_dt)) = (created, merged) else { continue };
+        let (Some(created_dt), Some(merged_dt)) = (created, merged) else {
+            continue;
+        };
 
-        let Some(project) = mr_project_path(mr) else { continue };
+        let Some(project) = mr_project_path(mr) else {
+            continue;
+        };
         let iid = mr["iid"].as_u64().unwrap_or(0);
         let title = mr["title"].as_str().unwrap_or("?").to_string();
         let author = mr["author"]["username"].as_str().unwrap_or("?").to_string();
@@ -1043,14 +1258,20 @@ pub async fn get_mr_timeline(
 
         // Fetch notes to find first non-author action
         let notes_path = format!("/projects/{}/merge_requests/{}/notes", project_id_num, iid);
-        let notes: Vec<Value> = client.get(&notes_path, &[("per_page", "50"), ("sort", "asc")]).await.or_default_logged();
+        let notes: Vec<Value> = client
+            .get(&notes_path, &[("per_page", "50"), ("sort", "asc")])
+            .await
+            .or_default_logged();
 
         let first_review_ts = notes.iter().find_map(|n| {
             let note_author = n["author"]["username"].as_str().unwrap_or("");
             let is_system = n["system"].as_bool().unwrap_or(false);
             // Find first non-author activity (comment or system approval)
-            if note_author != author || (is_system && n["body"].as_str().unwrap_or("").contains("approved")) {
-                n["created_at"].as_str()
+            if note_author != author
+                || (is_system && n["body"].as_str().unwrap_or("").contains("approved"))
+            {
+                n["created_at"]
+                    .as_str()
                     .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
             } else {
                 None
@@ -1065,7 +1286,16 @@ pub async fn get_mr_timeline(
             (total_hours, 0.0, false)
         };
 
-        timelines.push(Timeline { iid, project, title, author, total_hours, queue_hours, review_hours, had_review });
+        timelines.push(Timeline {
+            iid,
+            project,
+            title,
+            author,
+            total_hours,
+            queue_hours,
+            review_hours,
+            had_review,
+        });
     }
 
     if timelines.is_empty() {
@@ -1075,11 +1305,20 @@ pub async fn get_mr_timeline(
     let count = timelines.len();
     let avg_total = timelines.iter().map(|t| t.total_hours).sum::<f64>() / count as f64;
     let avg_queue = timelines.iter().map(|t| t.queue_hours).sum::<f64>() / count as f64;
-    let avg_review = timelines.iter().filter(|t| t.had_review).map(|t| t.review_hours).sum::<f64>() / timelines.iter().filter(|t| t.had_review).count().max(1) as f64;
+    let avg_review = timelines
+        .iter()
+        .filter(|t| t.had_review)
+        .map(|t| t.review_hours)
+        .sum::<f64>()
+        / timelines.iter().filter(|t| t.had_review).count().max(1) as f64;
     let no_review_count = timelines.iter().filter(|t| !t.had_review).count();
 
     if summary_only {
-        let scope = if !group_id.is_empty() { group_id } else { project_id };
+        let scope = if !group_id.is_empty() {
+            group_id
+        } else {
+            project_id
+        };
         let no_review_pct = no_review_count as f64 / count as f64 * 100.0;
         return Ok(format!(
             "{scope}: avg total {:.1}h (queue {:.1}h, review {:.1}h), {no_review_count} no-review ({no_review_pct:.0}%)",
@@ -1087,7 +1326,11 @@ pub async fn get_mr_timeline(
         ));
     }
 
-    let scope = if !group_id.is_empty() { group_id } else { project_id };
+    let scope = if !group_id.is_empty() {
+        group_id
+    } else {
+        project_id
+    };
     let mut lines = vec![
         format!("**MR Timeline: {scope}** (last {days}d, {count} MRs)\n"),
         "| Phase | Avg Time |".to_string(),
@@ -1095,7 +1338,11 @@ pub async fn get_mr_timeline(
         format!("| Total (creation → merge) | {:.1}h |", avg_total),
         format!("| Queue (creation → first review) | {:.1}h |", avg_queue),
         format!("| Review (first review → merge) | {:.1}h |", avg_review),
-        format!("| No review activity | {} ({:.0}%) |", no_review_count, no_review_count as f64 / count as f64 * 100.0),
+        format!(
+            "| No review activity | {} ({:.0}%) |",
+            no_review_count,
+            no_review_count as f64 / count as f64 * 100.0
+        ),
     ];
 
     // Longest queue times
@@ -1103,19 +1350,27 @@ pub async fn get_mr_timeline(
     lines.push(String::new());
     lines.push("**Longest queue (waiting for first review):**".to_string());
     for t in timelines.iter().take(5) {
-        let queue_str = if t.queue_hours > 24.0 { format!("{:.1}d", t.queue_hours / 24.0) } else { format!("{:.1}h", t.queue_hours) };
-        let review_note = if t.had_review { format!(", review: {:.1}h", t.review_hours) } else { ", no review".to_string() };
-        lines.push(format!("- {}!{} {} (@{}) — queue: {queue_str}{review_note}", t.project, t.iid, t.title, t.author));
+        let queue_str = if t.queue_hours > 24.0 {
+            format!("{:.1}d", t.queue_hours / 24.0)
+        } else {
+            format!("{:.1}h", t.queue_hours)
+        };
+        let review_note = if t.had_review {
+            format!(", review: {:.1}h", t.review_hours)
+        } else {
+            ", no review".to_string()
+        };
+        lines.push(format!(
+            "- {}!{} {} (@{}) — queue: {queue_str}{review_note}",
+            t.project, t.iid, t.title, t.author
+        ));
     }
 
     Ok(lines.join("\n"))
 }
 
 /// Cross-group MR dashboard: aggregates multiple groups.
-pub async fn get_org_mr_dashboard(
-    client: &GitLabClient,
-    group_ids: &[&str],
-) -> Result<String> {
+pub async fn get_org_mr_dashboard(client: &GitLabClient, group_ids: &[&str]) -> Result<String> {
     let now = chrono::Utc::now();
 
     struct GroupStats {
@@ -1132,15 +1387,17 @@ pub async fn get_org_mr_dashboard(
 
     for &group_id in group_ids {
         let path = format!("/groups/{}/merge_requests", urlencoding::encode(group_id));
-        let mrs: Vec<Value> = client.get(&path, &[
-            ("state", "opened"),
-            ("per_page", "100"),
-        ]).await.or_default_logged();
+        let mrs: Vec<Value> = client
+            .get(&path, &[("state", "opened"), ("per_page", "100")])
+            .await
+            .or_default_logged();
 
         let mut gs = GroupStats {
             name: group_id.to_string(),
             open: mrs.len() as u32,
-            drafts: 0, stale: 0, no_reviewer: 0,
+            drafts: 0,
+            stale: 0,
+            no_reviewer: 0,
             avg_age_hours: 0.0,
             reviewers: BTreeMap::new(),
         };
@@ -1154,19 +1411,31 @@ pub async fn get_org_mr_dashboard(
                 .unwrap_or(0.0);
             total_age += age;
 
-            if mr["draft"].as_bool().unwrap_or(false) { gs.drafts += 1; }
-            if age > 168.0 { gs.stale += 1; }
+            if mr["draft"].as_bool().unwrap_or(false) {
+                gs.drafts += 1;
+            }
+            if age > 168.0 {
+                gs.stale += 1;
+            }
 
             let reviewers: Vec<String> = mr["reviewers"]
                 .as_array()
-                .map(|a| a.iter().filter_map(|v| v["username"].as_str().map(String::from)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v["username"].as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
-            if reviewers.is_empty() { gs.no_reviewer += 1; }
+            if reviewers.is_empty() {
+                gs.no_reviewer += 1;
+            }
             for r in reviewers {
                 *gs.reviewers.entry(r).or_default() += 1;
             }
         }
-        if gs.open > 0 { gs.avg_age_hours = total_age / gs.open as f64; }
+        if gs.open > 0 {
+            gs.avg_age_hours = total_age / gs.open as f64;
+        }
         all_stats.push(gs);
     }
 
@@ -1175,7 +1444,10 @@ pub async fn get_org_mr_dashboard(
     let total_no_rev: u32 = all_stats.iter().map(|s| s.no_reviewer).sum();
 
     let mut lines = vec![
-        format!("**Org MR Dashboard** ({} groups, {total_open} open)\n", all_stats.len()),
+        format!(
+            "**Org MR Dashboard** ({} groups, {total_open} open)\n",
+            all_stats.len()
+        ),
         format!("| Group | Open | Drafts | Stale (>7d) | No reviewer | Avg age |"),
         format!("|-------|------|--------|-------------|-------------|---------|"),
     ];
@@ -1183,7 +1455,13 @@ pub async fn get_org_mr_dashboard(
     for gs in &all_stats {
         lines.push(format!(
             "| {} | {} | {} | {} | {} | {:.0}h ({:.1}d) |",
-            gs.name, gs.open, gs.drafts, gs.stale, gs.no_reviewer, gs.avg_age_hours, gs.avg_age_hours / 24.0
+            gs.name,
+            gs.open,
+            gs.drafts,
+            gs.stale,
+            gs.no_reviewer,
+            gs.avg_age_hours,
+            gs.avg_age_hours / 24.0
         ));
     }
 
@@ -1278,11 +1556,7 @@ pub async fn merge_mr(
 }
 
 /// Rebase a merge request.
-pub async fn rebase_mr(
-    client: &GitLabClient,
-    project_id: &str,
-    mr_iid: u64,
-) -> Result<String> {
+pub async fn rebase_mr(client: &GitLabClient, project_id: &str, mr_iid: u64) -> Result<String> {
     let path = format!(
         "/projects/{}/merge_requests/{}/rebase",
         urlencoding::encode(project_id),
@@ -1314,11 +1588,7 @@ pub async fn rebase_mr(
 }
 
 /// Close a merge request.
-pub async fn close_mr(
-    client: &GitLabClient,
-    project_id: &str,
-    mr_iid: u64,
-) -> Result<String> {
+pub async fn close_mr(client: &GitLabClient, project_id: &str, mr_iid: u64) -> Result<String> {
     let path = format!(
         "/projects/{}/merge_requests/{}",
         urlencoding::encode(project_id),
@@ -1402,7 +1672,9 @@ pub async fn update_merge_request(
     // Echo the resulting assignee so success is visible, not assumed.
     if !assignee.is_empty() {
         match mr["assignee"]["username"].as_str() {
-            Some(u) => { let _ = write!(out, "\nAssignee: @{u}"); },
+            Some(u) => {
+                let _ = write!(out, "\nAssignee: @{u}");
+            }
             None => out.push_str("\nAssignee: (none)"),
         }
     }
@@ -1426,9 +1698,7 @@ pub async fn get_mr_discussions(
         mr_iid
     );
 
-    let discussions: Vec<Value> = client
-        .get(&path, &[("per_page", "100")])
-        .await?;
+    let discussions: Vec<Value> = client.get(&path, &[("per_page", "100")]).await?;
 
     if discussions.is_empty() {
         return Ok(format!("No discussions on !{mr_iid}."));
@@ -1471,11 +1741,19 @@ pub async fn get_mr_discussions(
         };
 
         if resolvable {
-            if is_resolved_bool { resolved_count += 1; } else { unresolved_count += 1; }
+            if is_resolved_bool {
+                resolved_count += 1;
+            } else {
+                unresolved_count += 1;
+            }
         }
 
         let is_resolved = if resolvable {
-            if is_resolved_bool { " ✓ Resolved" } else { " ✗ Unresolved" }
+            if is_resolved_bool {
+                " ✓ Resolved"
+            } else {
+                " ✗ Unresolved"
+            }
         } else {
             ""
         };
@@ -1491,7 +1769,9 @@ pub async fn get_mr_discussions(
             let date_short = created.get(..10).unwrap_or(created);
 
             if i == 0 {
-                lines.push(format!("### Discussion by @{author} ({date_short}){is_resolved}"));
+                lines.push(format!(
+                    "### Discussion by @{author} ({date_short}){is_resolved}"
+                ));
                 lines.push(format!("> {}", body.replace('\n', "\n> ")));
             } else {
                 lines.push(format!("  **@{author}** ({date_short}):"));
@@ -1508,7 +1788,8 @@ pub async fn get_mr_discussions(
     if summary_only {
         let mut author_list: Vec<(&String, &u32)> = authors.iter().collect();
         author_list.sort_by(|a, b| b.1.cmp(a.1));
-        let authors_str = author_list.iter()
+        let authors_str = author_list
+            .iter()
             .take(5)
             .map(|(name, _)| format!("@{name}"))
             .collect::<Vec<_>>()
@@ -1537,18 +1818,26 @@ pub async fn get_reviewer_velocity(
     let path = if !group_id.is_empty() {
         format!("/groups/{}/merge_requests", urlencoding::encode(group_id))
     } else if !project_id.is_empty() {
-        format!("/projects/{}/merge_requests", urlencoding::encode(project_id))
+        format!(
+            "/projects/{}/merge_requests",
+            urlencoding::encode(project_id)
+        )
     } else {
         "/merge_requests".to_string()
     };
 
-    let mrs: Vec<Value> = client.get(&path, &[
-        ("state", "merged"),
-        ("created_after", &since),
-        ("per_page", "100"),
-        ("order_by", "updated_at"),
-        ("sort", "desc"),
-    ]).await?;
+    let mrs: Vec<Value> = client
+        .get(
+            &path,
+            &[
+                ("state", "merged"),
+                ("created_after", &since),
+                ("per_page", "100"),
+                ("order_by", "updated_at"),
+                ("sort", "desc"),
+            ],
+        )
+        .await?;
 
     if mrs.is_empty() {
         return Ok("No merged MRs in this period.".to_string());
@@ -1557,60 +1846,73 @@ pub async fn get_reviewer_velocity(
     use futures::future::join_all;
 
     // For each MR with reviewers, fetch notes concurrently and find first reviewer activity
-    let lookups: Vec<_> = mrs.iter().filter_map(|mr| {
-        let reviewers: Vec<String> = mr["reviewers"]
-            .as_array()
-            .map(|a| a.iter().filter_map(|v| v["username"].as_str().map(String::from)).collect())
-            .unwrap_or_default();
-        if reviewers.is_empty() {
-            return None;
-        }
-        let created = mr["created_at"].as_str().unwrap_or("").to_string();
-        let created_dt = chrono::DateTime::parse_from_rfc3339(&created).ok()?;
+    let lookups: Vec<_> = mrs
+        .iter()
+        .filter_map(|mr| {
+            let reviewers: Vec<String> = mr["reviewers"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v["username"].as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if reviewers.is_empty() {
+                return None;
+            }
+            let created = mr["created_at"].as_str().unwrap_or("").to_string();
+            let created_dt = chrono::DateTime::parse_from_rfc3339(&created).ok()?;
 
-        let project_path = mr_project_path(mr)?;
-        let mr_iid = mr["iid"].as_u64().unwrap_or(0);
-        if mr_iid == 0 {
-            return None;
-        }
+            let project_path = mr_project_path(mr)?;
+            let mr_iid = mr["iid"].as_u64().unwrap_or(0);
+            if mr_iid == 0 {
+                return None;
+            }
 
-        let client = client.clone();
-        Some(async move {
-            let notes_path = format!(
-                "/projects/{}/merge_requests/{}/notes",
-                urlencoding::encode(&project_path),
-                mr_iid
-            );
-            let notes: Vec<Value> = client.get(&notes_path, &[
-                ("per_page", "100"),
-                ("order_by", "created_at"),
-                ("sort", "asc"),
-            ]).await.or_default_logged();
+            let client = client.clone();
+            Some(async move {
+                let notes_path = format!(
+                    "/projects/{}/merge_requests/{}/notes",
+                    urlencoding::encode(&project_path),
+                    mr_iid
+                );
+                let notes: Vec<Value> = client
+                    .get(
+                        &notes_path,
+                        &[
+                            ("per_page", "100"),
+                            ("order_by", "created_at"),
+                            ("sort", "asc"),
+                        ],
+                    )
+                    .await
+                    .or_default_logged();
 
-            // For each reviewer, find their first non-system note timestamp
-            let mut first_responses: Vec<(String, f64)> = Vec::new();
-            for reviewer in &reviewers {
-                for note in &notes {
-                    if note["system"].as_bool().unwrap_or(true) {
-                        continue;
-                    }
-                    let author = note["author"]["username"].as_str().unwrap_or("");
-                    if author != reviewer {
-                        continue;
-                    }
-                    let note_created = note["created_at"].as_str().unwrap_or("");
-                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(note_created) {
-                        let hours = (dt - created_dt).num_minutes() as f64 / 60.0;
-                        if hours >= 0.0 {
-                            first_responses.push((reviewer.clone(), hours));
-                            break;
+                // For each reviewer, find their first non-system note timestamp
+                let mut first_responses: Vec<(String, f64)> = Vec::new();
+                for reviewer in &reviewers {
+                    for note in &notes {
+                        if note["system"].as_bool().unwrap_or(true) {
+                            continue;
+                        }
+                        let author = note["author"]["username"].as_str().unwrap_or("");
+                        if author != reviewer {
+                            continue;
+                        }
+                        let note_created = note["created_at"].as_str().unwrap_or("");
+                        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(note_created) {
+                            let hours = (dt - created_dt).num_minutes() as f64 / 60.0;
+                            if hours >= 0.0 {
+                                first_responses.push((reviewer.clone(), hours));
+                                break;
+                            }
                         }
                     }
                 }
-            }
-            first_responses
+                first_responses
+            })
         })
-    }).collect();
+        .collect();
 
     let total_mr_count = mrs.len();
     let results: Vec<Vec<(String, f64)>> = join_all(lookups).await;
@@ -1649,16 +1951,22 @@ pub async fn get_reviewer_velocity(
         .collect();
     entries.sort_by(|a, b| a.2.total_cmp(&b.2));
 
-    let scope = if !group_id.is_empty() { group_id }
-        else if !project_id.is_empty() { project_id }
-        else { "all" };
+    let scope = if !group_id.is_empty() {
+        group_id
+    } else if !project_id.is_empty() {
+        project_id
+    } else {
+        "all"
+    };
 
     if summary_only {
         let reviewers_count = entries.len();
-        let fastest = entries.first()
+        let fastest = entries
+            .first()
             .map(|(name, _, avg, _)| format!("Fastest: @{name} ({:.1}h avg)", avg))
             .unwrap_or_else(|| "Fastest: –".to_string());
-        let slowest = entries.last()
+        let slowest = entries
+            .last()
             .map(|(name, _, avg, _)| format!("Slowest: @{name} ({:.1}h avg)", avg))
             .unwrap_or_else(|| "Slowest: –".to_string());
         return Ok(format!(
@@ -1699,18 +2007,26 @@ pub async fn get_review_load(
     let path = if !group_id.is_empty() {
         format!("/groups/{}/merge_requests", urlencoding::encode(group_id))
     } else if !project_id.is_empty() {
-        format!("/projects/{}/merge_requests", urlencoding::encode(project_id))
+        format!(
+            "/projects/{}/merge_requests",
+            urlencoding::encode(project_id)
+        )
     } else {
         "/merge_requests".to_string()
     };
 
-    let mrs: Vec<Value> = client.get(&path, &[
-        ("state", "merged"),
-        ("created_after", &since),
-        ("per_page", "100"),
-        ("order_by", "updated_at"),
-        ("sort", "desc"),
-    ]).await?;
+    let mrs: Vec<Value> = client
+        .get(
+            &path,
+            &[
+                ("state", "merged"),
+                ("created_after", &since),
+                ("per_page", "100"),
+                ("order_by", "updated_at"),
+                ("sort", "desc"),
+            ],
+        )
+        .await?;
 
     if mrs.is_empty() {
         return Ok("No merged MRs in this period.".to_string());
@@ -1743,9 +2059,13 @@ pub async fn get_review_load(
     let mut entries: Vec<(String, u32)> = reviewer_counts.into_iter().collect();
     entries.sort_by(|a, b| b.1.cmp(&a.1));
 
-    let scope = if !group_id.is_empty() { group_id }
-        else if !project_id.is_empty() { project_id }
-        else { "all" };
+    let scope = if !group_id.is_empty() {
+        group_id
+    } else if !project_id.is_empty() {
+        project_id
+    } else {
+        "all"
+    };
 
     // Bus factor: how many reviewers cover 80% of reviews
     let mut cumulative = 0u32;
@@ -1766,10 +2086,15 @@ pub async fn get_review_load(
 
     if summary_only {
         let reviewers_count = entries.len();
-        let top_str = entries.first()
+        let top_str = entries
+            .first()
             .map(|(name, _)| format!("Top: @{name} ({:.0}%)", top_pct))
             .unwrap_or_else(|| "Top: –".to_string());
-        let bus_note = if top_pct > 70.0 { " (top reviewer >70%)" } else { "" };
+        let bus_note = if top_pct > 70.0 {
+            " (top reviewer >70%)"
+        } else {
+            ""
+        };
         return Ok(format!(
             "{scope}: {reviewers_count} reviewers, {mr_with_reviewer} MRs. {top_str}. Bus factor: {bus_factor}{bus_note}"
         ));
@@ -1831,65 +2156,75 @@ pub async fn get_mr_size_trend(
     let path = if !group_id.is_empty() {
         format!("/groups/{}/merge_requests", urlencoding::encode(group_id))
     } else if !project_id.is_empty() {
-        format!("/projects/{}/merge_requests", urlencoding::encode(project_id))
+        format!(
+            "/projects/{}/merge_requests",
+            urlencoding::encode(project_id)
+        )
     } else {
         "/merge_requests".to_string()
     };
 
-    let mrs: Vec<Value> = client.get(&path, &[
-        ("state", "merged"),
-        ("created_after", &since),
-        ("per_page", "100"),
-        ("order_by", "updated_at"),
-        ("sort", "desc"),
-    ]).await?;
+    let mrs: Vec<Value> = client
+        .get(
+            &path,
+            &[
+                ("state", "merged"),
+                ("created_after", &since),
+                ("per_page", "100"),
+                ("order_by", "updated_at"),
+                ("sort", "desc"),
+            ],
+        )
+        .await?;
 
     if mrs.is_empty() {
         return Ok("No merged MRs in this period.".to_string());
     }
 
     // Fetch /changes for each MR concurrently to get file count and LOC
-    let lookups: Vec<_> = mrs.iter().filter_map(|mr| {
-        let merged_at = mr["merged_at"].as_str().unwrap_or("").to_string();
-        let merged_dt = chrono::DateTime::parse_from_rfc3339(&merged_at).ok()?;
+    let lookups: Vec<_> = mrs
+        .iter()
+        .filter_map(|mr| {
+            let merged_at = mr["merged_at"].as_str().unwrap_or("").to_string();
+            let merged_dt = chrono::DateTime::parse_from_rfc3339(&merged_at).ok()?;
 
-        let project_path = mr_project_path(mr)?;
-        let mr_iid = mr["iid"].as_u64().unwrap_or(0);
-        if mr_iid == 0 {
-            return None;
-        }
+            let project_path = mr_project_path(mr)?;
+            let mr_iid = mr["iid"].as_u64().unwrap_or(0);
+            if mr_iid == 0 {
+                return None;
+            }
 
-        let client = client.clone();
-        Some(async move {
-            let path = format!(
-                "/projects/{}/merge_requests/{}/changes",
-                urlencoding::encode(&project_path),
-                mr_iid
-            );
-            let detail: std::result::Result<Value, _> = client
-                .get(&path, &[("access_raw_diffs", "true")])
-                .await;
+            let client = client.clone();
+            Some(async move {
+                let path = format!(
+                    "/projects/{}/merge_requests/{}/changes",
+                    urlencoding::encode(&project_path),
+                    mr_iid
+                );
+                let detail: std::result::Result<Value, _> =
+                    client.get(&path, &[("access_raw_diffs", "true")]).await;
 
-            if let Ok(d) = detail {
-                if let Some(files) = d["changes"].as_array() {
-                    let file_count = files.len();
-                    let mut loc = 0usize;
-                    for f in files {
-                        let diff = f["diff"].as_str().unwrap_or("");
-                        for line in diff.lines() {
-                            if (line.starts_with('+') && !line.starts_with("+++"))
-                                || (line.starts_with('-') && !line.starts_with("---"))
-                            {
-                                loc += 1;
+                if let Ok(d) = detail {
+                    if let Some(files) = d["changes"].as_array() {
+                        let file_count = files.len();
+                        let mut loc = 0usize;
+                        for f in files {
+                            let diff = f["diff"].as_str().unwrap_or("");
+                            for line in diff.lines() {
+                                if (line.starts_with('+') && !line.starts_with("+++"))
+                                    || (line.starts_with('-') && !line.starts_with("---"))
+                                {
+                                    loc += 1;
+                                }
                             }
                         }
+                        return Some((merged_dt.with_timezone(&chrono::Utc), file_count, loc));
                     }
-                    return Some((merged_dt.with_timezone(&chrono::Utc), file_count, loc));
                 }
-            }
-            None
+                None
+            })
         })
-    }).collect();
+        .collect();
 
     let mr_data: Vec<(chrono::DateTime<chrono::Utc>, usize, usize)> =
         join_all(lookups).await.into_iter().flatten().collect();
@@ -1914,7 +2249,13 @@ pub async fn get_mr_size_trend(
         .map(|i| {
             let start = since_dt + chrono::Duration::days((i * 7) as i64);
             let end = start + chrono::Duration::days(7);
-            WeekBucket { start, end, mr_count: 0, total_files: 0, total_loc: 0 }
+            WeekBucket {
+                start,
+                end,
+                mr_count: 0,
+                total_files: 0,
+                total_loc: 0,
+            }
         })
         .collect();
 
@@ -1929,29 +2270,34 @@ pub async fn get_mr_size_trend(
         }
     }
 
-    let scope = if !group_id.is_empty() { group_id }
-        else if !project_id.is_empty() { project_id }
-        else { "all" };
+    let scope = if !group_id.is_empty() {
+        group_id
+    } else if !project_id.is_empty() {
+        project_id
+    } else {
+        "all"
+    };
 
     if summary_only {
         let weeks_with_data: Vec<&WeekBucket> = buckets.iter().filter(|b| b.mr_count > 0).collect();
         let total_mrs: usize = mr_data.len();
         let total_weeks = buckets.len();
-        let (trend, start_files, end_files) = if let (Some(first), Some(last)) = (weeks_with_data.first(), weeks_with_data.last()) {
-            let first_avg = first.total_files as f64 / first.mr_count as f64;
-            let last_avg = last.total_files as f64 / last.mr_count as f64;
-            let delta = last_avg - first_avg;
-            let trend = if delta.abs() / first_avg.max(1.0) < 0.1 {
-                "stable"
-            } else if delta > 0.0 {
-                "larger"
+        let (trend, start_files, end_files) =
+            if let (Some(first), Some(last)) = (weeks_with_data.first(), weeks_with_data.last()) {
+                let first_avg = first.total_files as f64 / first.mr_count as f64;
+                let last_avg = last.total_files as f64 / last.mr_count as f64;
+                let delta = last_avg - first_avg;
+                let trend = if delta.abs() / first_avg.max(1.0) < 0.1 {
+                    "stable"
+                } else if delta > 0.0 {
+                    "larger"
+                } else {
+                    "smaller"
+                };
+                (trend, first_avg, last_avg)
             } else {
-                "smaller"
+                ("insufficient data", 0.0, 0.0)
             };
-            (trend, first_avg, last_avg)
-        } else {
-            ("insufficient data", 0.0, 0.0)
-        };
         return Ok(format!(
             "{scope}: {total_weeks} weeks, {total_mrs} MRs. Trend: {trend}, avg files {:.0}->{:.0}",
             start_files, end_files
@@ -2004,7 +2350,9 @@ pub async fn get_mr_size_trend(
         ));
 
         prev_files = Some(avg_files);
-        if first_files.is_none() { first_files = Some(avg_files); }
+        if first_files.is_none() {
+            first_files = Some(avg_files);
+        }
         last_files = Some(avg_files);
     }
 
@@ -2036,25 +2384,50 @@ pub async fn get_mr_size_trend(
     Ok(lines.join("\n"))
 }
 
-fn format_week_range(start: chrono::DateTime<chrono::Utc>, end: chrono::DateTime<chrono::Utc>) -> String {
+fn format_week_range(
+    start: chrono::DateTime<chrono::Utc>,
+    end: chrono::DateTime<chrono::Utc>,
+) -> String {
     use chrono::Datelike;
     let end_inclusive = end - chrono::Duration::days(1);
     let start_month = match start.month() {
-        1 => "Jan", 2 => "Feb", 3 => "Mar", 4 => "Apr",
-        5 => "May", 6 => "Jun", 7 => "Jul", 8 => "Aug",
-        9 => "Sep", 10 => "Oct", 11 => "Nov", 12 => "Dec",
+        1 => "Jan",
+        2 => "Feb",
+        3 => "Mar",
+        4 => "Apr",
+        5 => "May",
+        6 => "Jun",
+        7 => "Jul",
+        8 => "Aug",
+        9 => "Sep",
+        10 => "Oct",
+        11 => "Nov",
+        12 => "Dec",
         _ => "?",
     };
     let end_month = match end_inclusive.month() {
-        1 => "Jan", 2 => "Feb", 3 => "Mar", 4 => "Apr",
-        5 => "May", 6 => "Jun", 7 => "Jul", 8 => "Aug",
-        9 => "Sep", 10 => "Oct", 11 => "Nov", 12 => "Dec",
+        1 => "Jan",
+        2 => "Feb",
+        3 => "Mar",
+        4 => "Apr",
+        5 => "May",
+        6 => "Jun",
+        7 => "Jul",
+        8 => "Aug",
+        9 => "Sep",
+        10 => "Oct",
+        11 => "Nov",
+        12 => "Dec",
         _ => "?",
     };
     if start.month() == end_inclusive.month() {
         format!("{start_month} {}-{}", start.day(), end_inclusive.day())
     } else {
-        format!("{start_month} {} – {end_month} {}", start.day(), end_inclusive.day())
+        format!(
+            "{start_month} {} – {end_month} {}",
+            start.day(),
+            end_inclusive.day()
+        )
     }
 }
 
@@ -2073,7 +2446,10 @@ mod tests {
     #[test]
     fn mr_reference_falls_back_when_missing() {
         assert_eq!(mr_reference(&json!({}), 7), "!7");
-        assert_eq!(mr_reference(&json!({ "references": { "full": "" } }), 7), "!7");
+        assert_eq!(
+            mr_reference(&json!({ "references": { "full": "" } }), 7),
+            "!7"
+        );
     }
 
     #[test]
@@ -2099,8 +2475,14 @@ mod tests {
     #[test]
     fn assignee_display_shows_unassigned_explicitly() {
         assert_eq!(assignee_display(&json!({})), "(unassigned)");
-        assert_eq!(assignee_display(&json!({ "assignees": [] })), "(unassigned)");
-        assert_eq!(assignee_display(&json!({ "assignee": null })), "(unassigned)");
+        assert_eq!(
+            assignee_display(&json!({ "assignees": [] })),
+            "(unassigned)"
+        );
+        assert_eq!(
+            assignee_display(&json!({ "assignee": null })),
+            "(unassigned)"
+        );
     }
 
     /// Locks down `mr_project_path` behavior across the full surface of
@@ -2128,7 +2510,10 @@ mod tests {
         let mr = json!({
             "web_url": "https://gitlab.example.com/org/team/backend/api/-/merge_requests/7"
         });
-        assert_eq!(mr_project_path(&mr).as_deref(), Some("org/team/backend/api"));
+        assert_eq!(
+            mr_project_path(&mr).as_deref(),
+            Some("org/team/backend/api")
+        );
 
         // Self-hosted instance with non-default port
         let mr = json!({

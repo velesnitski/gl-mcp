@@ -13,8 +13,22 @@ use serde_json::Value;
 
 /// Key substrings that mark a variable as holding a secret.
 const SECRETISH: &[&str] = &[
-    "SECRET", "TOKEN", "PASSWORD", "PASSWD", "PASS", "KEY", "CREDENTIAL", "PRIVATE", "AUTH",
-    "CERT", "CRT", "PEM", "SALT", "SIGNATURE", "WEBHOOK", "DSN",
+    "SECRET",
+    "TOKEN",
+    "PASSWORD",
+    "PASSWD",
+    "PASS",
+    "KEY",
+    "CREDENTIAL",
+    "PRIVATE",
+    "AUTH",
+    "CERT",
+    "CRT",
+    "PEM",
+    "SALT",
+    "SIGNATURE",
+    "WEBHOOK",
+    "DSN",
 ];
 
 /// Keys whose value is structurally unmaskable, so "turn masking on" is wrong advice.
@@ -26,9 +40,17 @@ const SECRETISH: &[&str] = &[
 /// command line where `set -x` could echo it.
 fn is_structurally_unmaskable(key: &str) -> bool {
     let k = key.to_ascii_uppercase();
-    ["PRIV_KEY", "PRIVATE_KEY", "SSH_KEY", "SSH_KEYS", "_PEM", "CERT", "_CRT"]
-        .iter()
-        .any(|m| k.contains(m))
+    [
+        "PRIV_KEY",
+        "PRIVATE_KEY",
+        "SSH_KEY",
+        "SSH_KEYS",
+        "_PEM",
+        "CERT",
+        "_CRT",
+    ]
+    .iter()
+    .any(|m| k.contains(m))
 }
 
 /// Finding severity. Declaration order is report order: `Ord` puts High first.
@@ -70,7 +92,12 @@ pub(crate) fn audit_variables(project: &str, vars: &[Value]) -> Vec<Finding> {
 
         if key.eq_ignore_ascii_case("CI_DEBUG_TRACE") {
             let on = matches!(
-                v["value"].as_str().unwrap_or("").trim().to_ascii_lowercase().as_str(),
+                v["value"]
+                    .as_str()
+                    .unwrap_or("")
+                    .trim()
+                    .to_ascii_lowercase()
+                    .as_str(),
                 "true" | "1" | "yes"
             );
             if on {
@@ -85,7 +112,9 @@ pub(crate) fn audit_variables(project: &str, vars: &[Value]) -> Vec<Finding> {
             continue;
         }
 
-        let secretish = SECRETISH.iter().any(|m| key.to_ascii_uppercase().contains(m));
+        let secretish = SECRETISH
+            .iter()
+            .any(|m| key.to_ascii_uppercase().contains(m));
         // A file-type variable is never interpolated into a command line, so the
         // masking question does not arise for it.
         if !secretish || masked || vtype == "file" {
@@ -134,7 +163,8 @@ pub(crate) fn audit_ci_file(project: &str, path: &str, content: &str) -> Vec<Fin
         if let Some(rest) = line.strip_prefix("image:") {
             let img = rest.trim().trim_matches('"').trim_matches('\'');
             if !img.is_empty() && !img.starts_with('$') {
-                let floating = img.ends_with(":latest") || !img.rsplit('/').next().unwrap_or("").contains(':');
+                let floating =
+                    img.ends_with(":latest") || !img.rsplit('/').next().unwrap_or("").contains(':');
                 if floating && !img.contains('@') {
                     out.push(Finding {
                         severity: Severity::Medium,
@@ -149,7 +179,10 @@ pub(crate) fn audit_ci_file(project: &str, path: &str, content: &str) -> Vec<Fin
 
         let lower = line.to_ascii_lowercase();
         let piped_to_shell = (lower.contains("curl ") || lower.contains("wget "))
-            && (lower.contains("| sh") || lower.contains("|sh") || lower.contains("| bash") || lower.contains("|bash"));
+            && (lower.contains("| sh")
+                || lower.contains("|sh")
+                || lower.contains("| bash")
+                || lower.contains("|bash"));
         let latest_release = lower.contains("releases/latest/download");
         if piped_to_shell || latest_release {
             out.push(Finding {
@@ -174,7 +207,10 @@ async fn audit_project(client: &GitLabClient, path: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     let vars: Vec<Value> = client
-        .get(&format!("/projects/{enc}/variables"), &[("per_page", "100")])
+        .get(
+            &format!("/projects/{enc}/variables"),
+            &[("per_page", "100")],
+        )
         .await
         .or_default_logged();
     findings.extend(audit_variables(path, &vars));
@@ -237,7 +273,12 @@ pub async fn audit_ci_security(
         }
     }
 
-    Ok(render_audit_report(&scope_label, targets.len(), total_repos, all))
+    Ok(render_audit_report(
+        &scope_label,
+        targets.len(),
+        total_repos,
+        all,
+    ))
 }
 
 /// Render the audit report from gathered findings.
@@ -255,7 +296,9 @@ pub(crate) fn render_audit_report(
 
     let (high, med) = (
         all.iter().filter(|f| f.severity == Severity::High).count(),
-        all.iter().filter(|f| f.severity == Severity::Medium).count(),
+        all.iter()
+            .filter(|f| f.severity == Severity::Medium)
+            .count(),
     );
     let mut out = vec![
         format!("# CI security audit — {scope_label}"),
@@ -296,11 +339,14 @@ pub(crate) fn render_audit_report(
 
 #[cfg(test)]
 mod tests {
-    use super::{audit_ci_file, audit_variables, render_audit_report, Finding, Severity};
+    use super::{Finding, Severity, audit_ci_file, audit_variables, render_audit_report};
     use serde_json::json;
 
     fn codes_at(f: &[Finding], code: &str) -> Vec<String> {
-        f.iter().filter(|x| x.code == code).map(|x| x.where_.clone()).collect()
+        f.iter()
+            .filter(|x| x.code == code)
+            .map(|x| x.where_.clone())
+            .collect()
     }
 
     #[test]
@@ -342,15 +388,35 @@ job:
             assert!(f[0].detail.contains("Pipes a remote download"), "case {i}");
         }
         // Downloading without piping into a shell, or piping something else, is fine.
-        assert!(audit_ci_file("g/p", "ci.yml", "curl -o tool https://example.com/v2.3.1/tool").is_empty());
-        assert!(audit_ci_file("g/p", "ci.yml", "cat notes | sh").is_empty(), "no download involved");
+        assert!(
+            audit_ci_file(
+                "g/p",
+                "ci.yml",
+                "curl -o tool https://example.com/v2.3.1/tool"
+            )
+            .is_empty()
+        );
+        assert!(
+            audit_ci_file("g/p", "ci.yml", "cat notes | sh").is_empty(),
+            "no download involved"
+        );
         // The latest-release form carries its own explanation.
-        let rel = audit_ci_file("g/p", "ci.yml", "curl -L https://example.com/releases/latest/download/x -o x");
+        let rel = audit_ci_file(
+            "g/p",
+            "ci.yml",
+            "curl -L https://example.com/releases/latest/download/x -o x",
+        );
         assert!(rel[0].detail.contains("latest"));
     }
 
     fn finding(sev: Severity, code: &'static str, at: &str) -> Finding {
-        Finding { severity: sev, code, where_: at.into(), detail: "d".into(), fix: "f".into() }
+        Finding {
+            severity: sev,
+            code,
+            where_: at.into(),
+            detail: "d".into(),
+            fix: "f".into(),
+        }
     }
 
     #[test]
@@ -368,7 +434,10 @@ job:
         );
         assert!(out.starts_with("# CI security audit — group `g`"));
         assert!(out.contains("**3 project(s) audited** of 3 · **2 HIGH · 2 MEDIUM**"));
-        let rows: Vec<&str> = out.lines().filter(|l| l.starts_with("| HIGH") || l.starts_with("| MEDIUM")).collect();
+        let rows: Vec<&str> = out
+            .lines()
+            .filter(|l| l.starts_with("| HIGH") || l.starts_with("| MEDIUM"))
+            .collect();
         // HIGH before MEDIUM; within a severity, by code, then location.
         assert_eq!(rows.len(), 4);
         assert!(rows[0].starts_with("| HIGH | FETCH-UNPINNED | g/a"));
@@ -382,7 +451,8 @@ job:
     #[test]
     fn a_partial_sweep_warns_and_a_complete_one_does_not() {
         // The boundary is exact: auditing all of them is not partial.
-        let warns = |audited, total| render_audit_report("g", audited, total, vec![]).contains("Partial");
+        let warns =
+            |audited, total| render_audit_report("g", audited, total, vec![]).contains("Partial");
         assert!(warns(59, 60));
         assert!(!warns(60, 60));
         assert!(!warns(1, 1));
@@ -424,11 +494,18 @@ job:
 
     #[test]
     fn ci_debug_trace_counts_only_when_actually_on() {
-        let on = vec![json!({"key":"CI_DEBUG_TRACE","value":"true","masked":false,"variable_type":"env_var","environment_scope":"*"})];
-        let off = vec![json!({"key":"CI_DEBUG_TRACE","value":"false","masked":false,"variable_type":"env_var","environment_scope":"*"})];
+        let on = vec![
+            json!({"key":"CI_DEBUG_TRACE","value":"true","masked":false,"variable_type":"env_var","environment_scope":"*"}),
+        ];
+        let off = vec![
+            json!({"key":"CI_DEBUG_TRACE","value":"false","masked":false,"variable_type":"env_var","environment_scope":"*"}),
+        ];
         assert_eq!(audit_variables("p", &on).len(), 1);
         assert_eq!(audit_variables("p", &on)[0].code, "CI-DEBUG");
-        assert!(audit_variables("p", &off).is_empty(), "false must not be a finding");
+        assert!(
+            audit_variables("p", &off).is_empty(),
+            "false must not be a finding"
+        );
     }
 
     #[test]
@@ -441,7 +518,11 @@ image: registry.example.com/build/runtime:latest
   image: $CI_REGISTRY_IMAGE
 ";
         let f = audit_ci_file("g/p", ".gitlab-ci.yml", ci);
-        let imgs: Vec<&String> = f.iter().filter(|x| x.code == "IMG-FLOATING").map(|x| &x.where_).collect();
+        let imgs: Vec<&String> = f
+            .iter()
+            .filter(|x| x.code == "IMG-FLOATING")
+            .map(|x| &x.where_)
+            .collect();
         assert_eq!(imgs.len(), 2, "latest + untagged only: {f:?}");
         // A variable image cannot be judged statically, so it is not guessed at.
         assert!(!format!("{f:?}").contains("CI_REGISTRY_IMAGE"));

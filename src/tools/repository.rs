@@ -2,9 +2,9 @@
 
 use crate::client::GitLabClient;
 use crate::error::{Error, Result, ResultExt};
+use crate::tools::commits::detect_language;
 use serde_json::Value;
 use std::collections::BTreeMap;
-use crate::tools::commits::detect_language;
 
 /// Search code across a project (GitLab blobs search).
 /// Repos searched concurrently during a group-wide sweep.
@@ -35,7 +35,11 @@ fn sweep_note(offset: usize, scanned: usize, total: usize, full_sweep: bool) -> 
 This is NOT evidence of absence for the rest. Continue with `offset={covered}`, or pass `full_sweep=true` to cover all {total} in one call{}.\n",
         offset + 1,
         covered,
-        if full_sweep { " (already raised; ceiling reached)" } else { "" }
+        if full_sweep {
+            " (already raised; ceiling reached)"
+        } else {
+            ""
+        }
     ))
 }
 
@@ -60,7 +64,11 @@ async fn search_project_blobs(
 /// Query for `GET /projects/:id/search`. A non-empty `ref_name` must reach GitLab as
 /// `ref`: dropping it would search the default branch and return a plausible, wrong
 /// answer for an audit against a deployed branch.
-pub(crate) fn blob_search_params(query: &str, ref_name: &str, per_page: u32) -> Vec<(&'static str, String)> {
+pub(crate) fn blob_search_params(
+    query: &str,
+    ref_name: &str,
+    per_page: u32,
+) -> Vec<(&'static str, String)> {
     let mut params = vec![
         ("scope", "blobs".to_string()),
         ("search", query.to_string()),
@@ -112,7 +120,11 @@ async fn search_code_group(
     }
 
     let total_repos = projects.len();
-    let window = if full_sweep { SEARCH_FULL_CEILING } else { SEARCH_MAX_REPOS };
+    let window = if full_sweep {
+        SEARCH_FULL_CEILING
+    } else {
+        SEARCH_MAX_REPOS
+    };
     let scanned: Vec<&Value> = projects.iter().skip(offset).take(window).collect();
     let scanned_count = scanned.len();
     if scanned_count == 0 {
@@ -140,15 +152,19 @@ async fn search_code_group(
     }
 
     let match_count: usize = hits.iter().map(|(_, v)| v.len()).sum();
+    // "0 matches in 0 of 104 repos searched" read as "0 repos searched". The
+    // two counts answer different questions and are stated apart: how many
+    // repos were searched is the scope of the claim, how many held a match is
+    // the finding (ADR 059).
     let mut lines = vec![format!(
-        "**Search '{query}' across `{group_path}`: {match_count} matches in {} of {scanned_count} repos searched**\n",
+        "**Search '{query}' across `{group_path}`: {scanned_count} repos searched, {match_count} match(es) in {} repo(s)**\n",
         hits.len()
     )];
     if let Some(note) = sweep_note(offset, scanned_count, total_repos, full_sweep) {
         lines.push(note);
     }
     if hits.is_empty() {
-        lines.push("No matches.".to_string());
+        lines.push(format!("No matches in the {scanned_count} repos searched."));
         return Ok((lines.join("\n"), 0));
     }
 
@@ -197,15 +213,23 @@ pub async fn search_code(
     offset: usize,
     full_sweep: bool,
 ) -> Result<String> {
-    let (out, count) =
-        search_code_once(client, project_id, group_path, query, ref_name, per_page, offset, full_sweep).await?;
+    let (out, count) = search_code_once(
+        client, project_id, group_path, query, ref_name, per_page, offset, full_sweep,
+    )
+    .await?;
     if count > 0 || !looks_like_alternation(query) {
         return Ok(out);
     }
 
-    let terms: Vec<&str> = query.split('|').map(|t| t.trim()).filter(|t| !t.is_empty()).collect();
+    let terms: Vec<&str> = query
+        .split('|')
+        .map(|t| t.trim())
+        .filter(|t| !t.is_empty())
+        .collect();
     let mut parts = vec![
-        format!("**`{query}` matched literally: 0 results — this is _not_ evidence of absence.**\n"),
+        format!(
+            "**`{query}` matched literally: 0 results — this is _not_ evidence of absence.**\n"
+        ),
         format!(
             "GitLab search does not support regex alternation, so `|` was searched as a character. \
 Re-ran the {} alternatives separately:\n",
@@ -214,15 +238,20 @@ Re-ran the {} alternatives separately:\n",
     ];
     let mut total = 0usize;
     for t in &terms {
-        let (o, c) =
-            search_code_once(client, project_id, group_path, t, ref_name, per_page, offset, full_sweep).await?;
+        let (o, c) = search_code_once(
+            client, project_id, group_path, t, ref_name, per_page, offset, full_sweep,
+        )
+        .await?;
         total += c;
         parts.push(format!("---\n\n### Alternative `{t}` — {c} match(es)\n"));
         parts.push(o);
     }
     parts.insert(
         2,
-        format!("**Combined: {total} match(es) across {} alternatives.**\n", terms.len()),
+        format!(
+            "**Combined: {total} match(es) across {} alternatives.**\n",
+            terms.len()
+        ),
     );
     Ok(parts.join("\n"))
 }
@@ -239,11 +268,14 @@ async fn search_code_once(
     full_sweep: bool,
 ) -> Result<(String, usize)> {
     if !group_path.is_empty() {
-        return search_code_group(client, group_path, query, ref_name, per_page, offset, full_sweep)
-            .await;
+        return search_code_group(
+            client, group_path, query, ref_name, per_page, offset, full_sweep,
+        )
+        .await;
     }
 
-    let results: Vec<Value> = search_project_blobs(client, project_id, query, ref_name, per_page).await;
+    let results: Vec<Value> =
+        search_project_blobs(client, project_id, query, ref_name, per_page).await;
 
     if results.is_empty() {
         return Ok((format!("No results for '{query}' in {project_id}."), 0));
@@ -264,8 +296,16 @@ const BINARY_EXTENSIONS: &[&str] = &[
 
 /// Dependency lockfiles: matches there are almost never what a code search is after.
 const LOCKFILES: &[&str] = &[
-    "bun.lock", "bun.lockb", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock",
-    "composer.lock", "Gemfile.lock", "poetry.lock", "go.sum",
+    "bun.lock",
+    "bun.lockb",
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "Cargo.lock",
+    "composer.lock",
+    "Gemfile.lock",
+    "poetry.lock",
+    "go.sum",
 ];
 
 fn file_name(path: &str) -> &str {
@@ -275,7 +315,9 @@ fn file_name(path: &str) -> &str {
 /// Binary by extension, or by content GitLab returned as text anyway: control bytes or
 /// replacement characters make up more than a tenth of the snippet.
 pub(crate) fn is_binary_hit(path: &str, data: &str) -> bool {
-    let ext = file_name(path).rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
+    let ext = file_name(path)
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase());
     if ext.is_some_and(|e| BINARY_EXTENSIONS.contains(&e.as_str())) {
         return true;
     }
@@ -294,7 +336,10 @@ pub(crate) fn is_lockfile(path: &str) -> bool {
 /// Project search results: source hits first with snippets; lockfile hits listed after
 /// them by path only; binary hits by path only — raw image bytes are noise, not evidence.
 pub(crate) fn render_search_hits(query: &str, project_id: &str, results: &[Value]) -> String {
-    let mut lines = vec![format!("**Search '{query}' in {project_id}: {} results**\n", results.len())];
+    let mut lines = vec![format!(
+        "**Search '{query}' in {project_id}: {} results**\n",
+        results.len()
+    )];
     let mut lockfiles = Vec::new();
     let mut binaries = Vec::new();
     for r in results {
@@ -318,28 +363,34 @@ pub(crate) fn render_search_hits(query: &str, project_id: &str, results: &[Value
         lines.push(format!("```\n{preview}\n```\n"));
     }
     if !lockfiles.is_empty() {
-        lines.push(format!("_Also in lockfiles ({}):_ {}", lockfiles.len(), lockfiles.join(", ")));
+        lines.push(format!(
+            "_Also in lockfiles ({}):_ {}",
+            lockfiles.len(),
+            lockfiles.join(", ")
+        ));
     }
     if !binaries.is_empty() {
         binaries.dedup();
-        lines.push(format!("_Also in binary files ({}), preview omitted:_ {}", binaries.len(), binaries.join(", ")));
+        lines.push(format!(
+            "_Also in binary files ({}), preview omitted:_ {}",
+            binaries.len(),
+            binaries.join(", ")
+        ));
     }
     lines.join("\n")
 }
 
 /// Get project language breakdown.
-pub async fn get_languages(
-    client: &GitLabClient,
-    project_id: &str,
-) -> Result<String> {
+pub async fn get_languages(client: &GitLabClient, project_id: &str) -> Result<String> {
     let encoded = urlencoding::encode(project_id);
 
     let langs: Value = client
         .get(&format!("/projects/{encoded}/languages"), &[])
-        .await
-        ?;
+        .await?;
 
-    let obj = langs.as_object().ok_or(Error::Other("Invalid response".into()))?;
+    let obj = langs
+        .as_object()
+        .ok_or(Error::Other("Invalid response".into()))?;
     if obj.is_empty() {
         return Ok(format!("No language data for {project_id}."));
     }
@@ -374,10 +425,8 @@ pub async fn get_tree(
     let per_page_str = per_page.to_string();
     let recursive_str = if recursive { "true" } else { "false" };
 
-    let mut params: Vec<(&str, &str)> = vec![
-        ("per_page", &per_page_str),
-        ("recursive", recursive_str),
-    ];
+    let mut params: Vec<(&str, &str)> =
+        vec![("per_page", &per_page_str), ("recursive", recursive_str)];
     if !path.is_empty() {
         params.push(("path", path));
     }
@@ -387,8 +436,7 @@ pub async fn get_tree(
 
     let entries: Vec<Value> = client
         .get(&format!("/projects/{encoded}/repository/tree"), &params)
-        .await
-        ?;
+        .await?;
 
     if entries.is_empty() {
         let path_str = if path.is_empty() { "root" } else { path };
@@ -439,8 +487,7 @@ pub async fn compare_branches(
             &format!("/projects/{encoded}/repository/compare"),
             &[("from", from), ("to", to)],
         )
-        .await
-        ?;
+        .await?;
 
     let commits = data["commits"].as_array().map(|a| a.len()).unwrap_or(0);
     let diffs = data["diffs"].as_array().map(|a| a.len()).unwrap_or(0);
@@ -459,20 +506,32 @@ pub async fn compare_branches(
             let mut add: u64 = 0;
             let mut del: u64 = 0;
             for line in diff_text.lines() {
-                if line.starts_with('+') && !line.starts_with("+++") { add += 1; }
-                if line.starts_with('-') && !line.starts_with("---") { del += 1; }
+                if line.starts_with('+') && !line.starts_with("+++") {
+                    add += 1;
+                }
+                if line.starts_with('-') && !line.starts_with("---") {
+                    del += 1;
+                }
             }
             total_add += add;
             total_del += del;
 
-            let status = if is_new { " (new)" } else if is_deleted { " (deleted)" } else { "" };
+            let status = if is_new {
+                " (new)"
+            } else if is_deleted {
+                " (deleted)"
+            } else {
+                ""
+            };
             files.push(format!("  {path}{status} +{add} -{del}"));
         }
     }
 
     let mut lines = vec![
         format!("**Compare {from} → {to}** in {project_id}"),
-        format!("**Commits:** {commits} | **Files:** {diffs} | **Lines:** +{total_add} -{total_del}"),
+        format!(
+            "**Commits:** {commits} | **Files:** {diffs} | **Lines:** +{total_add} -{total_del}"
+        ),
         String::new(),
     ];
 
@@ -524,8 +583,7 @@ pub async fn list_tags(
 
     let tags: Vec<Value> = client
         .get(&format!("/projects/{encoded}/repository/tags"), &params)
-        .await
-        ?;
+        .await?;
 
     if tags.is_empty() {
         return Ok("No tags found.".to_string());
@@ -539,7 +597,11 @@ pub async fn list_tags(
         let date = t["commit"]["created_at"].as_str().unwrap_or("?");
         let date_short = date.get(..10).unwrap_or(date);
 
-        let msg_str = if msg.is_empty() { String::new() } else { format!(" — {msg}") };
+        let msg_str = if msg.is_empty() {
+            String::new()
+        } else {
+            format!(" — {msg}")
+        };
         lines.push(format!("- **{name}** `{sha}` ({date_short}){msg_str}"));
     }
 
@@ -559,8 +621,7 @@ pub async fn get_mr_approvals(
             &format!("/projects/{encoded}/merge_requests/{mr_iid}/approvals"),
             &[],
         )
-        .await
-        ?;
+        .await?;
 
     let approved = data["approved"].as_bool().unwrap_or(false);
     let approvals_required = data["approvals_required"].as_u64().unwrap_or(0);
@@ -636,7 +697,11 @@ pub async fn update_file(
     let encoded_project = urlencoding::encode(project_id);
     let encoded_file = urlencoding::encode(file_path);
 
-    let from_branch = if source_branch.is_empty() { "main" } else { source_branch };
+    let from_branch = if source_branch.is_empty() {
+        "main"
+    } else {
+        source_branch
+    };
 
     // Is this an *empty* repo — no commits, so no default branch yet? Such a repo
     // can't be written the normal way: there is no `main` to branch a feature off,
@@ -674,14 +739,19 @@ pub async fn update_file(
             "actions": [{ "action": "create", "file_path": file_path, "content": content }]
         });
         let result: Value = client
-            .post(&format!("/projects/{encoded_project}/repository/commits"), &payload)
+            .post(
+                &format!("/projects/{encoded_project}/repository/commits"),
+                &payload,
+            )
             .await?;
         let sha = result["id"].as_str().unwrap_or("?");
         let short_sha = sha.get(..8).unwrap_or(sha);
         let web_url = result["web_url"].as_str().unwrap_or("");
 
         let mut lines = vec![
-            format!("**Initialized empty repo** — created `{file_path}` on new default branch `{from_branch}`"),
+            format!(
+                "**Initialized empty repo** — created `{file_path}` on new default branch `{from_branch}`"
+            ),
             format!("**Commit:** `{short_sha}` — {commit_message}"),
         ];
         if !web_url.is_empty() {
@@ -739,7 +809,10 @@ pub async fn update_file(
     }
 
     let result: Value = client
-        .post(&format!("/projects/{encoded_project}/repository/commits"), &payload)
+        .post(
+            &format!("/projects/{encoded_project}/repository/commits"),
+            &payload,
+        )
         .await?;
 
     let sha = result["id"].as_str().unwrap_or("?");
@@ -792,7 +865,6 @@ pub async fn update_file(
     Ok(lines.join("\n"))
 }
 
-
 /// List project environments (deployments).
 pub async fn list_environments(
     client: &GitLabClient,
@@ -823,7 +895,11 @@ pub async fn list_environments(
     let deployments: std::result::Result<Vec<Value>, _> = client
         .get(
             &format!("/projects/{encoded}/deployments"),
-            &[("order_by", "created_at"), ("sort", "desc"), ("per_page", "100")],
+            &[
+                ("order_by", "created_at"),
+                ("sort", "desc"),
+                ("per_page", "100"),
+            ],
         )
         .await;
     if let Ok(list) = deployments {
@@ -863,7 +939,11 @@ pub async fn list_environments(
             format!("`{short_sha}` on `{ref_name}` [{status}] by @{deployer} ({date_short})")
         };
 
-        let url_str = if url.is_empty() { String::new() } else { format!(" — {url}") };
+        let url_str = if url.is_empty() {
+            String::new()
+        } else {
+            format!(" — {url}")
+        };
         lines.push(format!("- **{name}** [{state}]{url_str}"));
         lines.push(format!("  Last deploy: {deploy_info}"));
     }
@@ -872,21 +952,24 @@ pub async fn list_environments(
 }
 
 /// Get project contributor stats (all-time).
-pub async fn get_contributors(
-    client: &GitLabClient,
-    project_id: &str,
-) -> Result<String> {
+pub async fn get_contributors(client: &GitLabClient, project_id: &str) -> Result<String> {
     let encoded = urlencoding::encode(project_id);
 
     let contributors: Vec<Value> = client
-        .get(&format!("/projects/{encoded}/repository/contributors"), &[("order_by", "commits"), ("sort", "desc")])
+        .get(
+            &format!("/projects/{encoded}/repository/contributors"),
+            &[("order_by", "commits"), ("sort", "desc")],
+        )
         .await?;
 
     if contributors.is_empty() {
         return Ok(format!("No contributor data for {project_id}."));
     }
 
-    let total_commits: u64 = contributors.iter().map(|c| c["commits"].as_u64().unwrap_or(0)).sum();
+    let total_commits: u64 = contributors
+        .iter()
+        .map(|c| c["commits"].as_u64().unwrap_or(0))
+        .sum();
 
     // Commits only — no Additions/Deletions columns. GitLab's contributors
     // endpoint reports both as 0 regardless of history, so rendering them
@@ -906,7 +989,11 @@ pub async fn get_contributors(
         let name = c["name"].as_str().unwrap_or("?");
         let email = c["email"].as_str().unwrap_or("?");
         let commits = c["commits"].as_u64().unwrap_or(0);
-        let pct = if total_commits > 0 { commits as f64 / total_commits as f64 * 100.0 } else { 0.0 };
+        let pct = if total_commits > 0 {
+            commits as f64 / total_commits as f64 * 100.0
+        } else {
+            0.0
+        };
 
         lines.push(format!("| {name} ({email}) | {commits} | {pct:.0}% |"));
     }
@@ -924,10 +1011,7 @@ pub async fn get_contributors(
 }
 
 /// Get project-level MR approval rules.
-pub async fn get_approval_rules(
-    client: &GitLabClient,
-    project_id: &str,
-) -> Result<String> {
+pub async fn get_approval_rules(client: &GitLabClient, project_id: &str) -> Result<String> {
     let encoded = urlencoding::encode(project_id);
 
     let rules: Vec<Value> = client
@@ -938,7 +1022,10 @@ pub async fn get_approval_rules(
         return Ok(format!("No approval rules configured for {project_id}."));
     }
 
-    let mut lines = vec![format!("**{project_id} — {} approval rules**\n", rules.len())];
+    let mut lines = vec![format!(
+        "**{project_id} — {} approval rules**\n",
+        rules.len()
+    )];
 
     for rule in &rules {
         let name = rule["name"].as_str().unwrap_or("?");
@@ -955,9 +1042,18 @@ pub async fn get_approval_rules(
             .map(|a| a.iter().filter_map(|v| v["name"].as_str()).collect())
             .unwrap_or_default();
 
-        lines.push(format!("- **{name}** (type: {rule_type}, required: {approvals_required})"));
+        lines.push(format!(
+            "- **{name}** (type: {rule_type}, required: {approvals_required})"
+        ));
         if !eligible.is_empty() {
-            lines.push(format!("  Approvers: {}", eligible.iter().map(|u| format!("@{u}")).collect::<Vec<_>>().join(", ")));
+            lines.push(format!(
+                "  Approvers: {}",
+                eligible
+                    .iter()
+                    .map(|u| format!("@{u}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
         }
         if !groups.is_empty() {
             lines.push(format!("  Groups: {}", groups.join(", ")));
@@ -981,22 +1077,18 @@ pub(crate) fn format_size(bytes: u64) -> String {
 }
 
 /// Get project statistics: file counts by type, languages, binary files, repo size.
-pub async fn get_project_stats(
-    client: &GitLabClient,
-    project_id: &str,
-) -> Result<String> {
+pub async fn get_project_stats(client: &GitLabClient, project_id: &str) -> Result<String> {
     let encoded = urlencoding::encode(project_id);
 
     // Fetch project metadata with statistics
     let project: Value = client
-        .get(
-            &format!("/projects/{encoded}"),
-            &[("statistics", "true")],
-        )
+        .get(&format!("/projects/{encoded}"), &[("statistics", "true")])
         .await?;
 
     let project_name = project["name"].as_str().unwrap_or(project_id);
-    let repo_size = project["statistics"]["repository_size"].as_u64().unwrap_or(0);
+    let repo_size = project["statistics"]["repository_size"]
+        .as_u64()
+        .unwrap_or(0);
     let storage_size = project["statistics"]["storage_size"].as_u64().unwrap_or(0);
 
     // Fetch tree recursively
@@ -1008,34 +1100,82 @@ pub async fn get_project_stats(
         )
         .await?;
 
-    let total_files = entries.iter().filter(|e| e["type"].as_str() == Some("blob")).count();
+    let total_files = entries
+        .iter()
+        .filter(|e| e["type"].as_str() == Some("blob"))
+        .count();
 
     // Categorize files
     let source_extensions: &[&str] = &[
-        ".swift", ".kt", ".kts", ".java", ".go", ".rs", ".py", ".rb",
-        ".php", ".ts", ".tsx", ".js", ".jsx", ".vue", ".c", ".cpp", ".h",
-        ".m", ".mm", ".cs", ".sql", ".sh", ".bash", ".r", ".scala",
+        ".swift", ".kt", ".kts", ".java", ".go", ".rs", ".py", ".rb", ".php", ".ts", ".tsx", ".js",
+        ".jsx", ".vue", ".c", ".cpp", ".h", ".m", ".mm", ".cs", ".sql", ".sh", ".bash", ".r",
+        ".scala",
     ];
     let config_extensions: &[&str] = &[
-        ".json", ".yaml", ".yml", ".toml", ".xml", ".plist", ".properties",
-        ".env", ".ini", ".cfg", ".conf", ".gradle", ".tf", ".tfvars", ".hcl",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".xml",
+        ".plist",
+        ".properties",
+        ".env",
+        ".ini",
+        ".cfg",
+        ".conf",
+        ".gradle",
+        ".tf",
+        ".tfvars",
+        ".hcl",
     ];
     let doc_extensions: &[&str] = &[
         ".md", ".txt", ".rst", ".adoc", ".html", ".css", ".scss", ".less",
     ];
     let binary_extensions: &[&str] = &[
-        ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".bmp", ".tiff",
-        ".woff", ".woff2", ".ttf", ".eot", ".otf",
-        ".zip", ".tar", ".gz", ".rar", ".7z",
-        ".pdf", ".doc", ".docx", ".xls", ".xlsx",
-        ".mp3", ".mp4", ".wav", ".avi", ".mov",
-        ".o", ".obj", ".exe", ".dll", ".class", ".jar",
-        ".a", ".dylib", ".so", ".framework",
-        ".dat", ".bin", ".db", ".sqlite",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".ico",
+        ".svg",
+        ".bmp",
+        ".tiff",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".eot",
+        ".otf",
+        ".zip",
+        ".tar",
+        ".gz",
+        ".rar",
+        ".7z",
+        ".pdf",
+        ".doc",
+        ".docx",
+        ".xls",
+        ".xlsx",
+        ".mp3",
+        ".mp4",
+        ".wav",
+        ".avi",
+        ".mov",
+        ".o",
+        ".obj",
+        ".exe",
+        ".dll",
+        ".class",
+        ".jar",
+        ".a",
+        ".dylib",
+        ".so",
+        ".framework",
+        ".dat",
+        ".bin",
+        ".db",
+        ".sqlite",
     ];
-    let binary_dirs: &[&str] = &[
-        ".xcframework/", ".framework/",
-    ];
+    let binary_dirs: &[&str] = &[".xcframework/", ".framework/"];
 
     let mut source_count = 0usize;
     let mut config_count = 0usize;
@@ -1167,7 +1307,9 @@ pub async fn get_deploy_frequency(
         .await?;
 
     if deployments.is_empty() {
-        return Ok(format!("No successful deployments in the last {days} days for {project_id}."));
+        return Ok(format!(
+            "No successful deployments in the last {days} days for {project_id}."
+        ));
     }
 
     // Group by day and environment
@@ -1180,7 +1322,11 @@ pub async fn get_deploy_frequency(
         let day = created.get(..10).unwrap_or(created);
         let deployer = d["user"]["username"].as_str().unwrap_or("?").to_string();
 
-        *by_env.entry(env_name).or_default().entry(day.to_string()).or_default() += 1;
+        *by_env
+            .entry(env_name)
+            .or_default()
+            .entry(day.to_string())
+            .or_default() += 1;
         *deployers.entry(deployer).or_default() += 1;
     }
 
@@ -1201,7 +1347,9 @@ pub async fn get_deploy_frequency(
     for (env, days_map) in &by_env {
         let env_total: u32 = days_map.values().sum();
         let env_freq = env_total as f64 / days as f64;
-        lines.push(format!("- **{env}**: {env_total} deploys ({env_freq:.1}/day)"));
+        lines.push(format!(
+            "- **{env}**: {env_total} deploys ({env_freq:.1}/day)"
+        ));
     }
 
     // Per-deployer
@@ -1300,29 +1448,40 @@ mod tests {
         assert!(with.contains(&("ref", "release/1.2".to_string())));
         assert!(with.contains(&("scope", "blobs".to_string())));
         let without = super::blob_search_params("needle", "", 20);
-        assert!(without.iter().all(|(k, _)| *k != "ref"), "no ref means the default branch");
+        assert!(
+            without.iter().all(|(k, _)| *k != "ref"),
+            "no ref means the default branch"
+        );
     }
 
     #[test]
     fn search_code_params_accept_ref_name() {
-        let p: crate::params::SearchCodeParams =
-            serde_json::from_value(serde_json::json!({"query": "x", "project_id": "g/p", "ref_name": "feat/a"})).unwrap();
+        let p: crate::params::SearchCodeParams = serde_json::from_value(
+            serde_json::json!({"query": "x", "project_id": "g/p", "ref_name": "feat/a"}),
+        )
+        .unwrap();
         assert_eq!(p.ref_name.as_deref(), Some("feat/a"));
     }
 
     #[test]
     fn search_hits_put_source_first_and_collapse_binaries_and_lockfiles() {
         use serde_json::json;
-        let out = super::render_search_hits("needle", "g/p", &[
-            json!({"path": "assets/icon.webp", "startline": 1, "data": "RIFF\u{FFFD}\u{FFFD}WEBPVP8"}),
-            json!({"path": "bun.lock", "startline": 62, "data": "\"needle\": \"1.0\""}),
-            json!({"path": "src/app.ts", "startline": 7, "data": "const needle = 1;"}),
-            json!({"path": "data/blob.dat", "startline": 1, "data": "\u{1}\u{2}\u{3}ab"}),
-        ]);
+        let out = super::render_search_hits(
+            "needle",
+            "g/p",
+            &[
+                json!({"path": "assets/icon.webp", "startline": 1, "data": "RIFF\u{FFFD}\u{FFFD}WEBPVP8"}),
+                json!({"path": "bun.lock", "startline": 62, "data": "\"needle\": \"1.0\""}),
+                json!({"path": "src/app.ts", "startline": 7, "data": "const needle = 1;"}),
+                json!({"path": "data/blob.dat", "startline": 1, "data": "\u{1}\u{2}\u{3}ab"}),
+            ],
+        );
         assert!(out.contains("4 results"));
         assert!(out.contains("**src/app.ts:7**") && out.contains("const needle = 1;"));
         assert!(out.contains("_Also in lockfiles (1):_ bun.lock:62"));
-        assert!(out.contains("_Also in binary files (2), preview omitted:_ assets/icon.webp, data/blob.dat"));
+        assert!(out.contains(
+            "_Also in binary files (2), preview omitted:_ assets/icon.webp, data/blob.dat"
+        ));
         assert!(!out.contains("WEBPVP8"), "no raw bytes in the output");
         assert!(out.find("src/app.ts").unwrap() < out.find("bun.lock").unwrap());
     }
@@ -1330,7 +1489,10 @@ mod tests {
     #[test]
     fn binary_detection_by_extension_and_content() {
         assert!(super::is_binary_hit("a/B.PNG", "text"));
-        assert!(!super::is_binary_hit("a/b.rs", "fn main() {}\n\tlet x = 1;"));
+        assert!(!super::is_binary_hit(
+            "a/b.rs",
+            "fn main() {}\n\tlet x = 1;"
+        ));
         assert!(super::is_binary_hit("a/b", "\u{0}\u{0}\u{0}x"));
         assert!(!super::is_binary_hit("a/b.txt", ""));
         assert!(super::is_lockfile("web/package-lock.json") && !super::is_lockfile("src/lock.rs"));

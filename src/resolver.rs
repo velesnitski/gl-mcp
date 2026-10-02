@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 
 use crate::client::GitLabClient;
-use crate::error::{Error, Result};
 use crate::config::Config;
+use crate::error::{Error, Result};
 
 /// Resolves which GitLab instance to use for a given request.
 pub struct Resolver {
@@ -23,8 +23,12 @@ impl Resolver {
         let mut clients = HashMap::new();
         for inst in &config.instances {
             match GitLabClient::new(inst) {
-                Ok(client) => { clients.insert(inst.name.clone(), client); }
-                Err(e) => { eprintln!("Warning: skipping instance '{}': {e}", inst.name); }
+                Ok(client) => {
+                    clients.insert(inst.name.clone(), client);
+                }
+                Err(e) => {
+                    eprintln!("Warning: skipping instance '{}': {e}", inst.name);
+                }
             }
         }
 

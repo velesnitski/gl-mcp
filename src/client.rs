@@ -35,7 +35,10 @@ pub struct GitLabClient {
 impl GitLabClient {
     pub fn new(instance: &GitLabInstance) -> Result<Self> {
         let token_header = instance.token.parse().map_err(|_| {
-            Error::Config(format!("Invalid token for instance '{}': not a valid HTTP header value", instance.name))
+            Error::Config(format!(
+                "Invalid token for instance '{}': not a valid HTTP header value",
+                instance.name
+            ))
         })?;
 
         let http = Client::builder()
@@ -47,7 +50,12 @@ impl GitLabClient {
             .timeout(std::time::Duration::from_secs(30))
             .pool_max_idle_per_host(10)
             .build()
-            .map_err(|e| Error::Config(format!("Failed to build HTTP client for '{}': {e}", instance.name)))?;
+            .map_err(|e| {
+                Error::Config(format!(
+                    "Failed to build HTTP client for '{}': {e}",
+                    instance.name
+                ))
+            })?;
 
         Ok(Self {
             name: instance.name.clone(),
@@ -99,7 +107,9 @@ impl GitLabClient {
     /// GET request, returning deserialized JSON. Retries on HTTP 429.
     pub async fn get<T: DeserializeOwned>(&self, path: &str, params: &[(&str, &str)]) -> Result<T> {
         let url = format!("{}{}", self.base_url, path);
-        let body = self.send_with_retry(path, |h| h.get(&url).query(params)).await?;
+        let body = self
+            .send_with_retry(path, |h| h.get(&url).query(params))
+            .await?;
         Self::parse_json(&body)
     }
 
@@ -108,7 +118,8 @@ impl GitLabClient {
     /// job trace/log. Retries on HTTP 429.
     pub async fn get_text(&self, path: &str, params: &[(&str, &str)]) -> Result<String> {
         let url = format!("{}{}", self.base_url, path);
-        self.send_with_retry(path, |h| h.get(&url).query(params)).await
+        self.send_with_retry(path, |h| h.get(&url).query(params))
+            .await
     }
 
     /// GET request with TTL-based caching. Use for frequently repeated lookups.
@@ -131,7 +142,9 @@ impl GitLabClient {
 
         // Cache miss — fetch from API
         let url = format!("{}{}", self.base_url, path);
-        let body = self.send_with_retry(path, |h| h.get(&url).query(params)).await?;
+        let body = self
+            .send_with_retry(path, |h| h.get(&url).query(params))
+            .await?;
 
         // Store in cache
         {
@@ -149,14 +162,18 @@ impl GitLabClient {
     /// POST request with JSON body. Retries on HTTP 429.
     pub async fn post<T: DeserializeOwned>(&self, path: &str, body: &Value) -> Result<T> {
         let url = format!("{}{}", self.base_url, path);
-        let text = self.send_with_retry(path, |h| h.post(&url).json(body)).await?;
+        let text = self
+            .send_with_retry(path, |h| h.post(&url).json(body))
+            .await?;
         Self::parse_json(&text)
     }
 
     /// PUT request with JSON body. Retries on HTTP 429.
     pub async fn put<T: DeserializeOwned>(&self, path: &str, body: &Value) -> Result<T> {
         let url = format!("{}{}", self.base_url, path);
-        let text = self.send_with_retry(path, |h| h.put(&url).json(body)).await?;
+        let text = self
+            .send_with_retry(path, |h| h.put(&url).json(body))
+            .await?;
         Self::parse_json(&text)
     }
 
@@ -188,7 +205,11 @@ impl GitLabClient {
                     .map(|m| m.to_string())
             })
             .unwrap_or_else(|| {
-                if body.len() > 200 { body.chars().take(200).collect() } else { body }
+                if body.len() > 200 {
+                    body.chars().take(200).collect()
+                } else {
+                    body
+                }
             });
 
         error!(

@@ -1,9 +1,9 @@
 //! GitLab CI/CD pipeline tools.
 
-use std::fmt::Write as _;
 use crate::client::GitLabClient;
 use crate::error::{Error, Result, ResultExt};
 use serde_json::Value;
+use std::fmt::Write as _;
 
 /// List pipelines for a project.
 pub async fn list_pipelines(
@@ -15,10 +15,7 @@ pub async fn list_pipelines(
     per_page: u32,
 ) -> Result<String> {
     let per_page_str = per_page.to_string();
-    let path = format!(
-        "/projects/{}/pipelines",
-        urlencoding::encode(project_id)
-    );
+    let path = format!("/projects/{}/pipelines", urlencoding::encode(project_id));
 
     let mut params: Vec<(&str, &str)> = vec![
         ("per_page", &per_page_str),
@@ -35,10 +32,7 @@ pub async fn list_pipelines(
         params.push(("source", source));
     }
 
-    let pipelines: Vec<Value> = client
-        .get(&path, &params)
-        .await
-        ?;
+    let pipelines: Vec<Value> = client.get(&path, &params).await?;
 
     if pipelines.is_empty() {
         return Ok("No pipelines found.".to_string());
@@ -204,8 +198,12 @@ fn failure_class(signature: &str, failure_reason: &str, log: &str) -> &'static s
 
     // State drift: the provider's view and reality disagree.
     const STATE: &[&str] = &[
-        "already exists", "already managed", "duplicate key", "state lock",
-        "resource already", "currently in use",
+        "already exists",
+        "already managed",
+        "duplicate key",
+        "state lock",
+        "resource already",
+        "currently in use",
     ];
     if STATE.iter().any(|m| hay.contains(m)) {
         return "state";
@@ -233,15 +231,40 @@ fn failure_class(signature: &str, failure_reason: &str, log: &str) -> &'static s
         }
     }
     const TRANSIENT: &[&str] = &[
-        "timeout", "timed out", "connection reset", "temporarily unavailable", "rate limit",
-        "too many requests", "tls handshake", "no space left", "i/o timeout", "unexpected eof",
-        "could not resolve host", "connection refused", "deadline exceeded",
+        "timeout",
+        "timed out",
+        "connection reset",
+        "temporarily unavailable",
+        "rate limit",
+        "too many requests",
+        "tls handshake",
+        "no space left",
+        "i/o timeout",
+        "unexpected eof",
+        "could not resolve host",
+        "connection refused",
+        "deadline exceeded",
     ];
     const CONFIG: &[&str] = &[
-        "missing", "must be set", "not found", "no such file", "invalid", "unauthorized",
-        "forbidden", "permission denied", "undefined", "undeclared", "does not exist",
-        "unknown variable", "parse error", "syntax", "already exists", "conflict",
-        "not set", "required", "unsupported",
+        "missing",
+        "must be set",
+        "not found",
+        "no such file",
+        "invalid",
+        "unauthorized",
+        "forbidden",
+        "permission denied",
+        "undefined",
+        "undeclared",
+        "does not exist",
+        "unknown variable",
+        "parse error",
+        "syntax",
+        "already exists",
+        "conflict",
+        "not set",
+        "required",
+        "unsupported",
     ];
     if TRANSIENT.iter().any(|m| s.contains(m)) {
         return "transient";
@@ -341,9 +364,8 @@ pub async fn analyze_pipeline_failures(
             for p in &list {
                 let source = p["source"].as_str().unwrap_or("unknown").to_string();
                 let status = p["status"].as_str().unwrap_or("?").to_string();
-                let wall = pipeline_end_ts(p, &status).and_then(|end| {
-                    wall_clock_secs(p["created_at"].as_str().unwrap_or(""), end)
-                });
+                let wall = pipeline_end_ts(p, &status)
+                    .and_then(|end| wall_clock_secs(p["created_at"].as_str().unwrap_or(""), end));
                 runs.push(Run {
                     project: path.clone(),
                     project_id: pid,
@@ -388,7 +410,13 @@ pub async fn analyze_pipeline_failures(
     let mut durs: Vec<f64> = runs
         .iter()
         .filter(|r| r.automated && r.status == "success")
-        .filter_map(|r| r.wall.or(if r.duration > 0.0 { Some(r.duration) } else { None }))
+        .filter_map(|r| {
+            r.wall.or(if r.duration > 0.0 {
+                Some(r.duration)
+            } else {
+                None
+            })
+        })
         .collect();
     durs.sort_by(|a, b| a.total_cmp(b));
     // Bridge/child pipelines report a null duration, so this can legitimately be
@@ -398,7 +426,11 @@ pub async fn analyze_pipeline_failures(
         None => "n/a".to_string(),
     };
 
-    let scope = if group_path.is_empty() { project_id } else { group_path };
+    let scope = if group_path.is_empty() {
+        project_id
+    } else {
+        group_path
+    };
     let mut out = vec![
         format!("# Pipeline failure analysis: `{scope}` (last {days}d)"),
         String::new(),
@@ -473,8 +505,14 @@ pub async fn analyze_pipeline_failures(
                     );
                     // Keep a bounded tail for classification — the decisive
                     // evidence sits below the Error: header that names the cluster.
-                    let tail: String = log.chars().rev().take(4000).collect::<String>()
-                        .chars().rev().collect();
+                    let tail: String = log
+                        .chars()
+                        .rev()
+                        .take(4000)
+                        .collect::<String>()
+                        .chars()
+                        .rev()
+                        .collect();
                     (reason.clone(), error_signature(&log), tail)
                 }
                 None => (String::new(), None, String::new()),
@@ -490,9 +528,11 @@ pub async fn analyze_pipeline_failures(
                 }
             });
             let class = failure_class(&signature, &reason, &log_tail).to_string();
-            let e = clusters
-                .entry((class, signature))
-                .or_insert((0, r.project.clone(), r.web_url.clone()));
+            let e = clusters.entry((class, signature)).or_insert((
+                0,
+                r.project.clone(),
+                r.web_url.clone(),
+            ));
             e.0 += 1;
         }
     }
@@ -505,7 +545,7 @@ pub async fn analyze_pipeline_failures(
     out.push("| # | Class | Root cause | Example |".to_string());
     out.push("|---|-------|-----------|---------|".to_string());
     let mut rows: Vec<_> = clusters.iter().collect();
-    rows.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+    rows.sort_by(|a, b| b.1.0.cmp(&a.1.0));
     for ((class, sig), (count, project, url)) in &rows {
         let icon = match class.as_str() {
             "transient" => "🔁",
@@ -611,8 +651,24 @@ fn human_secs(s: f64) -> String {
 /// Key substrings whose values are **never** rendered. Checked first, so a key
 /// like `<vendor>_CLIENT_ID` is denied even though it ends in `_ID`.
 const SECRETISH: &[&str] = &[
-    "SECRET", "TOKEN", "PASSWORD", "PASSWD", "PASS", "KEY", "CREDENTIAL", "PRIVATE", "AUTH",
-    "CERT", "CRT", "PEM", "SALT", "SIGNATURE", "WEBHOOK", "DSN", "CLIENT_ID", "SESSION",
+    "SECRET",
+    "TOKEN",
+    "PASSWORD",
+    "PASSWD",
+    "PASS",
+    "KEY",
+    "CREDENTIAL",
+    "PRIVATE",
+    "AUTH",
+    "CERT",
+    "CRT",
+    "PEM",
+    "SALT",
+    "SIGNATURE",
+    "WEBHOOK",
+    "DSN",
+    "CLIENT_ID",
+    "SESSION",
     "COOKIE",
 ];
 
@@ -751,7 +807,9 @@ pub async fn get_pipeline(
         }
         // Long idle with little execution is the signature of runner starvation.
         if wall > 300.0 && duration > 0.0 && wall > duration * 10.0 {
-            let _ = write!(line, " ⚠️ only {duration:.0}s executing — the rest was waiting"
+            let _ = write!(
+                line,
+                " ⚠️ only {duration:.0}s executing — the rest was waiting"
             );
         }
         parts.push(line);
@@ -765,10 +823,7 @@ pub async fn get_pipeline(
 
     // Fetch jobs
     let jobs_path = format!("/projects/{encoded}/pipelines/{pipeline_id}/jobs");
-    let jobs: Vec<Value> = client
-        .get(&jobs_path, &[("per_page", "100")])
-        .await
-        ?;
+    let jobs: Vec<Value> = client.get(&jobs_path, &[("per_page", "100")]).await?;
 
     if !jobs.is_empty() {
         // Group by stage
@@ -802,7 +857,8 @@ pub async fn get_pipeline(
                 };
 
                 // Include the numeric job id so get_job_log can be called directly.
-                let mut line = format!("- {icon} **{name}** [{status}] (job {job_id}) {duration:.0}s");
+                let mut line =
+                    format!("- {icon} **{name}** [{status}] (job {job_id}) {duration:.0}s");
                 if status == "failed" {
                     if let Some(reason) = job["failure_reason"].as_str() {
                         if !reason.is_empty() {
@@ -819,11 +875,19 @@ pub async fn get_pipeline(
         let pending: Vec<(&str, Vec<String>)> = jobs
             .iter()
             .filter(|j| j["status"].as_str() == Some("pending"))
-            .map(|j| (j["name"].as_str().unwrap_or("?"), crate::tools::projects::str_list(&j["tag_list"])))
+            .map(|j| {
+                (
+                    j["name"].as_str().unwrap_or("?"),
+                    crate::tools::projects::str_list(&j["tag_list"]),
+                )
+            })
             .collect();
         if !pending.is_empty() {
             let runners: Result<Vec<Value>> = client
-                .get(&format!("/projects/{encoded}/runners"), &[("per_page", "100")])
+                .get(
+                    &format!("/projects/{encoded}/runners"),
+                    &[("per_page", "100")],
+                )
                 .await;
             parts.extend(render_runner_check(&pending, runners.ok().as_deref()));
         }
@@ -896,9 +960,15 @@ pub async fn get_pipeline(
 
 /// Runner diagnosis for pending jobs. `None` runners means the list could not be read
 /// (it needs Maintainer) — reported as unknown, never as "no runners".
-pub(crate) fn render_runner_check(pending: &[(&str, Vec<String>)], runners: Option<&[Value]>) -> Vec<String> {
+pub(crate) fn render_runner_check(
+    pending: &[(&str, Vec<String>)],
+    runners: Option<&[Value]>,
+) -> Vec<String> {
     use crate::tools::projects::{runner_facts, runner_verdict};
-    let mut out = vec![String::new(), format!("## Pending jobs — runner check ({})", pending.len())];
+    let mut out = vec![
+        String::new(),
+        format!("## Pending jobs — runner check ({})", pending.len()),
+    ];
     let Some(raw) = runners else {
         out.push("_Runner list unavailable (needs Maintainer on the project) — cannot tell queued from unrunnable._".into());
         return out;
@@ -906,9 +976,20 @@ pub(crate) fn render_runner_check(pending: &[(&str, Vec<String>)], runners: Opti
     let facts = runner_facts(raw);
     for (name, tags) in pending {
         let verdict = runner_verdict(&facts, tags);
-        let icon = if verdict == crate::tools::projects::RunnerVerdict::Eligible { "⏳" } else { "❌" };
-        let tag_str = if tags.is_empty() { "untagged".to_string() } else { format!("tags `{}`", tags.join("`, `")) };
-        out.push(format!("- {icon} **{name}** ({tag_str}): {}", verdict.pending_note()));
+        let icon = if verdict == crate::tools::projects::RunnerVerdict::Eligible {
+            "⏳"
+        } else {
+            "❌"
+        };
+        let tag_str = if tags.is_empty() {
+            "untagged".to_string()
+        } else {
+            format!("tags `{}`", tags.join("`, `"))
+        };
+        out.push(format!(
+            "- {icon} **{name}** ({tag_str}): {}",
+            verdict.pending_note()
+        ));
     }
     out
 }
@@ -948,7 +1029,11 @@ fn strip_ansi(s: &str) -> String {
 ///
 /// Returns the total number of matches alongside the kept ones, so a truncated
 /// result can say how much it left out instead of looking complete.
-pub(crate) fn grep_lines<'a>(log: &'a str, re: &regex::Regex, limit: usize) -> (usize, Vec<(usize, &'a str)>) {
+pub(crate) fn grep_lines<'a>(
+    log: &'a str,
+    re: &regex::Regex,
+    limit: usize,
+) -> (usize, Vec<(usize, &'a str)>) {
     let hits: Vec<(usize, &str)> = log
         .lines()
         .enumerate()
@@ -972,8 +1057,7 @@ pub async fn get_job_log(
     // Get job metadata first
     let job: serde_json::Value = client
         .get(&format!("/projects/{encoded}/jobs/{job_id}"), &[])
-        .await
-        ?;
+        .await?;
 
     let name = job["name"].as_str().unwrap_or("?");
     let status = job["status"].as_str().unwrap_or("?");
@@ -981,7 +1065,9 @@ pub async fn get_job_log(
     let duration = job["duration"].as_f64().unwrap_or(0.0);
     let failure_reason = job["failure_reason"].as_str().unwrap_or("");
     let meta = if status == "failed" && !failure_reason.is_empty() {
-        format!("**Stage:** {stage} | **Status:** {status} ({failure_reason}) | **Duration:** {duration:.0}s")
+        format!(
+            "**Stage:** {stage} | **Status:** {status} ({failure_reason}) | **Duration:** {duration:.0}s"
+        )
     } else {
         format!("**Stage:** {stage} | **Status:** {status} | **Duration:** {duration:.0}s")
     };
@@ -1009,7 +1095,11 @@ pub async fn get_job_log(
             .build()
         {
             Ok(re) => re,
-            Err(e) => return Err(Error::user_input(format!("invalid pattern `{pattern}`: {e}"))),
+            Err(e) => {
+                return Err(Error::user_input(format!(
+                    "invalid pattern `{pattern}`: {e}"
+                )));
+            }
         };
         let total_lines = log_text.lines().count();
         let (total, hits) = grep_lines(&log_text, &re, tail);
@@ -1019,11 +1109,19 @@ pub async fn get_job_log(
             ));
         }
         let note = if hits.len() < total {
-            format!("*`{pattern}`: {total} matching lines of {total_lines}, showing last {}*", hits.len())
+            format!(
+                "*`{pattern}`: {total} matching lines of {total_lines}, showing last {}*",
+                hits.len()
+            )
         } else {
             format!("*`{pattern}`: {total} matching lines of {total_lines}*")
         };
-        let mut parts = vec![format!("## Job #{job_id}: {name}"), meta, note, String::new()];
+        let mut parts = vec![
+            format!("## Job #{job_id}: {name}"),
+            meta,
+            note,
+            String::new(),
+        ];
         parts.push("```".to_string());
         for (n, l) in hits {
             parts.push(format!("{n}: {l}"));
@@ -1034,13 +1132,14 @@ pub async fn get_job_log(
 
     // Tail: take last N lines
     let lines: Vec<&str> = log_text.lines().collect();
-    let start = if lines.len() > tail { lines.len() - tail } else { 0 };
+    let start = if lines.len() > tail {
+        lines.len() - tail
+    } else {
+        0
+    };
     let tail_lines = &lines[start..];
 
-    let mut parts = vec![
-        format!("## Job #{job_id}: {name}"),
-        meta,
-    ];
+    let mut parts = vec![format!("## Job #{job_id}: {name}"), meta];
 
     if start > 0 {
         parts.push(format!("*...{start} lines skipped, showing last {tail}*"));
@@ -1079,7 +1178,9 @@ pub async fn create_pipeline_schedule(
         "cron_timezone": if cron_timezone.is_empty() { "UTC" } else { cron_timezone },
         "active": active,
     });
-    let s: Value = client.post(&format!("/projects/{enc}/pipeline_schedules"), &body).await?;
+    let s: Value = client
+        .post(&format!("/projects/{enc}/pipeline_schedules"), &body)
+        .await?;
 
     let id = s["id"].as_u64().unwrap_or(0);
     let next = s["next_run_at"].as_str().unwrap_or("?");
@@ -1110,7 +1211,12 @@ fn validate_cron(cron: &str, verb: &str) -> Result<()> {
 
 /// Refuse a ref that does not resolve: GitLab accepts a schedule on it and then never
 /// fires it. The commits endpoint takes a branch, tag or SHA, so one call covers them.
-async fn ensure_ref_resolves(client: &GitLabClient, project_id: &str, ref_name: &str, verb: &str) -> Result<()> {
+async fn ensure_ref_resolves(
+    client: &GitLabClient,
+    project_id: &str,
+    ref_name: &str,
+    verb: &str,
+) -> Result<()> {
     let path = format!(
         "/projects/{}/repository/commits/{}",
         urlencoding::encode(project_id),
@@ -1128,7 +1234,10 @@ async fn ensure_ref_resolves(client: &GitLabClient, project_id: &str, ref_name: 
 pub async fn list_pipeline_schedules(client: &GitLabClient, project_id: &str) -> Result<String> {
     let enc = urlencoding::encode(project_id);
     let schedules: Vec<Value> = client
-        .get(&format!("/projects/{enc}/pipeline_schedules"), &[("per_page", "100")])
+        .get(
+            &format!("/projects/{enc}/pipeline_schedules"),
+            &[("per_page", "100")],
+        )
         .await?;
     Ok(render_schedules(project_id, &schedules))
 }
@@ -1143,7 +1252,10 @@ pub(crate) fn render_schedules(project_id: &str, schedules: &[Value]) -> String 
         return format!("No pipeline schedules on **{project_id}**.");
     }
     let mut lines = vec![
-        format!("**Pipeline schedules on {project_id}: {}**\n", schedules.len()),
+        format!(
+            "**Pipeline schedules on {project_id}: {}**\n",
+            schedules.len()
+        ),
         "| ID | Description | Ref | Cron | Next run | Owner | State |".to_string(),
         "|----|-------------|-----|------|----------|-------|-------|".to_string(),
     ];
@@ -1151,7 +1263,11 @@ pub(crate) fn render_schedules(project_id: &str, schedules: &[Value]) -> String 
         let owner = &sc["owner"];
         let owner_name = owner["username"].as_str();
         let owner_state = owner["state"].as_str().unwrap_or("active");
-        let state = match (sc["active"].as_bool().unwrap_or(false), owner_name, owner_state) {
+        let state = match (
+            sc["active"].as_bool().unwrap_or(false),
+            owner_name,
+            owner_state,
+        ) {
             (false, _, _) => "inactive".to_string(),
             (true, None, _) => "⚠️ no owner — will not run".to_string(),
             (true, Some(_), "active") => "active".to_string(),
@@ -1209,7 +1325,10 @@ pub async fn update_pipeline_schedule(
     let changed: Vec<String> = body.keys().cloned().collect();
     let enc = urlencoding::encode(project_id);
     let sc: Value = client
-        .put(&format!("/projects/{enc}/pipeline_schedules/{schedule_id}"), &Value::Object(body))
+        .put(
+            &format!("/projects/{enc}/pipeline_schedules/{schedule_id}"),
+            &Value::Object(body),
+        )
         .await?;
     Ok(format!(
         "Schedule **{schedule_id}** on **{project_id}** updated ({}).\n\n{}",
@@ -1219,10 +1338,18 @@ pub async fn update_pipeline_schedule(
 }
 
 /// Delete a pipeline schedule.
-pub async fn delete_pipeline_schedule(client: &GitLabClient, project_id: &str, schedule_id: u64) -> Result<String> {
+pub async fn delete_pipeline_schedule(
+    client: &GitLabClient,
+    project_id: &str,
+    schedule_id: u64,
+) -> Result<String> {
     let enc = urlencoding::encode(project_id);
-    client.delete(&format!("/projects/{enc}/pipeline_schedules/{schedule_id}")).await?;
-    Ok(format!("Schedule **{schedule_id}** deleted from **{project_id}**."))
+    client
+        .delete(&format!("/projects/{enc}/pipeline_schedules/{schedule_id}"))
+        .await?;
+    Ok(format!(
+        "Schedule **{schedule_id}** deleted from **{project_id}**."
+    ))
 }
 
 /// Create or update a variable on a pipeline schedule. The value is never echoed back.
@@ -1247,14 +1374,19 @@ pub async fn set_pipeline_schedule_variable(
     });
     let verb = if exists {
         let _: Value = client
-            .put(&format!("{base}/variables/{}", urlencoding::encode(key)), &body)
+            .put(
+                &format!("{base}/variables/{}", urlencoding::encode(key)),
+                &body,
+            )
             .await?;
         "updated"
     } else {
         let _: Value = client.post(&format!("{base}/variables"), &body).await?;
         "created"
     };
-    Ok(format!("Variable `{key}` {verb} on schedule **{schedule_id}** ({project_id}). Value not shown."))
+    Ok(format!(
+        "Variable `{key}` {verb} on schedule **{schedule_id}** ({project_id}). Value not shown."
+    ))
 }
 
 /// Delete a variable from a pipeline schedule.
@@ -1271,7 +1403,9 @@ pub async fn delete_pipeline_schedule_variable(
             urlencoding::encode(key)
         ))
         .await?;
-    Ok(format!("Variable `{key}` deleted from schedule **{schedule_id}** ({project_id})."))
+    Ok(format!(
+        "Variable `{key}` deleted from schedule **{schedule_id}** ({project_id})."
+    ))
 }
 
 /// Run a pipeline schedule immediately.
@@ -1307,15 +1441,16 @@ pub async fn get_mr_pipelines(
         mr_iid
     );
 
-    let pipelines: Vec<Value> = client
-        .get(&path, &[])
-        .await?;
+    let pipelines: Vec<Value> = client.get(&path, &[]).await?;
 
     if pipelines.is_empty() {
         return Ok(format!("No pipelines found for MR !{mr_iid}."));
     }
 
-    let mut lines = vec![format!("**MR !{mr_iid} — {} pipelines**\n", pipelines.len())];
+    let mut lines = vec![format!(
+        "**MR !{mr_iid} — {} pipelines**\n",
+        pipelines.len()
+    )];
 
     for p in &pipelines {
         let id = p["id"].as_u64().unwrap_or(0);
@@ -1354,8 +1489,7 @@ pub async fn retry_pipeline(
             &format!("/projects/{encoded}/pipelines/{pipeline_id}/retry"),
             &serde_json::json!({}),
         )
-        .await
-        ?;
+        .await?;
 
     let status = p["status"].as_str().unwrap_or("?");
     let web_url = p["web_url"].as_str().unwrap_or("");
@@ -1376,11 +1510,12 @@ pub async fn cancel_pipeline(
             &format!("/projects/{encoded}/pipelines/{pipeline_id}/cancel"),
             &serde_json::json!({}),
         )
-        .await
-        ?;
+        .await?;
 
     let status = p["status"].as_str().unwrap_or("?");
-    Ok(format!("Pipeline #{pipeline_id} canceled. **Status:** {status}"))
+    Ok(format!(
+        "Pipeline #{pipeline_id} canceled. **Status:** {status}"
+    ))
 }
 
 /// Create a new CI/CD variable for a project. NEVER echoes the value back.
@@ -1402,10 +1537,7 @@ pub async fn set_ci_variable(
         )));
     }
 
-    let path = format!(
-        "/projects/{}/variables",
-        urlencoding::encode(project_id)
-    );
+    let path = format!("/projects/{}/variables", urlencoding::encode(project_id));
 
     let body = serde_json::json!({
         "key": key,
@@ -1491,18 +1623,10 @@ pub async fn delete_ci_variable(
 }
 
 /// Get CI/CD variables for a project (keys and metadata only, never values).
-pub async fn get_ci_variables(
-    client: &GitLabClient,
-    project_id: &str,
-) -> Result<String> {
-    let path = format!(
-        "/projects/{}/variables",
-        urlencoding::encode(project_id)
-    );
+pub async fn get_ci_variables(client: &GitLabClient, project_id: &str) -> Result<String> {
+    let path = format!("/projects/{}/variables", urlencoding::encode(project_id));
 
-    let variables: Vec<Value> = client
-        .get(&path, &[("per_page", "100")])
-        .await?;
+    let variables: Vec<Value> = client.get(&path, &[("per_page", "100")]).await?;
 
     if variables.is_empty() {
         return Ok("No CI/CD variables found.".to_string());
@@ -1514,8 +1638,16 @@ pub async fn get_ci_variables(
 
     for v in &variables {
         let key = v["key"].as_str().unwrap_or("?");
-        let masked = if v["masked"].as_bool().unwrap_or(false) { "yes" } else { "no" };
-        let protected = if v["protected"].as_bool().unwrap_or(false) { "yes" } else { "no" };
+        let masked = if v["masked"].as_bool().unwrap_or(false) {
+            "yes"
+        } else {
+            "no"
+        };
+        let protected = if v["protected"].as_bool().unwrap_or(false) {
+            "yes"
+        } else {
+            "no"
+        };
         let env_scope = v["environment_scope"].as_str().unwrap_or("*");
 
         lines.push(format!("| {key} | {masked} | {protected} | {env_scope} |"));
@@ -1527,20 +1659,26 @@ pub async fn get_ci_variables(
 #[cfg(test)]
 mod tests {
     use super::{
-        error_signature, failure_class, grep_lines, http_status, human_secs,
-        is_automated_source, normalize_signature, pipeline_end_ts, redact_log, render_runner_check,
-        render_schedules, render_variable,
-        strip_ansi, wall_clock_secs,
+        error_signature, failure_class, grep_lines, http_status, human_secs, is_automated_source,
+        normalize_signature, pipeline_end_ts, redact_log, render_runner_check, render_schedules,
+        render_variable, strip_ansi, wall_clock_secs,
     };
 
     #[test]
     fn curl_style_error_codes_are_classified() {
         // The commonest real shape, and the one the first cut missed: curl reports
         // "returned error: <code>", where the context word is `error`.
-        assert_eq!(http_status("curl: (22) The requested URL returned error: 422"), Some(422));
+        assert_eq!(
+            http_status("curl: (22) The requested URL returned error: 422"),
+            Some(422)
+        );
         assert_eq!(http_status("error: 403"), Some(403));
         assert_eq!(
-            failure_class("", "script_failure", "curl: (22) The requested URL returned error: 422"),
+            failure_class(
+                "",
+                "script_failure",
+                "curl: (22) The requested URL returned error: 422"
+            ),
             "config"
         );
     }
@@ -1553,8 +1691,14 @@ mod tests {
             "created_at": "2026-08-18T10:00:00Z",
             "updated_at": "2026-08-18T10:05:00Z",
         });
-        assert_eq!(pipeline_end_ts(&listed, "success"), Some("2026-08-18T10:05:00Z"));
-        assert_eq!(pipeline_end_ts(&listed, "failed"), Some("2026-08-18T10:05:00Z"));
+        assert_eq!(
+            pipeline_end_ts(&listed, "success"),
+            Some("2026-08-18T10:05:00Z")
+        );
+        assert_eq!(
+            pipeline_end_ts(&listed, "failed"),
+            Some("2026-08-18T10:05:00Z")
+        );
 
         // Still running: `updated_at` is a heartbeat, not a completion — refuse it
         // rather than feeding elapsed-so-far into a duration median.
@@ -1567,7 +1711,10 @@ mod tests {
             "updated_at": "2026-08-18T10:09:00Z",
             "finished_at": "2026-08-18T10:04:00Z",
         });
-        assert_eq!(pipeline_end_ts(&detailed, "success"), Some("2026-08-18T10:04:00Z"));
+        assert_eq!(
+            pipeline_end_ts(&detailed, "success"),
+            Some("2026-08-18T10:04:00Z")
+        );
     }
 
     #[test]
@@ -1585,12 +1732,24 @@ U1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==
         let fake_pat = format!("{}{}", "glpat-", "NOTAREALTOKEN000000000");
         let log = format!("{log}+ header 'PRIVATE-TOKEN: {fake_pat}'\n");
         let out = redact_log(&log);
-        assert!(out.contains("<redacted PEM block>"), "PEM body must not survive");
-        assert!(!out.contains("U1lOVEhFVElDIEZJWFRVUkUg"), "key body leaked: {out}");
-        assert!(!out.contains("U1lOVEhFVElDQ0VSVEJPRFlGT1I"), "cert body leaked: {out}");
+        assert!(
+            out.contains("<redacted PEM block>"),
+            "PEM body must not survive"
+        );
+        assert!(
+            !out.contains("U1lOVEhFVElDIEZJWFRVUkUg"),
+            "key body leaked: {out}"
+        );
+        assert!(
+            !out.contains("U1lOVEhFVElDQ0VSVEJPRFlGT1I"),
+            "cert body leaked: {out}"
+        );
         assert!(!out.contains(&fake_pat), "PAT shape leaked: {out}");
         // Non-secret context is preserved — a redactor that eats the log is useless.
-        assert!(out.contains("ENVIRONMENT=prod"), "benign values must survive: {out}");
+        assert!(
+            out.contains("ENVIRONMENT=prod"),
+            "benign values must survive: {out}"
+        );
     }
 
     #[test]
@@ -1600,22 +1759,37 @@ U1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==
         // was the root cause of a live 422.
         let log = "+ send --header 'infra_auth_token: ' --to deploy-endpoint";
         let out = redact_log(log);
-        assert!(out.contains("infra_auth_token: "), "empty token must stay visible: {out}");
-        assert!(!out.contains("<redacted>"), "nothing here is a credential: {out}");
+        assert!(
+            out.contains("infra_auth_token: "),
+            "empty token must stay visible: {out}"
+        );
+        assert!(
+            !out.contains("<redacted>"),
+            "nothing here is a credential: {out}"
+        );
 
         let short = redact_log("API_KEY=abc123");
-        assert!(short.contains("abc123"), "6 chars is not a credential: {short}");
+        assert!(
+            short.contains("abc123"),
+            "6 chars is not a credential: {short}"
+        );
     }
 
     #[test]
     fn http_status_needs_context_not_a_bare_number() {
         // Status words, in the forms CI logs actually use.
-        assert_eq!(http_status("Error: status code 401 from provider"), Some(401));
+        assert_eq!(
+            http_status("Error: status code 401 from provider"),
+            Some(401)
+        );
         assert_eq!(http_status("HTTP 503 while calling the API"), Some(503));
         assert_eq!(http_status("request returned 422"), Some(422));
         assert_eq!(http_status("status-code=404"), Some(404));
         // Canonical reason phrase carries a code with no status word at all.
-        assert_eq!(http_status("got 403 Forbidden from the registry"), Some(403));
+        assert_eq!(
+            http_status("got 403 Forbidden from the registry"),
+            Some(403)
+        );
         // A bare number is not a status: durations and counts must not be read as one.
         assert_eq!(http_status("provisioning took 403 ms"), None);
         assert_eq!(http_status("wrote 5024 bytes"), None);
@@ -1626,12 +1800,27 @@ U1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==
     #[test]
     fn classifies_by_http_status() {
         // Auth/permission/validation: retrying repeats the identical failure.
-        assert_eq!(failure_class("", "script_failure", "HTTP 401 unauthorized"), "config");
-        assert_eq!(failure_class("", "script_failure", "status code 403"), "config");
-        assert_eq!(failure_class("", "script_failure", "response 422 unprocessable"), "config");
+        assert_eq!(
+            failure_class("", "script_failure", "HTTP 401 unauthorized"),
+            "config"
+        );
+        assert_eq!(
+            failure_class("", "script_failure", "status code 403"),
+            "config"
+        );
+        assert_eq!(
+            failure_class("", "script_failure", "response 422 unprocessable"),
+            "config"
+        );
         // Server-side and throttling: worth another attempt.
-        assert_eq!(failure_class("", "script_failure", "HTTP 429 too many requests"), "transient");
-        assert_eq!(failure_class("", "script_failure", "status 503 service unavailable"), "transient");
+        assert_eq!(
+            failure_class("", "script_failure", "HTTP 429 too many requests"),
+            "transient"
+        );
+        assert_eq!(
+            failure_class("", "script_failure", "status 503 service unavailable"),
+            "transient"
+        );
     }
 
     #[test]
@@ -1640,9 +1829,16 @@ U1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==
         // normalization masks digit runs — so a code tested against the signature
         // is already gone. It has to be read from the log.
         let sig = normalize_signature("Error: upstream call failed with a bad gateway response");
-        assert!(!sig.contains("502"), "precondition: signature carries no code");
+        assert!(
+            !sig.contains("502"),
+            "precondition: signature carries no code"
+        );
         assert_eq!(
-            failure_class(&sig, "script_failure", "server responded: HTTP 502 bad gateway\n"),
+            failure_class(
+                &sig,
+                "script_failure",
+                "server responded: HTTP 502 bad gateway\n"
+            ),
             "transient"
         );
     }
@@ -1652,7 +1848,11 @@ U1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==
         // A delete that 404s has reached its desired end state — reconcile, don't
         // treat it as broken configuration.
         assert_eq!(
-            failure_class("", "script_failure", "Error deleting folder: status-code=404 not found"),
+            failure_class(
+                "",
+                "script_failure",
+                "Error deleting folder: status-code=404 not found"
+            ),
             "state"
         );
     }
@@ -1668,7 +1868,10 @@ U1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==
         let (total, hits) = grep_lines(log, &re, 10);
         assert_eq!(total, 3);
         // 1-indexed line numbers, so they line up with an editor.
-        assert_eq!(hits, vec![(2, "WARN one"), (4, "WARN two"), (5, "WARN three")]);
+        assert_eq!(
+            hits,
+            vec![(2, "WARN one"), (4, "WARN two"), (5, "WARN three")]
+        );
 
         // Over the cap: keep the LAST matches — the decisive error is near the end.
         let (total, hits) = grep_lines(log, &re, 2);
@@ -1698,8 +1901,10 @@ U1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==
 
     #[test]
     fn identifier_values_are_shown() {
-        assert!(render_variable("ORG_UUID", "b1e2c3d4-0000-4a5b-8c9d-1234567890ab")
-            .contains("b1e2c3d4"));
+        assert!(
+            render_variable("ORG_UUID", "b1e2c3d4-0000-4a5b-8c9d-1234567890ab")
+                .contains("b1e2c3d4")
+        );
         assert!(render_variable("NODE_TYPE", "gateway").contains("`gateway`"));
         assert!(render_variable("ENVIRONMENT", "prod").contains("`prod`"));
     }
@@ -1743,7 +1948,10 @@ U1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==
 2026-01-01T00:00:00Z 01E │ The 'server_url' must be set (via EXAMPLE_SERVER_URL).
 2026-01-01T00:00:00Z 00O ERROR: Job failed: exit code 1";
         let sig = error_signature(log).expect("signature");
-        assert!(sig.starts_with("Error: Missing required configuration"), "got: {sig}");
+        assert!(
+            sig.starts_with("Error: Missing required configuration"),
+            "got: {sig}"
+        );
         // The generic trailer must not win over the specific cause.
         assert!(!sig.to_lowercase().contains("job failed"));
         assert_eq!(failure_class(&sig, "script_failure", ""), "config");
@@ -1759,7 +1967,10 @@ U1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==
     #[test]
     fn transient_failures_are_classified_retryable() {
         assert_eq!(failure_class("", "runner_system_failure", ""), "transient");
-        assert_eq!(failure_class("", "stuck_or_timeout_failure", ""), "transient");
+        assert_eq!(
+            failure_class("", "stuck_or_timeout_failure", ""),
+            "transient"
+        );
         assert_eq!(
             failure_class("Error: dial tcp: i/o timeout", "script_failure", ""),
             "transient"
@@ -1772,14 +1983,21 @@ U1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==
 
     #[test]
     fn unrecognized_failures_are_not_advertised_as_retryable() {
-        assert_eq!(failure_class("Error: something novel exploded", "script_failure", ""), "unknown");
+        assert_eq!(
+            failure_class("Error: something novel exploded", "script_failure", ""),
+            "unknown"
+        );
     }
 
     /// Volatile IDs collapse so repeated instances of one fault cluster together.
     #[test]
     fn signatures_cluster_across_runs() {
-        let a = normalize_signature("Error: node 7f3a1b2c-0000-4111-8222-333344445555 failed after 1234ms");
-        let b = normalize_signature("Error: node 9c8d7e6f-1111-4222-8333-444455556666 failed after 987ms");
+        let a = normalize_signature(
+            "Error: node 7f3a1b2c-0000-4111-8222-333344445555 failed after 1234ms",
+        );
+        let b = normalize_signature(
+            "Error: node 9c8d7e6f-1111-4222-8333-444455556666 failed after 987ms",
+        );
         assert_eq!(a, b, "same fault should normalize identically");
     }
 
@@ -1809,7 +2027,11 @@ U1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==
             Unsuccessful response [POST /api/v1/folders] [status-code=400] \
             [message=\"Folder with name 'abc' already exists in path '/x/y'\"]";
         assert_eq!(
-            failure_class("Error: Error creating project secret folder", "script_failure", create_collision),
+            failure_class(
+                "Error: Error creating project secret folder",
+                "script_failure",
+                create_collision
+            ),
             "state"
         );
 
@@ -1818,13 +2040,21 @@ U1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==
             Unsuccessful response [DELETE /api/v2/folders/1] [status-code=404] \
             [message=\"Folder with path '/x/y' not found\"]";
         assert_eq!(
-            failure_class("Error: Error deleting secret folder", "script_failure", delete_missing),
+            failure_class(
+                "Error: Error deleting secret folder",
+                "script_failure",
+                delete_missing
+            ),
             "state"
         );
 
         // A genuine config error must NOT be swept into the state bucket.
         assert_eq!(
-            failure_class("Error: Missing Hypervisor API Endpoint", "script_failure", "endpoint must be set"),
+            failure_class(
+                "Error: Missing Hypervisor API Endpoint",
+                "script_failure",
+                "endpoint must be set"
+            ),
             "config"
         );
     }
@@ -1850,7 +2080,10 @@ U1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==
         assert!(sig.contains("5432109876"), "got: {sig}");
         // A wordy message still masks its volatile parts.
         let wordy = normalize_signature("Error: node 12345678 unreachable after retry");
-        assert!(wordy.contains('…') && wordy.contains("unreachable"), "got: {wordy}");
+        assert!(
+            wordy.contains('…') && wordy.contains("unreachable"),
+            "got: {wordy}"
+        );
     }
 
     #[test]
@@ -1866,19 +2099,25 @@ U1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==
     #[test]
     fn schedules_that_cannot_run_are_called_out() {
         use serde_json::json;
-        let out = render_schedules("g/p", &[
-            json!({"id": 1, "description": "nightly", "ref": "main", "cron": "0 3 * * *", "cron_timezone": "UTC",
+        let out = render_schedules(
+            "g/p",
+            &[
+                json!({"id": 1, "description": "nightly", "ref": "main", "cron": "0 3 * * *", "cron_timezone": "UTC",
                    "next_run_at": "2026-01-02T03:00:00Z", "active": true, "owner": {"username": "ada", "state": "active"}}),
-            json!({"id": 2, "description": "weekly", "ref": "main", "cron": "0 4 * * 1", "active": true,
+                json!({"id": 2, "description": "weekly", "ref": "main", "cron": "0 4 * * 1", "active": true,
                    "owner": {"username": "bob", "state": "blocked"}}),
-            json!({"id": 3, "description": "orphan", "ref": "main", "cron": "0 5 * * *", "active": true, "owner": null}),
-            json!({"id": 4, "description": "off", "ref": "main", "cron": "0 6 * * *", "active": false, "owner": {"username": "ada"}}),
-        ]);
+                json!({"id": 3, "description": "orphan", "ref": "main", "cron": "0 5 * * *", "active": true, "owner": null}),
+                json!({"id": 4, "description": "off", "ref": "main", "cron": "0 6 * * *", "active": false, "owner": {"username": "ada"}}),
+            ],
+        );
         assert!(out.contains("| @ada | active |"));
         assert!(out.contains("⚠️ owner blocked — will not run"));
         assert!(out.contains("⚠️ no owner — will not run"));
         assert!(out.contains("| inactive |"));
-        assert_eq!(render_schedules("g/p", &[]), "No pipeline schedules on **g/p**.");
+        assert_eq!(
+            render_schedules("g/p", &[]),
+            "No pipeline schedules on **g/p**."
+        );
     }
 
     #[test]
@@ -1890,7 +2129,11 @@ U1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==
         assert!(out.contains("⏳ **build** (tags `docker`): an online runner matches"));
         assert!(out.contains("❌ **lint** (untagged): no online runner accepts"));
         // Nothing attached is a different verdict from "could not look".
-        assert!(render_runner_check(&pending, Some(&[])).join("\n").contains("no runner is attached"));
+        assert!(
+            render_runner_check(&pending, Some(&[]))
+                .join("\n")
+                .contains("no runner is attached")
+        );
         let unknown = render_runner_check(&pending, None).join("\n");
         assert!(unknown.contains("unavailable") && !unknown.contains("no runner is attached"));
     }

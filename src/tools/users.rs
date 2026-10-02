@@ -57,7 +57,7 @@ pub(crate) fn parse_access_level(level: &str) -> Result<u32> {
         other => {
             return Err(Error::UserInput(format!(
                 "Unknown access level '{other}'. Use one of: guest, reporter, developer, maintainer, owner (or 10/20/30/40/50)."
-            )))
+            )));
         }
     })
 }
@@ -97,7 +97,10 @@ mod tests {
         assert_eq!(parse_access_level(" Maintainer ").unwrap(), 40);
         assert_eq!(parse_access_level("50").unwrap(), 50);
         let err = parse_access_level("boss").unwrap_err();
-        assert!(err.is_user_error(), "unknown role must classify as user error");
+        assert!(
+            err.is_user_error(),
+            "unknown role must classify as user error"
+        );
     }
 
     #[test]
@@ -114,6 +117,10 @@ mod tests {
         assert_eq!(protection_level_name(0), "No access");
         assert_eq!(protection_level_name(60), "Admin");
         assert_eq!(protection_level_name(40), "Maintainer");
-        assert_eq!(protection_level_name(50), "?", "50 is a member role, not a protection level");
+        assert_eq!(
+            protection_level_name(50),
+            "?",
+            "50 is a member role, not a protection level"
+        );
     }
 }

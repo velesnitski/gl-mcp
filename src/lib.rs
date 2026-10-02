@@ -3,8 +3,8 @@
 pub mod client;
 pub mod config;
 pub mod error;
-pub mod params;
 pub mod logging;
+pub mod params;
 pub mod resolver;
 pub mod server;
 pub mod teams;

@@ -28,18 +28,22 @@ mod flex {
     }
 
     pub fn deserialize_opt_u32<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
-    where D: Deserializer<'de> {
+    where
+        D: Deserializer<'de>,
+    {
         deserialize_opt_num(deserializer)
     }
 
     pub fn deserialize_opt_usize<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
-    where D: Deserializer<'de> {
+    where
+        D: Deserializer<'de>,
+    {
         deserialize_opt_num(deserializer)
     }
 }
 
-use serde::Deserialize;
 use schemars::JsonSchema;
+use serde::Deserialize;
 
 // ─── Projects ───
 
@@ -74,7 +78,9 @@ pub struct ListMembersParams {
 pub struct ListGroupProjectsParams {
     #[schemars(description = "Group path (e.g., 'example-org/software')")]
     pub group_path: String,
-    #[schemars(description = "Max results to return — paginated across pages (default: 200, hard ceiling 2000)")]
+    #[schemars(
+        description = "Max results to return — paginated across pages (default: 200, hard ceiling 2000)"
+    )]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub per_page: Option<u32>,
     #[schemars(description = "GitLab instance name (optional)")]
@@ -132,7 +138,9 @@ pub struct GetUserParams {
 pub struct SearchIssuesParams {
     #[schemars(description = "Project ID or path (empty = search all projects)")]
     pub project_id: Option<String>,
-    #[schemars(description = "Group ID or path to search issues within a group (e.g., 'my-org/backend')")]
+    #[schemars(
+        description = "Group ID or path to search issues within a group (e.g., 'my-org/backend')"
+    )]
     pub group_id: Option<String>,
     #[schemars(description = "Search text in title/description")]
     pub search: Option<String>,
@@ -217,7 +225,9 @@ pub struct AddNoteParams {
 pub struct ListMergeRequestsParams {
     #[schemars(description = "Project ID or path (empty = all projects)")]
     pub project_id: Option<String>,
-    #[schemars(description = "Group path to list MRs across all group projects (e.g., 'my-org/backend')")]
+    #[schemars(
+        description = "Group path to list MRs across all group projects (e.g., 'my-org/backend')"
+    )]
     pub group_id: Option<String>,
     #[schemars(description = "Filter by state: opened, closed, merged, all (default: opened)")]
     pub state: Option<String>,
@@ -227,14 +237,20 @@ pub struct ListMergeRequestsParams {
     pub scope: Option<String>,
     #[schemars(description = "Only MRs created after this date (ISO, e.g., '2026-03-01')")]
     pub created_after: Option<String>,
-    #[schemars(description = "Only MRs created before this date (ISO). Use to find stale/old MRs.")]
+    #[schemars(
+        description = "Only MRs created before this date (ISO). Use to find stale/old MRs."
+    )]
     pub opened_before: Option<String>,
     #[schemars(description = "Max results (default: 20)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub per_page: Option<u32>,
-    #[schemars(description = "Return compact one-line-per-MR summary (~5x smaller). Use first to scan, then get_merge_request to drill in.")]
+    #[schemars(
+        description = "Return compact one-line-per-MR summary (~5x smaller). Use first to scan, then get_merge_request to drill in."
+    )]
     pub summary_only: Option<bool>,
-    #[schemars(description = "Include MR descriptions in output (useful for parsing ticket IDs or context). Adds ~1KB per MR.")]
+    #[schemars(
+        description = "Include MR descriptions in output (useful for parsing ticket IDs or context). Adds ~1KB per MR."
+    )]
     pub include_descriptions: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
@@ -248,7 +264,9 @@ pub struct CreateMergeRequestParams {
     pub source_branch: String,
     #[schemars(description = "Target branch (default: project default branch)")]
     pub target_branch: Option<String>,
-    #[schemars(description = "MR title (default: auto-generated from branch name, e.g., 'feature/PROJ-123-add-auth' → 'PROJ-123: Add auth')")]
+    #[schemars(
+        description = "MR title (default: auto-generated from branch name, e.g., 'feature/PROJ-123-add-auth' → 'PROJ-123: Add auth')"
+    )]
     pub title: Option<String>,
     #[schemars(description = "MR description in markdown (default: auto-generated commit list)")]
     pub description: Option<String>,
@@ -320,7 +338,9 @@ pub struct GetMrReviewDepthParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetOrgMrDashboardParams {
-    #[schemars(description = "Comma-separated group paths (e.g., 'my-org/backend,my-org/frontend,my-org/infrastructure')")]
+    #[schemars(
+        description = "Comma-separated group paths (e.g., 'my-org/backend,my-org/frontend,my-org/infrastructure')"
+    )]
     pub groups: String,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
@@ -358,7 +378,9 @@ pub struct GetMrTimelineParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetCrossInstanceDashboardParams {
-    #[schemars(description = "Comma-separated 'instance:group' pairs (e.g., 'staging:my-org/backend,production:my-org/frontend'). Groups within same instance are batched.")]
+    #[schemars(
+        description = "Comma-separated 'instance:group' pairs (e.g., 'staging:my-org/backend,production:my-org/frontend'). Groups within same instance are batched."
+    )]
     pub targets: String,
     #[schemars(description = "Default instance if not specified per-group")]
     pub instance: Option<String>,
@@ -474,7 +496,9 @@ pub struct ListCommitsParams {
     )]
     #[serde(alias = "ref_name")]
     pub branch: Option<String>,
-    #[schemars(description = "When true, returns commits from all branches, not just the default. Useful for catching work-in-progress on feature branches. Mutually exclusive with branch.")]
+    #[schemars(
+        description = "When true, returns commits from all branches, not just the default. Useful for catching work-in-progress on feature branches. Mutually exclusive with branch."
+    )]
     pub all_branches: Option<bool>,
     #[schemars(description = "Filter by author name or email")]
     pub author: Option<String>,
@@ -485,7 +509,9 @@ pub struct ListCommitsParams {
     #[schemars(description = "Max results (default: 20)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub per_page: Option<u32>,
-    #[schemars(description = "Return compact one-line-per-commit summary (~3x smaller). Use first to scan, then get_commit_diff to drill in.")]
+    #[schemars(
+        description = "Return compact one-line-per-commit summary (~3x smaller). Use first to scan, then get_commit_diff to drill in."
+    )]
     pub summary_only: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
@@ -502,7 +528,9 @@ pub struct GetCommitDiffParams {
     pub max_lines_per_file: Option<usize>,
     #[schemars(description = "Skip lockfiles and generated code (default: true)")]
     pub skip_generated: Option<bool>,
-    #[schemars(description = "Return only file list + stats, no diff content. ~10x smaller response.")]
+    #[schemars(
+        description = "Return only file list + stats, no diff content. ~10x smaller response."
+    )]
     pub summary_only: Option<bool>,
     #[schemars(description = "Only show diff for files matching this path substring")]
     pub file: Option<String>,
@@ -544,7 +572,9 @@ pub struct GetFileContentParams {
     )]
     #[serde(default, deserialize_with = "flex::deserialize_opt_usize")]
     pub start_line: Option<usize>,
-    #[schemars(description = "Last line to return (1-indexed, inclusive). Defaults to end of file.")]
+    #[schemars(
+        description = "Last line to return (1-indexed, inclusive). Defaults to end of file."
+    )]
     #[serde(default, deserialize_with = "flex::deserialize_opt_usize")]
     pub end_line: Option<usize>,
     #[schemars(
@@ -561,7 +591,9 @@ pub struct GetFileContentParams {
 pub struct GetUserActivityParams {
     #[schemars(description = "GitLab username")]
     pub username: String,
-    #[schemars(description = "Period: 'today', 'yesterday', 'week' (since Monday), '3d', or hours as number (default: 24)")]
+    #[schemars(
+        description = "Period: 'today', 'yesterday', 'week' (since Monday), '3d', or hours as number (default: 24)"
+    )]
     pub period: Option<String>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
@@ -569,7 +601,9 @@ pub struct GetUserActivityParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetTeamActivityParams {
-    #[schemars(description = "Team key from teams.json (e.g., 'devops', 'backend') OR comma-separated usernames")]
+    #[schemars(
+        description = "Team key from teams.json (e.g., 'devops', 'backend') OR comma-separated usernames"
+    )]
     pub team: String,
     #[schemars(description = "Period: 'today', 'yesterday', 'week', '3d', or hours (default: 24)")]
     pub period: Option<String>,
@@ -583,7 +617,9 @@ pub struct GetGroupActivityParams {
     pub group_path: String,
     #[schemars(description = "Period: 'today', 'yesterday', 'week', '3d', or hours (default: 24)")]
     pub period: Option<String>,
-    #[schemars(description = "Include head-commit titles per push under each member (from push events; enables text correlation, e.g. issue IDs). Default: false")]
+    #[schemars(
+        description = "Include head-commit titles per push under each member (from push events; enables text correlation, e.g. issue IDs). Default: false"
+    )]
     pub include_commit_messages: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
@@ -591,13 +627,21 @@ pub struct GetGroupActivityParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AuditReadmesParams {
-    #[schemars(description = "Group path to scan, including subgroups (e.g. 'my-org' or 'my-org/backend')")]
+    #[schemars(
+        description = "Group path to scan, including subgroups (e.g. 'my-org' or 'my-org/backend')"
+    )]
     pub group_path: String,
-    #[schemars(description = "READMEs smaller than this many bytes are flagged as 'small' stubs (default: 300)")]
+    #[schemars(
+        description = "READMEs smaller than this many bytes are flagged as 'small' stubs (default: 300)"
+    )]
     pub small_bytes: Option<usize>,
-    #[schemars(description = "READMEs whose alphabetic characters are at least this % Cyrillic are flagged as Russian/non-English (default: 20)")]
+    #[schemars(
+        description = "READMEs whose alphabetic characters are at least this % Cyrillic are flagged as Russian/non-English (default: 20)"
+    )]
     pub cyrillic_pct: Option<u8>,
-    #[schemars(description = "Also list repos with an OK README (default: false — only problems are listed)")]
+    #[schemars(
+        description = "Also list repos with an OK README (default: false — only problems are listed)"
+    )]
     pub include_ok: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
@@ -618,7 +662,9 @@ pub struct SaveTeamParams {
     pub usernames: String,
     #[schemars(description = "Comma-separated project paths (optional)")]
     pub projects: Option<String>,
-    #[schemars(description = "Comma-separated instance names per user (optional, matches usernames order)")]
+    #[schemars(
+        description = "Comma-separated instance names per user (optional, matches usernames order)"
+    )]
     pub instances: Option<String>,
 }
 
@@ -626,7 +672,9 @@ pub struct SaveTeamParams {
 pub struct GenerateDevReportParams {
     #[schemars(description = "GitLab username")]
     pub username: String,
-    #[schemars(description = "Period: 'today', 'yesterday', 'week', '3d', or hours (default: today)")]
+    #[schemars(
+        description = "Period: 'today', 'yesterday', 'week', '3d', or hours (default: today)"
+    )]
     pub period: Option<String>,
     #[schemars(description = "Filter to specific project path substring (optional)")]
     pub project: Option<String>,
@@ -645,7 +693,9 @@ pub struct SearchCodeParams {
         description = "Group path — search every (non-archived) project in the group instead of one repo. Use for org-wide sweeps (renames, leaked strings)."
     )]
     pub group_path: Option<String>,
-    #[schemars(description = "Search terms. NOT a regex — GitLab matches substrings/terms, so `foo|bar` is searched literally. If an alternation query returns nothing, the tool re-runs each alternative separately and says so, because an empty result must never be mistaken for proof of absence.")]
+    #[schemars(
+        description = "Search terms. NOT a regex — GitLab matches substrings/terms, so `foo|bar` is searched literally. If an alternation query returns nothing, the tool re-runs each alternative separately and says so, because an empty result must never be mistaken for proof of absence."
+    )]
     pub query: String,
     #[schemars(description = "Branch/tag to search in (optional)")]
     pub ref_name: Option<String>,
@@ -789,14 +839,18 @@ pub struct GetDeployFrequencyParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CompareDevelopersParams {
-    #[schemars(description = "Comma-separated project IDs or paths for cross-project comparison (e.g. 'group/project1,group/project2')")]
+    #[schemars(
+        description = "Comma-separated project IDs or paths for cross-project comparison (e.g. 'group/project1,group/project2')"
+    )]
     pub project_id: String,
     #[schemars(description = "Comma-separated GitLab usernames to compare")]
     pub usernames: String,
     #[schemars(description = "Number of days to analyze (default: 14)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub days: Option<u32>,
-    #[schemars(description = "Return compact one-line-per-developer summary (~5x smaller). Use first to scan.")]
+    #[schemars(
+        description = "Return compact one-line-per-developer summary (~5x smaller). Use first to scan."
+    )]
     pub summary_only: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
@@ -991,7 +1045,9 @@ pub struct GetMrDiscussionsParams {
 pub struct GetProjectEventsParams {
     #[schemars(description = "Project ID or path")]
     pub project_id: String,
-    #[schemars(description = "Filter by action: pushed, merged, commented, joined, left, etc. (optional)")]
+    #[schemars(
+        description = "Filter by action: pushed, merged, commented, joined, left, etc. (optional)"
+    )]
     pub action: Option<String>,
     #[schemars(description = "Max results (default: 20)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
@@ -1059,7 +1115,9 @@ pub struct SetCiVariableParams {
     pub key: String,
     #[schemars(description = "Variable value")]
     pub value: String,
-    #[schemars(description = "Protected variable: only exposed to protected branches/tags (default: false)")]
+    #[schemars(
+        description = "Protected variable: only exposed to protected branches/tags (default: false)"
+    )]
     pub protected: Option<bool>,
     #[schemars(description = "Masked variable: hidden in job logs (default: false)")]
     pub masked: Option<bool>,
@@ -1112,9 +1170,13 @@ pub struct CreateProjectParams {
     #[schemars(description = "Namespace (group) ID for project placement (numeric)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub namespace_id: Option<u32>,
-    #[schemars(description = "Namespace as a full group path (e.g. 'my-org/devops') or numeric id — resolved and validated. Preferred over namespace_id; avoids having to look up the subgroup's numeric id.")]
+    #[schemars(
+        description = "Namespace as a full group path (e.g. 'my-org/devops') or numeric id — resolved and validated. Preferred over namespace_id; avoids having to look up the subgroup's numeric id."
+    )]
     pub namespace: Option<String>,
-    #[schemars(description = "Visibility: 'private', 'internal', or 'public' (default: 'private')")]
+    #[schemars(
+        description = "Visibility: 'private', 'internal', or 'public' (default: 'private')"
+    )]
     pub visibility: Option<String>,
     #[schemars(description = "Default branch name (default: 'main')")]
     pub default_branch: Option<String>,
@@ -1130,7 +1192,9 @@ pub struct CreateProjectParams {
 pub struct TransferProjectParams {
     #[schemars(description = "Project ID or URL-encoded path (e.g. 'group/project')")]
     pub project_id: String,
-    #[schemars(description = "Target namespace: a full group path like 'my-org/devops' or a numeric group id. Resolved and validated before the move.")]
+    #[schemars(
+        description = "Target namespace: a full group path like 'my-org/devops' or a numeric group id. Resolved and validated before the move."
+    )]
     pub namespace: String,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
@@ -1140,7 +1204,9 @@ pub struct TransferProjectParams {
 pub struct DeleteProjectParams {
     #[schemars(description = "Project ID or URL-encoded path (e.g. 'group/project')")]
     pub project_id: String,
-    #[schemars(description = "Safety confirmation: must EXACTLY equal the project's full path (path_with_namespace), e.g. 'my-org/my-project'. Deletion is refused if it does not match.")]
+    #[schemars(
+        description = "Safety confirmation: must EXACTLY equal the project's full path (path_with_namespace), e.g. 'my-org/my-project'. Deletion is refused if it does not match."
+    )]
     pub confirm_full_path: String,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
@@ -1150,9 +1216,13 @@ pub struct DeleteProjectParams {
 pub struct AddMemberParams {
     #[schemars(description = "Project ID or URL-encoded path (e.g. 'group/project')")]
     pub project_id: String,
-    #[schemars(description = "User to add: a username (leading '@' optional) or a numeric user id")]
+    #[schemars(
+        description = "User to add: a username (leading '@' optional) or a numeric user id"
+    )]
     pub user: String,
-    #[schemars(description = "Role: guest, reporter, developer, maintainer, or owner (or the numeric level 10/20/30/40/50)")]
+    #[schemars(
+        description = "Role: guest, reporter, developer, maintainer, or owner (or the numeric level 10/20/30/40/50)"
+    )]
     pub access_level: String,
     #[schemars(description = "Optional membership expiry date, YYYY-MM-DD")]
     pub expires_at: Option<String>,
@@ -1162,11 +1232,17 @@ pub struct AddMemberParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AddGroupMemberParams {
-    #[schemars(description = "Group ID or full path (e.g. 'my-org/devops'). Grants access to all projects in the group.")]
+    #[schemars(
+        description = "Group ID or full path (e.g. 'my-org/devops'). Grants access to all projects in the group."
+    )]
     pub group_id: String,
-    #[schemars(description = "User to add: a username (leading '@' optional) or a numeric user id")]
+    #[schemars(
+        description = "User to add: a username (leading '@' optional) or a numeric user id"
+    )]
     pub user: String,
-    #[schemars(description = "Role: guest, reporter, developer, maintainer, or owner (or the numeric level 10/20/30/40/50)")]
+    #[schemars(
+        description = "Role: guest, reporter, developer, maintainer, or owner (or the numeric level 10/20/30/40/50)"
+    )]
     pub access_level: String,
     #[schemars(description = "Optional membership expiry date, YYYY-MM-DD")]
     pub expires_at: Option<String>,
@@ -1188,7 +1264,9 @@ pub struct CreateProjectAccessTokenParams {
     pub scopes: String,
     #[schemars(description = "Expiry date YYYY-MM-DD (GitLab requires one; max 1 year)")]
     pub expires_at: Option<String>,
-    #[schemars(description = "Access level: 10 guest, 20 reporter, 30 developer (default), 40 maintainer, 50 owner")]
+    #[schemars(
+        description = "Access level: 10 guest, 20 reporter, 30 developer (default), 40 maintainer, 50 owner"
+    )]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub access_level: Option<u32>,
     #[schemars(
@@ -1211,7 +1289,9 @@ pub struct CreatePipelineScheduleParams {
     pub project_id: String,
     #[schemars(description = "Human-readable description")]
     pub description: String,
-    #[schemars(description = "Branch or tag the schedule runs on — validated to resolve before the schedule is created")]
+    #[schemars(
+        description = "Branch or tag the schedule runs on — validated to resolve before the schedule is created"
+    )]
     pub ref_name: String,
     #[schemars(description = "5-field cron expression, e.g. `0 3 * * *`")]
     pub cron: String,
@@ -1239,9 +1319,13 @@ pub struct CreateDeployTokenParams {
     pub project_id: String,
     #[schemars(description = "Deploy token name")]
     pub name: String,
-    #[schemars(description = "Comma-separated scopes: read_repository, read_registry, write_registry, read_package_registry, write_package_registry")]
+    #[schemars(
+        description = "Comma-separated scopes: read_repository, read_registry, write_registry, read_package_registry, write_package_registry"
+    )]
     pub scopes: String,
-    #[schemars(description = "Expiration as ISO date (e.g., '2026-12-31T23:59:59Z'). Optional, omit for no expiry.")]
+    #[schemars(
+        description = "Expiration as ISO date (e.g., '2026-12-31T23:59:59Z'). Optional, omit for no expiry."
+    )]
     pub expires_at: Option<String>,
     #[schemars(description = "Custom username for the token (optional)")]
     pub username: Option<String>,
@@ -1334,10 +1418,14 @@ pub struct UpdateBranchProtectionParams {
     pub project_id: String,
     #[schemars(description = "Branch name to protect (e.g., 'main')")]
     pub branch: String,
-    #[schemars(description = "Push access level: 0=No access, 30=Developer, 40=Maintainer, 60=Admin")]
+    #[schemars(
+        description = "Push access level: 0=No access, 30=Developer, 40=Maintainer, 60=Admin"
+    )]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub push_access_level: Option<u32>,
-    #[schemars(description = "Merge access level: 0=No access, 30=Developer, 40=Maintainer, 60=Admin")]
+    #[schemars(
+        description = "Merge access level: 0=No access, 30=Developer, 40=Maintainer, 60=Admin"
+    )]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub merge_access_level: Option<u32>,
     #[schemars(description = "Allow force push (default: false)")]
@@ -1458,7 +1546,9 @@ pub struct GenerateAiAdoptionReportParams {
     #[schemars(description = "Days of commit history to scan for AI co-authorship (default: 30)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub days: Option<u32>,
-    #[schemars(description = "Days of inactivity before a repo is skipped as dormant (default: 180)")]
+    #[schemars(
+        description = "Days of inactivity before a repo is skipped as dormant (default: 180)"
+    )]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub dormant_days: Option<u32>,
     #[schemars(description = "GitLab instance name (optional)")]
@@ -1474,7 +1564,9 @@ pub struct GetAiAdoptionParams {
     #[schemars(description = "Days of commit history to scan for AI co-authorship (default: 30)")]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub days: Option<u32>,
-    #[schemars(description = "Days of inactivity before a repo is skipped as dormant (default: 180)")]
+    #[schemars(
+        description = "Days of inactivity before a repo is skipped as dormant (default: 180)"
+    )]
     #[serde(default, deserialize_with = "flex::deserialize_opt_u32")]
     pub dormant_days: Option<u32>,
     #[schemars(description = "Return compact one-line summary (~5x smaller). Use first to scan.")]
@@ -1489,11 +1581,15 @@ pub struct GetAiAdoptionParams {
 pub struct AuditSpecDriftParams {
     #[schemars(description = "Project ID or path to audit against the spec")]
     pub project_id: String,
-    #[schemars(description = "The spec document as markdown/text (e.g. a knowledge-base app-spec article). Documented routes and version are extracted from it and cross-referenced against the codebase.")]
+    #[schemars(
+        description = "The spec document as markdown/text (e.g. a knowledge-base app-spec article). Documented routes and version are extracted from it and cross-referenced against the codebase."
+    )]
     pub spec: String,
     #[schemars(description = "Branch or tag to search in (default: default branch)")]
     pub ref_name: Option<String>,
-    #[schemars(description = "Optional path(s) to the route-defining source for precise reverse-drift: a file, a comma-separated list of files, or a directory (every code file under it, recursively — e.g. 'routes/api' for a Laravel app). Without it, reverse-drift is search-harvested within documented namespaces.")]
+    #[schemars(
+        description = "Optional path(s) to the route-defining source for precise reverse-drift: a file, a comma-separated list of files, or a directory (every code file under it, recursively — e.g. 'routes/api' for a Laravel app). Without it, reverse-drift is search-harvested within documented namespaces."
+    )]
     pub routes_file: Option<String>,
     #[schemars(description = "Return compact one-line summary (~5x smaller). Use first to scan.")]
     pub summary_only: Option<bool>,
@@ -1505,11 +1601,15 @@ pub struct AuditSpecDriftParams {
 pub struct GenerateSpecAuditReportParams {
     #[schemars(description = "Project ID or path to audit against the spec")]
     pub project_id: String,
-    #[schemars(description = "The spec document as markdown/text (e.g. a knowledge-base app-spec article). Documented routes and version are extracted from it and cross-referenced against the codebase.")]
+    #[schemars(
+        description = "The spec document as markdown/text (e.g. a knowledge-base app-spec article). Documented routes and version are extracted from it and cross-referenced against the codebase."
+    )]
     pub spec: String,
     #[schemars(description = "Branch or tag to search in (default: default branch)")]
     pub ref_name: Option<String>,
-    #[schemars(description = "Optional route-defining source for precise reverse-drift: a file, comma-separated files, or a directory (recursive).")]
+    #[schemars(
+        description = "Optional route-defining source for precise reverse-drift: a file, comma-separated files, or a directory (recursive)."
+    )]
     pub routes_file: Option<String>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
@@ -1521,17 +1621,23 @@ pub struct SpecAuditTarget {
     pub project_id: String,
     #[schemars(description = "The spec document for this platform, as markdown/text")]
     pub spec: String,
-    #[schemars(description = "Display label for the rollup (e.g. 'iOS'). Defaults to the project path.")]
+    #[schemars(
+        description = "Display label for the rollup (e.g. 'iOS'). Defaults to the project path."
+    )]
     pub label: Option<String>,
     #[schemars(description = "Branch or tag to search in (default: default branch)")]
     pub ref_name: Option<String>,
-    #[schemars(description = "Optional route-defining source for precise reverse-drift: a file, comma-separated files, or a directory (recursive)")]
+    #[schemars(
+        description = "Optional route-defining source for precise reverse-drift: a file, comma-separated files, or a directory (recursive)"
+    )]
     pub routes_file: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SweepSpecAuditParams {
-    #[schemars(description = "Platforms to audit. Each is audited independently (and concurrently); results roll up into one cross-platform table.")]
+    #[schemars(
+        description = "Platforms to audit. Each is audited independently (and concurrently); results roll up into one cross-platform table."
+    )]
     pub targets: Vec<SpecAuditTarget>,
     #[schemars(description = "Return only the rollup table (no needs-attention / totals detail).")]
     pub summary_only: Option<bool>,
@@ -1541,7 +1647,9 @@ pub struct SweepSpecAuditParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GenerateSweepReportParams {
-    #[schemars(description = "Teams/platforms to audit. Each is audited independently (and concurrently); results roll up into one clickable cross-team HTML report.")]
+    #[schemars(
+        description = "Teams/platforms to audit. Each is audited independently (and concurrently); results roll up into one clickable cross-team HTML report."
+    )]
     pub targets: Vec<SpecAuditTarget>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
@@ -1591,21 +1699,19 @@ mod param_alias_tests {
         // search_code, list_pipelines and the GitLab API all call it), serde drops
         // the unknown field, and the call silently falls back to the default branch —
         // returning a plausible wrong list with no error.
-        let p: ListCommitsParams =
-            serde_json::from_value(serde_json::json!({
-                "project_id": "group/proj",
-                "ref_name": "feat/x",
-            }))
-            .expect("ref_name must deserialize");
+        let p: ListCommitsParams = serde_json::from_value(serde_json::json!({
+            "project_id": "group/proj",
+            "ref_name": "feat/x",
+        }))
+        .expect("ref_name must deserialize");
         assert_eq!(p.branch.as_deref(), Some("feat/x"));
 
         // The canonical name still works.
-        let p: ListCommitsParams =
-            serde_json::from_value(serde_json::json!({
-                "project_id": "group/proj",
-                "branch": "feat/y",
-            }))
-            .expect("branch must deserialize");
+        let p: ListCommitsParams = serde_json::from_value(serde_json::json!({
+            "project_id": "group/proj",
+            "branch": "feat/y",
+        }))
+        .expect("branch must deserialize");
         assert_eq!(p.branch.as_deref(), Some("feat/y"));
     }
 }
@@ -1640,7 +1746,9 @@ pub struct RevokeProjectAccessTokenParams {
     pub project_id: String,
     #[schemars(description = "Token ID (from list_project_access_tokens)")]
     pub token_id: u64,
-    #[schemars(description = "Safety confirmation: must EXACTLY equal the token's name. Revocation is refused if it does not match.")]
+    #[schemars(
+        description = "Safety confirmation: must EXACTLY equal the token's name. Revocation is refused if it does not match."
+    )]
     pub confirm_name: String,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,

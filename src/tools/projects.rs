@@ -1,18 +1,14 @@
 //! GitLab project tools.
 
-use std::fmt::Write as _;
 use crate::client::GitLabClient;
 use crate::error::{Error, Result, ResultExt};
 use serde_json::Value;
+use std::fmt::Write as _;
 
 use super::users::{access_level_name, parse_access_level, protection_level_name, resolve_user_id};
 
 /// List projects accessible to the authenticated user.
-pub async fn list_projects(
-    client: &GitLabClient,
-    search: &str,
-    per_page: u32,
-) -> Result<String> {
+pub async fn list_projects(client: &GitLabClient, search: &str, per_page: u32) -> Result<String> {
     let per_page_str = per_page.to_string();
     let mut params = vec![
         ("per_page", per_page_str.as_str()),
@@ -23,16 +19,22 @@ pub async fn list_projects(
         params.push(("search", search));
     }
 
-    let projects: Vec<Value> = client
-        .get("/projects", &params)
-        .await
-        ?;
+    let projects: Vec<Value> = client.get("/projects", &params).await?;
 
     if projects.is_empty() {
         return Ok("No projects found.".to_string());
     }
 
-    let mut lines = vec![format!("**Found: {} projects**\n", projects.len())];
+    // A page exactly as long as the cap is a cut, not a count: say so, or a
+    // caller takes the first page for the whole list (ADR 059).
+    let mut lines = vec![if projects.len() as u32 >= per_page {
+        format!(
+            "**Found: {} projects (first page — more may exist; raise `per_page` or narrow `search`)**\n",
+            projects.len()
+        )
+    } else {
+        format!("**Found: {} projects**\n", projects.len())
+    }];
     for p in &projects {
         let name = p["path_with_namespace"].as_str().unwrap_or("?");
         let id = p["id"].as_u64().unwrap_or(0);
@@ -61,15 +63,9 @@ pub async fn list_projects(
 }
 
 /// Get detailed info about a single project.
-pub async fn get_project(
-    client: &GitLabClient,
-    project_id: &str,
-) -> Result<String> {
+pub async fn get_project(client: &GitLabClient, project_id: &str) -> Result<String> {
     let path = format!("/projects/{}", urlencoding::encode(project_id));
-    let p: Value = client
-        .get(&path, &[])
-        .await
-        ?;
+    let p: Value = client.get(&path, &[]).await?;
 
     let name = p["path_with_namespace"].as_str().unwrap_or("?");
     let id = p["id"].as_u64().unwrap_or(0);
@@ -89,16 +85,15 @@ pub async fn get_project(
         .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
         .unwrap_or_default();
 
-    let mut parts = vec![
-        format!("# {name}"),
-        String::new(),
-    ];
+    let mut parts = vec![format!("# {name}"), String::new()];
 
     // Archived projects are read-only: no pushes, no comments, no merges. Surface
     // this first — it invalidates most write operations and GitLab does not
     // reflect it in a merge request's merge_status.
     if archived {
-        parts.push("⚠️ **ARCHIVED** — read-only. Pushes, comments, and merges are rejected.".to_string());
+        parts.push(
+            "⚠️ **ARCHIVED** — read-only. Pushes, comments, and merges are rejected.".to_string(),
+        );
         parts.push(String::new());
     }
 
@@ -125,15 +120,9 @@ pub async fn get_project(
 }
 
 /// List project members.
-pub async fn list_members(
-    client: &GitLabClient,
-    project_id: &str,
-) -> Result<String> {
+pub async fn list_members(client: &GitLabClient, project_id: &str) -> Result<String> {
     let path = format!("/projects/{}/members/all", urlencoding::encode(project_id));
-    let members: Vec<Value> = client
-        .get(&path, &[("per_page", "100")])
-        .await
-        ?;
+    let members: Vec<Value> = client.get(&path, &[("per_page", "100")]).await?;
 
     if members.is_empty() {
         return Ok("No members found.".to_string());
@@ -172,18 +161,12 @@ pub async fn list_branches(
 
     // Branches API accepts sort=name_asc|updated_asc|updated_desc only;
     // order_by is not a valid param and "desc" alone 400s on GitLab 17+.
-    let mut params: Vec<(&str, &str)> = vec![
-        ("per_page", &per_page_str),
-        ("sort", "updated_desc"),
-    ];
+    let mut params: Vec<(&str, &str)> = vec![("per_page", &per_page_str), ("sort", "updated_desc")];
     if !search.is_empty() {
         params.push(("search", search));
     }
 
-    let branches: Vec<Value> = client
-        .get(&path, &params)
-        .await
-        ?;
+    let branches: Vec<Value> = client.get(&path, &params).await?;
 
     if branches.is_empty() {
         return Ok("No branches found.".to_string());
@@ -200,8 +183,12 @@ pub async fn list_branches(
         let message = b["commit"]["title"].as_str().unwrap_or("");
 
         let mut flags = Vec::new();
-        if is_default { flags.push("default"); }
-        if is_protected { flags.push("protected"); }
+        if is_default {
+            flags.push("default");
+        }
+        if is_protected {
+            flags.push("protected");
+        }
         let flag_str = if flags.is_empty() {
             String::new()
         } else {
@@ -238,7 +225,11 @@ pub async fn create_branch(
     branch: &str,
     ref_name: &str,
 ) -> Result<String> {
-    let from = if ref_name.is_empty() { "main" } else { ref_name };
+    let from = if ref_name.is_empty() {
+        "main"
+    } else {
+        ref_name
+    };
     let path = format!(
         "/projects/{}/repository/branches?branch={}&ref={}",
         urlencoding::encode(project_id),
@@ -261,20 +252,26 @@ pub async fn get_user(
 ) -> Result<String> {
     let user: Value = if let Some(id) = user_id {
         let cache_key = format!("user_id:{id}");
-        client.get_cached(&cache_key, &format!("/users/{id}"), &[], 60).await?
+        client
+            .get_cached(&cache_key, &format!("/users/{id}"), &[], 60)
+            .await?
     } else {
         let cache_key = format!("user:{username}");
         let users: Vec<Value> = client
             .get_cached(&cache_key, "/users", &[("username", username)], 60)
             .await?;
-        users.into_iter().next().ok_or_else(|| {
-            crate::error::Error::UserInput(format!("User not found: {username}"))
-        })?
+        users
+            .into_iter()
+            .next()
+            .ok_or_else(|| crate::error::Error::UserInput(format!("User not found: {username}")))?
     };
 
     let username = user["username"].as_str().unwrap_or("?");
     let name = user["name"].as_str().unwrap_or("?");
-    let email = user["email"].as_str().or(user["public_email"].as_str()).unwrap_or("–");
+    let email = user["email"]
+        .as_str()
+        .or(user["public_email"].as_str())
+        .unwrap_or("–");
     let state = user["state"].as_str().unwrap_or("?");
     let id = user["id"].as_u64().unwrap_or(0);
     let created = user["created_at"].as_str().unwrap_or("?");
@@ -299,16 +296,9 @@ pub async fn get_user(
 }
 
 /// Search GitLab users by name, username, or email.
-pub async fn search_users(
-    client: &GitLabClient,
-    query: &str,
-    per_page: u32,
-) -> Result<String> {
+pub async fn search_users(client: &GitLabClient, query: &str, per_page: u32) -> Result<String> {
     let per_page_str = per_page.to_string();
-    let params = vec![
-        ("search", query),
-        ("per_page", &per_page_str),
-    ];
+    let params = vec![("search", query), ("per_page", &per_page_str)];
 
     let users: Vec<Value> = client.get("/users", &params).await?;
 
@@ -343,10 +333,7 @@ pub async fn get_group_members(
     per_page: u32,
 ) -> Result<String> {
     let per_page_str = per_page.to_string();
-    let path = format!(
-        "/groups/{}/members/all",
-        urlencoding::encode(group_id)
-    );
+    let path = format!("/groups/{}/members/all", urlencoding::encode(group_id));
 
     let members: Vec<Value> = client
         .get(&path, &[("per_page", per_page_str.as_str())])
@@ -389,14 +376,9 @@ pub async fn get_project_events(
     summary_only: bool,
 ) -> Result<String> {
     let per_page_str = per_page.to_string();
-    let path = format!(
-        "/projects/{}/events",
-        urlencoding::encode(project_id)
-    );
+    let path = format!("/projects/{}/events", urlencoding::encode(project_id));
 
-    let mut params: Vec<(&str, &str)> = vec![
-        ("per_page", &per_page_str),
-    ];
+    let mut params: Vec<(&str, &str)> = vec![("per_page", &per_page_str)];
     if !action.is_empty() {
         params.push(("action", action));
     }
@@ -421,7 +403,11 @@ pub async fn get_project_events(
                 pushes += 1;
             } else if target_type == "MergeRequest" || action_name.contains("merge") {
                 mrs += 1;
-            } else if target_type == "Note" || target_type == "DiffNote" || target_type == "DiscussionNote" || action_name.contains("comment") {
+            } else if target_type == "Note"
+                || target_type == "DiffNote"
+                || target_type == "DiscussionNote"
+                || action_name.contains("comment")
+            {
                 comments += 1;
             }
             if let Some(a) = e["author"]["username"].as_str() {
@@ -499,13 +485,13 @@ pub async fn check_branch_protection(
             let exists: std::result::Result<Value, _> = client.get(&branch_path, &[]).await;
             return match exists {
                 Ok(_) => Ok(format!("Branch '{branch}' exists but is NOT protected.")),
-                Err(crate::error::Error::GitLab { status, .. }) if status.as_u16() == 404 => Ok(
-                    format!(
+                Err(crate::error::Error::GitLab { status, .. }) if status.as_u16() == 404 => {
+                    Ok(format!(
                         "Branch '{branch}' does not exist in this project — so there is \
                          nothing to protect. Check the name (the default branch is not \
                          always 'main')."
-                    ),
-                ),
+                    ))
+                }
                 // Probe failed for some other reason: report the protection
                 // fact we do know, and say the existence check was unavailable.
                 Err(_) => Ok(format!(
@@ -519,7 +505,9 @@ pub async fn check_branch_protection(
 
     let name = pb["name"].as_str().unwrap_or(branch);
     let allow_force_push = pb["allow_force_push"].as_bool().unwrap_or(false);
-    let code_owner_required = pb["code_owner_approval_required"].as_bool().unwrap_or(false);
+    let code_owner_required = pb["code_owner_approval_required"]
+        .as_bool()
+        .unwrap_or(false);
 
     fn format_access_levels(arr: Option<&Vec<Value>>) -> String {
         match arr {
@@ -720,7 +708,10 @@ pub async fn delete_project(
     confirm_full_path: &str,
 ) -> Result<String> {
     let proj: Value = client
-        .get(&format!("/projects/{}", urlencoding::encode(project_id)), &[])
+        .get(
+            &format!("/projects/{}", urlencoding::encode(project_id)),
+            &[],
+        )
         .await?;
     let actual = proj["path_with_namespace"].as_str().unwrap_or("");
     if confirm_full_path.trim() != actual {
@@ -762,7 +753,8 @@ pub async fn add_member(
         .map(access_level_name)
         .unwrap_or("?");
     let expiry = m["expires_at"].as_str().filter(|s| !s.is_empty());
-    let mut out = format!("Added **@{username}** (id {user_id}) to **{project_id}** as **{role}**.");
+    let mut out =
+        format!("Added **@{username}** (id {user_id}) to **{project_id}** as **{role}**.");
     if let Some(e) = expiry {
         let _ = write!(out, " Expires {e}.");
     }
@@ -832,7 +824,9 @@ pub async fn create_deploy_token(
     }
 
     if scopes.is_empty() {
-        return Err(Error::user_input("At least one scope is required.".to_string()));
+        return Err(Error::user_input(
+            "At least one scope is required.".to_string(),
+        ));
     }
     // Same delivery contract as every other credential this server mints: a secret
     // that only ever needed to travel from GitLab to GitLab's own CI variables should
@@ -916,9 +910,19 @@ pub async fn create_deploy_token(
 
 /// Scopes accepted for a project access token.
 const PAT_SCOPES: &[&str] = &[
-    "api", "read_api", "read_repository", "write_repository", "read_registry",
-    "write_registry", "create_runner", "manage_runner", "k8s_proxy", "ai_features",
-    "read_observability", "write_observability", "self_rotate",
+    "api",
+    "read_api",
+    "read_repository",
+    "write_repository",
+    "read_registry",
+    "write_registry",
+    "create_runner",
+    "manage_runner",
+    "k8s_proxy",
+    "ai_features",
+    "read_observability",
+    "write_observability",
+    "self_rotate",
 ];
 
 /// How a freshly minted credential reaches whatever consumes it.
@@ -1030,7 +1034,8 @@ async fn store_secret_or_revoke(
     {
         Ok(_) => Ok(()),
         Err(e) => {
-            let head = format!("the credential was created but writing CI variable `{key}` failed: {e}");
+            let head =
+                format!("the credential was created but writing CI variable `{key}` failed: {e}");
             // Classified by outcome, not wording: a clean rollback is the caller's to fix;
             // a failed rollback leaves a live credential nobody holds, and must alert.
             if client.delete(revoke_path).await.is_ok() {
@@ -1119,7 +1124,9 @@ pub async fn create_project_access_token(
     if !expires_at.is_empty() {
         body["expires_at"] = serde_json::json!(expires_at);
     }
-    let t: Value = client.post(&format!("/projects/{enc}/access_tokens"), &body).await?;
+    let t: Value = client
+        .post(&format!("/projects/{enc}/access_tokens"), &body)
+        .await?;
 
     let id = t["id"].as_u64().unwrap_or(0);
     let token_name = t["name"].as_str().unwrap_or(name);
@@ -1173,10 +1180,7 @@ pub async fn create_project_access_token(
 }
 
 /// List deploy tokens for a project (token values are never returned by GitLab).
-pub async fn list_deploy_tokens(
-    client: &GitLabClient,
-    project_id: &str,
-) -> Result<String> {
+pub async fn list_deploy_tokens(client: &GitLabClient, project_id: &str) -> Result<String> {
     let path = format!(
         "/projects/{}/deploy_tokens",
         urlencoding::encode(project_id)
@@ -1200,7 +1204,11 @@ pub async fn list_deploy_tokens(
             .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
             .unwrap_or_default();
         let expires = t["expires_at"].as_str().unwrap_or("never");
-        let revoked = if t["revoked"].as_bool().unwrap_or(false) { "yes" } else { "no" };
+        let revoked = if t["revoked"].as_bool().unwrap_or(false) {
+            "yes"
+        } else {
+            "no"
+        };
 
         lines.push(format!(
             "| {name} | {username} | {} | {expires} | {revoked} |",
@@ -1226,16 +1234,24 @@ pub async fn get_stale_branches(
     let mut page = 1u32;
     loop {
         let page_str = page.to_string();
-        let branches: Vec<Value> = client.get(
-            &format!("/projects/{encoded}/repository/branches"),
-            &[("per_page", "100"), ("page", &page_str)],
-        ).await?;
-        if branches.is_empty() { break; }
+        let branches: Vec<Value> = client
+            .get(
+                &format!("/projects/{encoded}/repository/branches"),
+                &[("per_page", "100"), ("page", &page_str)],
+            )
+            .await?;
+        if branches.is_empty() {
+            break;
+        }
         let count = branches.len();
         all_branches.extend(branches);
-        if count < 100 { break; }
+        if count < 100 {
+            break;
+        }
         page += 1;
-        if page > 10 { break; } // cap at 1000 branches
+        if page > 10 {
+            break;
+        } // cap at 1000 branches
     }
 
     if all_branches.is_empty() {
@@ -1252,7 +1268,9 @@ pub async fn get_stale_branches(
         let merged = b["merged"].as_bool().unwrap_or(false);
 
         // Skip default and protected branches
-        if is_default || is_protected { continue; }
+        if is_default || is_protected {
+            continue;
+        }
 
         let committed_date = b["commit"]["committed_date"]
             .as_str()
@@ -1267,19 +1285,29 @@ pub async fn get_stale_branches(
         if merged || is_old {
             let date_short = committed_date.get(..10).unwrap_or(committed_date);
             let author = b["commit"]["author_name"].as_str().unwrap_or("?");
-            stale.push((name.to_string(), date_short.to_string(), author.to_string(), merged));
+            stale.push((
+                name.to_string(),
+                date_short.to_string(),
+                author.to_string(),
+                merged,
+            ));
         }
     }
 
     if stale.is_empty() {
-        return Ok(format!("No stale branches in {project_id} ({total} branches, cutoff: {inactive_days} days)."));
+        return Ok(format!(
+            "No stale branches in {project_id} ({total} branches, cutoff: {inactive_days} days)."
+        ));
     }
 
     let merged_count = stale.iter().filter(|s| s.3).count();
     let inactive_count = stale.iter().filter(|s| !s.3).count();
 
     let mut lines = vec![
-        format!("**Stale Branches: {project_id}** ({} stale / {total} total)\n", stale.len()),
+        format!(
+            "**Stale Branches: {project_id}** ({} stale / {total} total)\n",
+            stale.len()
+        ),
         format!("| Type | Count |"),
         format!("|------|-------|"),
         format!("| Merged (safe to delete) | {merged_count} |"),
@@ -1338,7 +1366,11 @@ pub(crate) struct RunnerFacts {
 /// String list from a JSON array field (`tag_list`, `scopes`); empty when absent.
 pub(crate) fn str_list(v: &Value) -> Vec<String> {
     v.as_array()
-        .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -1346,7 +1378,8 @@ pub(crate) fn str_list(v: &Value) -> Vec<String> {
 pub(crate) fn runner_facts(raw: &[Value]) -> Vec<RunnerFacts> {
     raw.iter()
         .map(|r| RunnerFacts {
-            online: r["online"].as_bool().unwrap_or(false) || r["status"].as_str() == Some("online"),
+            online: r["online"].as_bool().unwrap_or(false)
+                || r["status"].as_str() == Some("online"),
             tags: str_list(&r["tag_list"]),
             run_untagged: r["run_untagged"].as_bool().unwrap_or(true),
         })
@@ -1357,7 +1390,9 @@ impl RunnerVerdict {
     /// One-line diagnosis for a pending job.
     pub(crate) fn pending_note(&self) -> &'static str {
         match self {
-            Self::NoRunners => "no runner is attached to this project — it will wait forever, not fail",
+            Self::NoRunners => {
+                "no runner is attached to this project — it will wait forever, not fail"
+            }
             Self::AllOffline => "every attached runner is offline",
             Self::NoTagMatch => "no online runner accepts this job's tags",
             Self::Eligible => "an online runner matches — genuinely queued",
@@ -1503,7 +1538,9 @@ pub async fn update_project(
         body.insert("description".into(), serde_json::json!(description));
     }
     if body.is_empty() {
-        return Err(Error::user_input("nothing to update — pass at least one setting.".to_string()));
+        return Err(Error::user_input(
+            "nothing to update — pass at least one setting.".to_string(),
+        ));
     }
 
     let changed: Vec<String> = body.keys().cloned().collect();
@@ -1529,28 +1566,46 @@ pub async fn update_project(
 pub async fn list_project_access_tokens(client: &GitLabClient, project_id: &str) -> Result<String> {
     let enc = urlencoding::encode(project_id);
     let tokens: Vec<Value> = client
-        .get(&format!("/projects/{enc}/access_tokens"), &[("per_page", "100")])
+        .get(
+            &format!("/projects/{enc}/access_tokens"),
+            &[("per_page", "100")],
+        )
         .await?;
-    Ok(render_access_tokens(project_id, &tokens, chrono::Utc::now().date_naive()))
+    Ok(render_access_tokens(
+        project_id,
+        &tokens,
+        chrono::Utc::now().date_naive(),
+    ))
 }
 
 /// Access-token table, soonest expiry first among active tokens, then inactive ones.
 ///
 /// Pure so the expiry arithmetic is testable against a fixed `today`.
-pub(crate) fn render_access_tokens(project_id: &str, tokens: &[Value], today: chrono::NaiveDate) -> String {
+pub(crate) fn render_access_tokens(
+    project_id: &str,
+    tokens: &[Value],
+    today: chrono::NaiveDate,
+) -> String {
     if tokens.is_empty() {
         return format!("No access tokens on **{project_id}**.");
     }
     let expiry = |t: &Value| {
-        t["expires_at"].as_str().and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+        t["expires_at"]
+            .as_str()
+            .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
     };
-    let is_active = |t: &Value| t["active"].as_bool().unwrap_or(false) && !t["revoked"].as_bool().unwrap_or(false);
+    let is_active = |t: &Value| {
+        t["active"].as_bool().unwrap_or(false) && !t["revoked"].as_bool().unwrap_or(false)
+    };
     let mut sorted: Vec<&Value> = tokens.iter().collect();
     sorted.sort_by_key(|t| (!is_active(t), expiry(t).unwrap_or(chrono::NaiveDate::MAX)));
 
     let active = tokens.iter().filter(|t| is_active(t)).count();
     let mut lines = vec![
-        format!("**Access tokens on {project_id}: {} ({active} active)**\n", tokens.len()),
+        format!(
+            "**Access tokens on {project_id}: {} ({active} active)**\n",
+            tokens.len()
+        ),
         "| ID | Name | Role | Scopes | Expires | Last used | State |".to_string(),
         "|----|------|------|--------|---------|-----------|-------|".to_string(),
     ];
@@ -1574,7 +1629,10 @@ pub(crate) fn render_access_tokens(project_id: &str, tokens: &[Value], today: ch
         } else {
             "expired"
         };
-        let last_used = t["last_used_at"].as_str().and_then(|d| d.get(..10)).unwrap_or("never");
+        let last_used = t["last_used_at"]
+            .as_str()
+            .and_then(|d| d.get(..10))
+            .unwrap_or("never");
         lines.push(format!(
             "| {} | {} | {} | {} | {expires} | {last_used} | {state} |",
             t["id"].as_u64().unwrap_or(0),
@@ -1596,7 +1654,10 @@ pub async fn revoke_project_access_token(
     token_id: u64,
     confirm_name: &str,
 ) -> Result<String> {
-    let path = format!("/projects/{}/access_tokens/{token_id}", urlencoding::encode(project_id));
+    let path = format!(
+        "/projects/{}/access_tokens/{token_id}",
+        urlencoding::encode(project_id)
+    );
     let token: Value = client.get(&path, &[]).await?;
     let name = token["name"].as_str().unwrap_or("");
     if name != confirm_name {
@@ -1605,7 +1666,9 @@ pub async fn revoke_project_access_token(
         )));
     }
     if token["revoked"].as_bool().unwrap_or(false) {
-        return Err(Error::user_input(format!("token {token_id} (`{name}`) is already revoked.")));
+        return Err(Error::user_input(format!(
+            "token {token_id} (`{name}`) is already revoked."
+        )));
     }
     client.delete(&path).await?;
     Ok(format!(
@@ -1616,8 +1679,8 @@ pub async fn revoke_project_access_token(
 #[cfg(test)]
 mod pat_tests {
     use super::{
-        pat_request_error, render_access_tokens, render_credential, runner_facts, runner_verdict,
-        CredentialDelivery, RunnerFacts, RunnerVerdict,
+        CredentialDelivery, RunnerFacts, RunnerVerdict, pat_request_error, render_access_tokens,
+        render_credential, runner_facts, runner_verdict,
     };
 
     /// Key-shaped literals never live in the repo, not even fake ones — assembled here.
@@ -1636,11 +1699,23 @@ mod pat_tests {
             "ci-push",
             "group/proj",
             &meta,
-            &CredentialDelivery::Stored { key: "CI_PUSH_TOKEN", protected: false },
+            &CredentialDelivery::Stored {
+                key: "CI_PUSH_TOKEN",
+                protected: false,
+            },
         );
-        assert!(!out.contains(&secret), "value leaked into a stored response: {out}");
-        assert!(!out.contains("glpat-"), "even the prefix must not appear: {out}");
-        assert!(out.contains("CI_PUSH_TOKEN"), "the variable key is the useful part: {out}");
+        assert!(
+            !out.contains(&secret),
+            "value leaked into a stored response: {out}"
+        );
+        assert!(
+            !out.contains("glpat-"),
+            "even the prefix must not appear: {out}"
+        );
+        assert!(
+            out.contains("CI_PUSH_TOKEN"),
+            "the variable key is the useful part: {out}"
+        );
         assert!(out.contains("**ID:** 42"), "metadata must survive: {out}");
     }
 
@@ -1656,7 +1731,10 @@ mod pat_tests {
             &CredentialDelivery::Revealed { value: &secret },
         );
         assert!(out.contains(&secret));
-        assert!(out.contains("disclosed"), "the reveal path must name the consequence: {out}");
+        assert!(
+            out.contains("disclosed"),
+            "the reveal path must name the consequence: {out}"
+        );
     }
 
     #[test]
@@ -1666,7 +1744,11 @@ mod pat_tests {
             tags: t.iter().map(|s| s.to_string()).collect(),
             run_untagged: false,
         };
-        let untagged_ok = RunnerFacts { online: true, tags: vec![], run_untagged: true };
+        let untagged_ok = RunnerFacts {
+            online: true,
+            tags: vec![],
+            run_untagged: true,
+        };
         let docker = vec!["docker".to_string()];
 
         // Four situations GitLab renders as the same `pending (0s)`.
@@ -1695,7 +1777,10 @@ mod pat_tests {
         // Every tag must be present on one runner, not spread across two.
         let both = vec!["docker".to_string(), "arm64".to_string()];
         assert_eq!(
-            runner_verdict(&[tagged(&["docker"], true), tagged(&["arm64"], true)], &both),
+            runner_verdict(
+                &[tagged(&["docker"], true), tagged(&["arm64"], true)],
+                &both
+            ),
             RunnerVerdict::NoTagMatch
         );
         assert_eq!(
@@ -1709,7 +1794,10 @@ mod pat_tests {
         // Neither route chosen: refuse up front. Minting a credential nobody can read
         // leaves litter that has to be hunted down later.
         let err = pat_request_error(&["api"], 30, "", false).expect("must refuse");
-        assert!(err.contains("choose how the credential is delivered"), "{err}");
+        assert!(
+            err.contains("choose how the credential is delivered"),
+            "{err}"
+        );
         assert!(err.contains("Nothing was created"), "{err}");
 
         // Either route on its own is enough.
@@ -1719,13 +1807,22 @@ mod pat_tests {
 
     #[test]
     fn scope_and_level_are_validated_up_front() {
-        assert!(pat_request_error(&[], 30, "K", false).is_some(), "empty scopes");
+        assert!(
+            pat_request_error(&[], 30, "K", false).is_some(),
+            "empty scopes"
+        );
         let err = pat_request_error(&["write_everything"], 30, "K", false).expect("bad scope");
         assert!(err.contains("Invalid scope"), "{err}");
         // write_repository is the whole reason this exists alongside deploy tokens.
         assert!(pat_request_error(&["write_repository"], 40, "K", false).is_none());
-        assert!(pat_request_error(&["api"], 35, "K", false).is_some(), "35 is not a level");
-        assert!(pat_request_error(&["api"], 0, "K", false).is_some(), "0 is not a level");
+        assert!(
+            pat_request_error(&["api"], 35, "K", false).is_some(),
+            "35 is not a level"
+        );
+        assert!(
+            pat_request_error(&["api"], 0, "K", false).is_some(),
+            "0 is not a level"
+        );
     }
 
     #[test]
@@ -1752,12 +1849,21 @@ mod pat_tests {
         assert!(out.contains("4 (2 active)"));
         let pos = |n: &str| out.find(&format!("| {n} |")).unwrap();
         assert!(pos("soon") < pos("later"), "active, soonest expiry first");
-        assert!(pos("later") < pos("old") && pos("later") < pos("lapsed"), "inactive last");
-        assert!(out.contains("2026-01-15 ⚠️ 5d"), "expiry within 7 days flagged");
+        assert!(
+            pos("later") < pos("old") && pos("later") < pos("lapsed"),
+            "inactive last"
+        );
+        assert!(
+            out.contains("2026-01-15 ⚠️ 5d"),
+            "expiry within 7 days flagged"
+        );
         assert!(!out.contains("2026-06-01 ⚠️"));
         assert!(out.contains("| revoked |") && out.contains("| expired |"));
         assert!(out.contains("Maintainer") && out.contains("| 2026-01-09 |"));
-        assert_eq!(render_access_tokens("g/p", &[], today), "No access tokens on **g/p**.");
+        assert_eq!(
+            render_access_tokens("g/p", &[], today),
+            "No access tokens on **g/p**."
+        );
     }
 
     #[test]
@@ -1768,6 +1874,9 @@ mod pat_tests {
             json!({"online": false, "tag_list": []}),
         ]);
         assert!(f[0].online && f[0].tags == ["docker", "linux"] && !f[0].run_untagged);
-        assert!(!f[1].online && f[1].run_untagged, "run_untagged defaults to true");
+        assert!(
+            !f[1].online && f[1].run_untagged,
+            "run_untagged defaults to true"
+        );
     }
 }

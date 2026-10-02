@@ -20,16 +20,15 @@
 //! reverse-drift (code endpoints absent from the spec) can be layered on top
 //! without re-deriving the heuristics here.
 
-use std::fmt::Write as _;
 use crate::client::GitLabClient;
 use crate::error::{Result, ResultExt};
 use futures::future::join_all;
 use serde_json::Value;
+use std::fmt::Write as _;
 use std::sync::LazyLock;
 
 /// Inline HTML tags used for colour-coding in wiki tables.
-static HTML_RE: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new(r"<[^>]+>").unwrap());
+static HTML_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"<[^>]+>").unwrap());
 
 /// `{{api}}` / `{{cdn}}` style template tokens prefixed to documented routes.
 static TEMPLATE_RE: LazyLock<regex::Regex> =
@@ -41,8 +40,9 @@ static INTERP_RE: LazyLock<regex::Regex> =
 
 /// First path-like token in a cell: an absolute `/a/b` path, or a relative
 /// `a/b` path with at least one slash. Bare single words don't match.
-static PATH_RE: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new(r"/[A-Za-z0-9_][\w\-./]*|[A-Za-z0-9_]+(?:/[\w\-.]+)+").unwrap());
+static PATH_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"/[A-Za-z0-9_][\w\-./]*|[A-Za-z0-9_]+(?:/[\w\-.]+)+").unwrap()
+});
 
 /// Documented version, requiring at least one dot (so "version 4" alone is ignored).
 static VERSION_RE: LazyLock<regex::Regex> =
@@ -64,14 +64,14 @@ static UUID_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
 });
 
 /// Email addresses (service-account credentials).
-static EMAIL_RE: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new(r"(?i)\b[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}\b").unwrap());
+static EMAIL_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"(?i)\b[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}\b").unwrap()
+});
 
 /// A quoted, leading-slash path literal in source code, e.g. `return "/v3/user"`.
 /// Group 1 is the raw path (interpolation normalized out later).
-static LITERAL_PATH_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
-    regex::Regex::new(r#"["'](/[A-Za-z0-9_][\w\-./{}()\\:]*)["']"#).unwrap()
-});
+static LITERAL_PATH_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r#"["'](/[A-Za-z0-9_][\w\-./{}()\\:]*)["']"#).unwrap());
 
 /// `{identifier}` path-parameter placeholder.
 static BRACE_RE: LazyLock<regex::Regex> =
@@ -95,21 +95,30 @@ static MULTISLASH_RE: LazyLock<regex::Regex> =
 /// single-quote forms are seeded so single-quote languages (PHP/Laravel, Ruby,
 /// Python) aren't missed, plus call-style forms like `Route::get('/...')`.
 const HARVEST_SEEDS: &[&str] = &[
-    "return \"/", "= \"/", ": \"/", "\"/v", "\"/api",
-    "return '/", "= '/", ": '/", "'/v", "'/api",
-    "('/", "(\"/",
+    "return \"/",
+    "= \"/",
+    ": \"/",
+    "\"/v",
+    "\"/api",
+    "return '/",
+    "= '/",
+    ": '/",
+    "'/v",
+    "'/api",
+    "('/",
+    "(\"/",
 ];
 
 /// Substrings (lowercased) that mark a documented route as deprecated / scheduled
 /// for removal. Mix of English and the Russian annotations used in the spec wiki.
 const DEPRECATION_MARKERS: &[&str] = &[
-    "неиспольз",   // covers "не используется" and the misspelling "неиспользуеться"
+    "неиспольз", // covers "не используется" and the misspelling "неиспользуеться"
     "не использ",
     "убрать",
     "почистить",
     "заглушка",
     "удалить",
-    "moccasin",    // background-color used to grey-out deprecated rows
+    "moccasin", // background-color used to grey-out deprecated rows
     "deprecated",
     "obsolete",
     "remove",
@@ -220,8 +229,10 @@ pub(crate) fn route_search_query(path: &str) -> Option<String> {
         [] => None,
         [one] => {
             // A single segment is reliable only when it's clearly distinctive.
-            let distinctive =
-                one.len() >= 6 && one.chars().any(|c| c == '-' || c == '_' || c.is_ascii_digit());
+            let distinctive = one.len() >= 6
+                && one
+                    .chars()
+                    .any(|c| c == '-' || c == '_' || c.is_ascii_digit());
             distinctive.then(|| one.to_string())
         }
         _ => {
@@ -275,7 +286,10 @@ pub(crate) fn normalize_code_path(p: &str) -> Option<String> {
 pub(crate) fn harvest_path_literals(content: &str) -> Vec<(String, u64)> {
     let mut out: Vec<(String, u64)> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let emit = |norm: String, line: u64, out: &mut Vec<(String, u64)>, seen: &mut std::collections::HashSet<String>| {
+    let emit = |norm: String,
+                line: u64,
+                out: &mut Vec<(String, u64)>,
+                seen: &mut std::collections::HashSet<String>| {
         if seen.insert(norm.clone()) {
             out.push((norm, line));
         }
@@ -299,7 +313,10 @@ pub(crate) fn harvest_path_literals(content: &str) -> Vec<(String, u64)> {
         // 2. Standalone leading-slash literals outside any consumed run.
         for cap in LITERAL_PATH_RE.captures_iter(line) {
             let whole = cap.get(0).unwrap();
-            if consumed.iter().any(|(s, e)| whole.start() >= *s && whole.end() <= *e) {
+            if consumed
+                .iter()
+                .any(|(s, e)| whole.start() >= *s && whole.end() <= *e)
+            {
                 continue;
             }
             if let Some(m) = cap.get(1) {
@@ -355,7 +372,11 @@ pub(crate) fn parse_spec(spec: &str) -> ParsedSpec {
             continue;
         }
 
-        let cells: Vec<&str> = line.split('|').map(str::trim).filter(|c| !c.is_empty()).collect();
+        let cells: Vec<&str> = line
+            .split('|')
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+            .collect();
         if cells.is_empty() {
             continue;
         }
@@ -411,7 +432,10 @@ impl VersionVerdict {
 /// "v4.9.5", "release-4.9.10", "app-v2.3.0" all parse. Requires ≥1 dot.
 fn parse_semver(s: &str) -> Option<Vec<u64>> {
     let run = SEMVER_RE.find(s)?.as_str();
-    let nums: Vec<u64> = run.split('.').filter_map(|p| p.parse::<u64>().ok()).collect();
+    let nums: Vec<u64> = run
+        .split('.')
+        .filter_map(|p| p.parse::<u64>().ok())
+        .collect();
     if nums.is_empty() { None } else { Some(nums) }
 }
 
@@ -475,7 +499,11 @@ pub(crate) fn mask_secret(kind: SecretKind, v: &str) -> String {
     match kind {
         SecretKind::Email => match v.split_once('@') {
             Some((local, domain)) => {
-                let head = local.chars().next().map(|c| c.to_string()).unwrap_or_default();
+                let head = local
+                    .chars()
+                    .next()
+                    .map(|c| c.to_string())
+                    .unwrap_or_default();
                 format!("{head}***@{domain}")
             }
             None => "***".to_string(),
@@ -508,22 +536,48 @@ fn secret_search_query(f: &SecretFinding) -> String {
 pub(crate) fn extract_secrets(spec: &str) -> Vec<SecretFinding> {
     let mut out: Vec<SecretFinding> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let push = |kind: SecretKind, v: &str, key: String, seen: &mut std::collections::HashSet<String>, out: &mut Vec<SecretFinding>| {
+    let push = |kind: SecretKind,
+                v: &str,
+                key: String,
+                seen: &mut std::collections::HashSet<String>,
+                out: &mut Vec<SecretFinding>| {
         if seen.insert(key) {
-            out.push(SecretFinding { kind, value: v.to_string(), masked: mask_secret(kind, v) });
+            out.push(SecretFinding {
+                kind,
+                value: v.to_string(),
+                masked: mask_secret(kind, v),
+            });
         }
     };
     // UUIDs and emails are matched first; base64 cannot overlap them (dashes / '@').
     for m in UUID_RE.find_iter(spec) {
-        push(SecretKind::Uuid, m.as_str(), m.as_str().to_lowercase(), &mut seen, &mut out);
+        push(
+            SecretKind::Uuid,
+            m.as_str(),
+            m.as_str().to_lowercase(),
+            &mut seen,
+            &mut out,
+        );
     }
     for m in EMAIL_RE.find_iter(spec) {
-        push(SecretKind::Email, m.as_str(), m.as_str().to_lowercase(), &mut seen, &mut out);
+        push(
+            SecretKind::Email,
+            m.as_str(),
+            m.as_str().to_lowercase(),
+            &mut seen,
+            &mut out,
+        );
     }
     for m in SECRET_B64_RE.find_iter(spec) {
         let v = m.as_str();
         if looks_like_b64_secret(v) {
-            push(SecretKind::Base64Secret, v, v.to_string(), &mut seen, &mut out);
+            push(
+                SecretKind::Base64Secret,
+                v,
+                v.to_string(),
+                &mut seen,
+                &mut out,
+            );
         }
     }
     out
@@ -579,10 +633,20 @@ pub(crate) struct SpecSnapshot {
 fn safe_component(s: &str) -> String {
     let mapped: String = s
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let trimmed = mapped.trim_start_matches('.');
-    if trimmed.is_empty() { "_".to_string() } else { trimmed.to_string() }
+    if trimmed.is_empty() {
+        "_".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// `~/.gl-mcp/spec_maps/{project}__{ref}[__{key}].json`. Every caller-controlled
@@ -596,7 +660,11 @@ fn safe_component(s: &str) -> String {
 fn map_path(project_id: &str, ref_name: &str, map_key: &str) -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
     let name = if map_key.is_empty() {
-        format!("{}__{}.json", safe_component(project_id), safe_component(ref_name))
+        format!(
+            "{}__{}.json",
+            safe_component(project_id),
+            safe_component(ref_name)
+        )
     } else {
         format!(
             "{}__{}__{}.json",
@@ -605,7 +673,10 @@ fn map_path(project_id: &str, ref_name: &str, map_key: &str) -> std::path::PathB
             safe_component(map_key)
         )
     };
-    std::path::PathBuf::from(home).join(".gl-mcp").join("spec_maps").join(name)
+    std::path::PathBuf::from(home)
+        .join(".gl-mcp")
+        .join("spec_maps")
+        .join(name)
 }
 
 /// Previous snapshot, if any. A missing file is the normal first run; an unreadable
@@ -681,10 +752,16 @@ fn diff_snapshots(prev: &SpecSnapshot, new: &SpecSnapshot) -> Vec<String> {
         ));
     }
 
-    let prev_routes: HashMap<&str, &str> =
-        prev.routes.iter().map(|r| (r.path.as_str(), r.verdict.as_str())).collect();
-    let new_routes: HashMap<&str, &str> =
-        new.routes.iter().map(|r| (r.path.as_str(), r.verdict.as_str())).collect();
+    let prev_routes: HashMap<&str, &str> = prev
+        .routes
+        .iter()
+        .map(|r| (r.path.as_str(), r.verdict.as_str()))
+        .collect();
+    let new_routes: HashMap<&str, &str> = new
+        .routes
+        .iter()
+        .map(|r| (r.path.as_str(), r.verdict.as_str()))
+        .collect();
     for r in &new.routes {
         match prev_routes.get(r.path.as_str()) {
             None => lines.push(format!("+ route `{}` ({})", r.path, r.verdict)),
@@ -700,10 +777,16 @@ fn diff_snapshots(prev: &SpecSnapshot, new: &SpecSnapshot) -> Vec<String> {
         }
     }
 
-    let prev_secrets: HashMap<&str, bool> =
-        prev.secrets.iter().map(|s| (s.masked.as_str(), s.hardcoded)).collect();
-    let new_secrets: HashMap<&str, bool> =
-        new.secrets.iter().map(|s| (s.masked.as_str(), s.hardcoded)).collect();
+    let prev_secrets: HashMap<&str, bool> = prev
+        .secrets
+        .iter()
+        .map(|s| (s.masked.as_str(), s.hardcoded))
+        .collect();
+    let new_secrets: HashMap<&str, bool> = new
+        .secrets
+        .iter()
+        .map(|s| (s.masked.as_str(), s.hardcoded))
+        .collect();
     for s in &new.secrets {
         match prev_secrets.get(s.masked.as_str()) {
             None => lines.push(format!("+ secret `{}` ({})", s.masked, s.kind)),
@@ -731,7 +814,9 @@ fn diff_snapshots(prev: &SpecSnapshot, new: &SpecSnapshot) -> Vec<String> {
     }
     for p in &prev.undocumented {
         if !new_undoc.contains(p.as_str()) {
-            lines.push(format!("- undocumented endpoint `{p}` resolved (now documented or gone)"));
+            lines.push(format!(
+                "- undocumented endpoint `{p}` resolved (now documented or gone)"
+            ));
         }
     }
 
@@ -826,10 +911,39 @@ const ROUTES_FILE_CAP: usize = 60;
 /// harvester would find nothing useful in them anyway, and they cost a fetch.
 fn is_code_file(path: &str) -> bool {
     const SKIP: &[&str] = &[
-        ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp", ".bmp", ".pdf",
-        ".lock", ".zip", ".gz", ".tar", ".woff", ".woff2", ".ttf", ".eot", ".otf",
-        ".mp4", ".mp3", ".wav", ".bin", ".so", ".a", ".o", ".class", ".jar",
-        ".keystore", ".jks", ".p12", ".ipa", ".apk", ".dmg",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".svg",
+        ".ico",
+        ".webp",
+        ".bmp",
+        ".pdf",
+        ".lock",
+        ".zip",
+        ".gz",
+        ".tar",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".eot",
+        ".otf",
+        ".mp4",
+        ".mp3",
+        ".wav",
+        ".bin",
+        ".so",
+        ".a",
+        ".o",
+        ".class",
+        ".jar",
+        ".keystore",
+        ".jks",
+        ".p12",
+        ".ipa",
+        ".apk",
+        ".dmg",
     ];
     let lower = path.to_lowercase();
     !SKIP.iter().any(|ext| lower.ends_with(ext))
@@ -863,7 +977,11 @@ async fn resolve_routes_files(
 
     // Build the flat list of file paths to fetch.
     let mut paths: Vec<String> = Vec::new();
-    for entry in routes_file.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+    for entry in routes_file
+        .split(',')
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+    {
         let mut params: Vec<(&str, &str)> =
             vec![("path", entry), ("recursive", "true"), ("per_page", "100")];
         if !search_ref.is_empty() {
@@ -888,7 +1006,10 @@ async fn resolve_routes_files(
         }
     }
     if paths.len() > ROUTES_FILE_CAP {
-        tracing::warn!("routes_file expanded to {} files; capping at {ROUTES_FILE_CAP}", paths.len());
+        tracing::warn!(
+            "routes_file expanded to {} files; capping at {ROUTES_FILE_CAP}",
+            paths.len()
+        );
         paths.truncate(ROUTES_FILE_CAP);
     }
 
@@ -942,7 +1063,11 @@ pub(crate) async fn compute_audit(
     let project: Value = client.get(&format!("/projects/{encoded}"), &[]).await?;
     let web_url = project["web_url"].as_str().unwrap_or("").to_string();
     let default_branch = project["default_branch"].as_str().unwrap_or("main");
-    let search_ref = if ref_name.is_empty() { default_branch } else { ref_name };
+    let search_ref = if ref_name.is_empty() {
+        default_branch
+    } else {
+        ref_name
+    };
 
     let parsed = parse_spec(spec);
 
@@ -954,15 +1079,21 @@ pub(crate) async fn compute_audit(
         )
         .await
         .or_default_logged();
-    let latest_tag = tags.first().and_then(|t| t["name"].as_str()).map(String::from);
+    let latest_tag = tags
+        .first()
+        .and_then(|t| t["name"].as_str())
+        .map(String::from);
     let version_verdict = compare_versions(parsed.version.as_deref(), latest_tag.as_deref());
 
     // Documented match-keys and namespaces, captured before `parsed.routes` is
     // consumed below — used for reverse-drift.
     let documented_keys: std::collections::HashSet<String> =
         parsed.routes.iter().map(|r| path_key(&r.path)).collect();
-    let documented_ns: std::collections::HashSet<String> =
-        parsed.routes.iter().filter_map(|r| first_segment(&r.path)).collect();
+    let documented_ns: std::collections::HashSet<String> = parsed
+        .routes
+        .iter()
+        .filter_map(|r| first_segment(&r.path))
+        .collect();
 
     // Search searchable routes concurrently (chunks of 10); non-searchable routes
     // go straight to NeedsReview with no API call.
@@ -990,7 +1121,11 @@ pub(crate) async fn compute_audit(
             async move {
                 let hits = search_route(&client, &encoded, &query, &search_ref).await;
                 let verdict = classify(route.status, true, !hits.is_empty());
-                RouteAudit { route, hits, verdict }
+                RouteAudit {
+                    route,
+                    hits,
+                    verdict,
+                }
             }
         });
         audits.extend(join_all(futs).await);
@@ -1007,7 +1142,10 @@ pub(crate) async fn compute_audit(
             let finding = finding.clone();
             async move {
                 let hardcoded_in = search_route(&client, &encoded, &query, &search_ref).await;
-                SecretAudit { finding, hardcoded_in }
+                SecretAudit {
+                    finding,
+                    hardcoded_in,
+                }
             }
         });
         secret_audits.extend(join_all(futs).await);
@@ -1016,24 +1154,26 @@ pub(crate) async fn compute_audit(
     // Reverse drift: endpoints in code the spec never documented. Build a
     // code-side inventory (from a named routes file if given, else harvested by
     // search) and subtract the documented paths by match-key.
-    let (code_endpoints, harvest_mode): (Vec<(String, u64, String)>, &str) = if !routes_file.is_empty()
-    {
-        // routes_file may be a single file, a comma-separated list, or a directory
-        // (expanded to every code file under it). Harvest all, dedup by path.
-        let files = resolve_routes_files(client, project_id, search_ref, routes_file).await;
-        (harvest_multi(&files), "file")
-    } else {
-        // Search-harvested literals are noisy — keep only paths in a namespace
-        // the spec already documents (suppresses filesystem/asset junk).
-        let eps = harvest_via_search(client, &encoded, search_ref)
-            .await
-            .into_iter()
-            .filter(|(p, _, _)| {
-                first_segment(p).map(|s| documented_ns.contains(&s)).unwrap_or(false)
-            })
-            .collect();
-        (eps, "search")
-    };
+    let (code_endpoints, harvest_mode): (Vec<(String, u64, String)>, &str) =
+        if !routes_file.is_empty() {
+            // routes_file may be a single file, a comma-separated list, or a directory
+            // (expanded to every code file under it). Harvest all, dedup by path.
+            let files = resolve_routes_files(client, project_id, search_ref, routes_file).await;
+            (harvest_multi(&files), "file")
+        } else {
+            // Search-harvested literals are noisy — keep only paths in a namespace
+            // the spec already documents (suppresses filesystem/asset junk).
+            let eps = harvest_via_search(client, &encoded, search_ref)
+                .await
+                .into_iter()
+                .filter(|(p, _, _)| {
+                    first_segment(p)
+                        .map(|s| documented_ns.contains(&s))
+                        .unwrap_or(false)
+                })
+                .collect();
+            (eps, "search")
+        };
     let mut undocumented: Vec<(String, u64, String)> = code_endpoints
         .into_iter()
         .filter(|(p, _, _)| !documented_keys.contains(&path_key(p)))
@@ -1053,7 +1193,9 @@ pub(crate) async fn compute_audit(
         &secret_audits,
         &undocumented,
     );
-    let changes = prev.as_ref().map(|p| (p.scanned_at.clone(), diff_snapshots(p, &snapshot)));
+    let changes = prev
+        .as_ref()
+        .map(|p| (p.scanned_at.clone(), diff_snapshots(p, &snapshot)));
     if let Err(e) = save_snapshot(&snapshot, map_key).await {
         tracing::warn!("failed to persist spec map: {e}");
     }
@@ -1166,7 +1308,11 @@ fn sweep_row(label: &str, o: &AuditOutcome) -> SweepRow {
         undoc: o.undocumented.len(),
         approx: o.harvest_mode == "search",
         secrets: o.secrets.len(),
-        hardcoded: o.secrets.iter().filter(|s| !s.hardcoded_in.is_empty()).count(),
+        hardcoded: o
+            .secrets
+            .iter()
+            .filter(|s| !s.hardcoded_in.is_empty())
+            .count(),
         in_sync: count(Verdict::InSync),
     }
 }
@@ -1174,18 +1320,37 @@ fn sweep_row(label: &str, o: &AuditOutcome) -> SweepRow {
 /// Render the cross-platform rollup. Pure — unit-tested without the network.
 fn render_sweep(rows: &[SweepRow], summary_only: bool) -> String {
     let mut out: Vec<String> = Vec::new();
-    out.push(format!("# Cross-platform spec-drift sweep — {} platforms", rows.len()));
+    out.push(format!(
+        "# Cross-platform spec-drift sweep — {} platforms",
+        rows.len()
+    ));
     out.push(String::new());
-    out.push("| Platform | Version | Cleanup | Drift | Stale | Undoc | Secrets | In-sync |".to_string());
-    out.push("|----------|---------|---------|-------|-------|-------|---------|---------|".to_string());
+    out.push(
+        "| Platform | Version | Cleanup | Drift | Stale | Undoc | Secrets | In-sync |".to_string(),
+    );
+    out.push(
+        "|----------|---------|---------|-------|-------|-------|---------|---------|".to_string(),
+    );
     for r in rows {
         if let Some(e) = &r.error {
             out.push(format!("| {} | failed: {} | | | | | | |", r.label, e));
         } else {
-            let undoc = if r.approx { format!("{}~", r.undoc) } else { r.undoc.to_string() };
+            let undoc = if r.approx {
+                format!("{}~", r.undoc)
+            } else {
+                r.undoc.to_string()
+            };
             out.push(format!(
                 "| {} | {} | {} | {} | {} | {} | {} ({} hc) | {} |",
-                r.label, r.version, r.cleanup, r.drift, r.stale, undoc, r.secrets, r.hardcoded, r.in_sync
+                r.label,
+                r.version,
+                r.cleanup,
+                r.drift,
+                r.stale,
+                undoc,
+                r.secrets,
+                r.hardcoded,
+                r.in_sync
             ));
         }
     }
@@ -1201,7 +1366,13 @@ fn render_sweep(rows: &[SweepRow], summary_only: bool) -> String {
     // Needs-attention: platforms with actionable findings.
     let flagged: Vec<&SweepRow> = rows
         .iter()
-        .filter(|r| r.error.is_none() && (r.cleanup > 0 || r.drift > 0 || r.hardcoded > 0 || r.version.starts_with("STALE")))
+        .filter(|r| {
+            r.error.is_none()
+                && (r.cleanup > 0
+                    || r.drift > 0
+                    || r.hardcoded > 0
+                    || r.version.starts_with("STALE"))
+        })
         .collect();
     if !flagged.is_empty() {
         out.push(String::new());
@@ -1241,7 +1412,9 @@ fn render_sweep(rows: &[SweepRow], summary_only: bool) -> String {
     ));
     let failed = rows.len() - ok.len();
     if failed > 0 {
-        out.push(format!("{failed} platform(s) failed to audit — see the table."));
+        out.push(format!(
+            "{failed} platform(s) failed to audit — see the table."
+        ));
     }
 
     out.join("\n")
@@ -1263,7 +1436,15 @@ pub async fn sweep_spec_audit(
             async move {
                 // Disambiguate the metadata-map snapshot by label so platforms
                 // sharing a repo+ref (e.g. Windows & macOS desktop) don't collide.
-                let r = compute_audit(&client, &t.project_id, &t.spec, &t.ref_name, &t.routes_file, &t.label).await;
+                let r = compute_audit(
+                    &client,
+                    &t.project_id,
+                    &t.spec,
+                    &t.ref_name,
+                    &t.routes_file,
+                    &t.label,
+                )
+                .await;
                 (t.label.clone(), r)
             }
         });
@@ -1289,17 +1470,15 @@ pub async fn sweep_spec_audit(
     Ok(render_sweep(&rows, summary_only))
 }
 
-fn version_line(
-    doc: Option<&str>,
-    tag: Option<&str>,
-    verdict: VersionVerdict,
-) -> String {
+fn version_line(doc: Option<&str>, tag: Option<&str>, verdict: VersionVerdict) -> String {
     let doc = doc.unwrap_or("?");
     let tag = tag.unwrap_or("none");
     match verdict {
         VersionVerdict::InSync => format!("In sync — spec `{doc}` matches latest tag `{tag}`."),
         VersionVerdict::DocBehind => {
-            format!("**Spec is stale** — spec says `{doc}`, latest tag is `{tag}`. Refresh the spec.")
+            format!(
+                "**Spec is stale** — spec says `{doc}`, latest tag is `{tag}`. Refresh the spec."
+            )
         }
         VersionVerdict::DocAhead => {
             format!("Spec `{doc}` is ahead of latest tag `{tag}` — unreleased, or tags lag.")
@@ -1331,13 +1510,19 @@ fn render_report(
     let stale = count(Verdict::StaleDoc);
     let in_sync = count(Verdict::InSync);
     let review = count(Verdict::NeedsReview);
-    let hardcoded = secrets.iter().filter(|s| !s.hardcoded_in.is_empty()).count();
+    let hardcoded = secrets
+        .iter()
+        .filter(|s| !s.hardcoded_in.is_empty())
+        .count();
 
     if summary_only {
         let secrets_note = if secrets.is_empty() {
             String::new()
         } else {
-            format!("; {} secrets ({hardcoded} hardcoded in code)", secrets.len())
+            format!(
+                "; {} secrets ({hardcoded} hardcoded in code)",
+                secrets.len()
+            )
         };
         let undoc_note = if undocumented.is_empty() {
             String::new()
@@ -1400,8 +1585,7 @@ fn render_report(
                 let _ = write!(line, " ({})", a.route.label);
             }
             if show_hits && !a.hits.is_empty() {
-                let links: Vec<String> =
-                    a.hits.iter().map(|(f, l)| hit_link(f, *l)).collect();
+                let links: Vec<String> = a.hits.iter().map(|(f, l)| hit_link(f, *l)).collect();
                 let _ = write!(line, " → {}", links.join(", "));
             }
             out.push(line);
@@ -1489,8 +1673,10 @@ fn render_report(
 
     out.push(String::new());
     out.push(format!("## In sync ({in_sync})"));
-    let synced: Vec<&RouteAudit> =
-        audits.iter().filter(|a| a.verdict == Verdict::InSync).collect();
+    let synced: Vec<&RouteAudit> = audits
+        .iter()
+        .filter(|a| a.verdict == Verdict::InSync)
+        .collect();
     for a in synced {
         out.push(format!("- `{}`", a.route.path));
     }
@@ -1532,7 +1718,7 @@ const AUTO_OPEN_SCRIPT: &str = "<script>\nfunction openTarget(){var el=document.
 /// Render the audit as a clickable dark-theme HTML report (matches the AI-adoption
 /// report house style: summary cards → anchors, GitLab file links, Export PDF).
 fn render_html(o: &AuditOutcome) -> String {
-    use crate::tools::reports::{htmlescape as esc, EXPORT_BUTTON, PRINT_CSS};
+    use crate::tools::reports::{EXPORT_BUTTON, PRINT_CSS, htmlescape as esc};
     let date_str = chrono::Utc::now().format("%A, %d %B %Y").to_string();
     let version = env!("CARGO_PKG_VERSION");
     let pid = esc(&o.project_id);
@@ -1559,8 +1745,13 @@ fn render_html(o: &AuditOutcome) -> String {
     let stale = count(Verdict::StaleDoc);
     let in_sync = count(Verdict::InSync);
     let review = count(Verdict::NeedsReview);
-    let hardcoded = o.secrets.iter().filter(|s| !s.hardcoded_in.is_empty()).count();
-    let by = |v: Verdict| -> Vec<&RouteAudit> { o.audits.iter().filter(|a| a.verdict == v).collect() };
+    let hardcoded = o
+        .secrets
+        .iter()
+        .filter(|s| !s.hardcoded_in.is_empty())
+        .count();
+    let by =
+        |v: Verdict| -> Vec<&RouteAudit> { o.audits.iter().filter(|a| a.verdict == v).collect() };
 
     let (vclass, vword) = match o.version_verdict {
         VersionVerdict::InSync => ("g", "in sync"),
@@ -1580,53 +1771,112 @@ fn render_html(o: &AuditOutcome) -> String {
     h.push_str(AUTO_OPEN_SCRIPT);
 
     let _ = writeln!(h, "<h1>Spec-drift audit — {pid}</h1>");
-    let _ = writeln!(h, "<div class=\"sub\">Ref <code>{}</code> &middot; {} routes parsed from spec &middot; {date_str}</div>",
+    let _ = writeln!(
+        h,
+        "<div class=\"sub\">Ref <code>{}</code> &middot; {} routes parsed from spec &middot; {date_str}</div>",
         esc(&o.search_ref),
         o.audits.len()
     );
 
     // Summary cards.
     h.push_str("<div class=\"grid\">\n");
-    let _ = writeln!(h, "<div class=\"card\"><div class=\"card-t\">Version</div><div class=\"card-v {vclass}\"><a href=\"#version\">{vword}</a></div><div class=\"card-s\">spec vs latest tag</div></div>"
+    let _ = writeln!(
+        h,
+        "<div class=\"card\"><div class=\"card-t\">Version</div><div class=\"card-v {vclass}\"><a href=\"#version\">{vword}</a></div><div class=\"card-s\">spec vs latest tag</div></div>"
     );
     let card = |title: &str, n: usize, cls: &str, href: &str, sub: &str| -> String {
-        format!("<div class=\"card\"><div class=\"card-t\">{title}</div><div class=\"card-v {cls}\"><a href=\"{href}\">{n}</a></div><div class=\"card-s\">{sub}</div></div>\n")
+        format!(
+            "<div class=\"card\"><div class=\"card-t\">{title}</div><div class=\"card-v {cls}\"><a href=\"{href}\">{n}</a></div><div class=\"card-s\">{sub}</div></div>\n"
+        )
     };
-    h.push_str(&card("Cleanup debt", cleanup, if cleanup > 0 { "y" } else { "g" }, "#cleanup", "flagged, still in code"));
-    h.push_str(&card("Drift", drift, if drift > 0 { "y" } else { "g" }, "#drift", "active, missing"));
+    h.push_str(&card(
+        "Cleanup debt",
+        cleanup,
+        if cleanup > 0 { "y" } else { "g" },
+        "#cleanup",
+        "flagged, still in code",
+    ));
+    h.push_str(&card(
+        "Drift",
+        drift,
+        if drift > 0 { "y" } else { "g" },
+        "#drift",
+        "active, missing",
+    ));
     h.push_str(&card("Stale doc", stale, "gr", "#stale", "flagged & gone"));
-    h.push_str(&card("Undocumented", o.undocumented.len(), if o.undocumented.is_empty() { "g" } else { "y" }, "#undocumented", "in code, not in spec"));
-    h.push_str(&card("Secrets", o.secrets.len(), if hardcoded > 0 { "r" } else if o.secrets.is_empty() { "g" } else { "y" }, "#security", &format!("{hardcoded} hardcoded")));
+    h.push_str(&card(
+        "Undocumented",
+        o.undocumented.len(),
+        if o.undocumented.is_empty() { "g" } else { "y" },
+        "#undocumented",
+        "in code, not in spec",
+    ));
+    h.push_str(&card(
+        "Secrets",
+        o.secrets.len(),
+        if hardcoded > 0 {
+            "r"
+        } else if o.secrets.is_empty() {
+            "g"
+        } else {
+            "y"
+        },
+        "#security",
+        &format!("{hardcoded} hardcoded"),
+    ));
     h.push_str("</div>\n");
 
     // Version.
     h.push_str("<h2 id=\"version\">Version</h2>\n");
-    let vcls = if o.version_verdict == VersionVerdict::DocBehind { "risk" } else if o.version_verdict == VersionVerdict::InSync { "ok" } else { "warn" };
-    let _ = writeln!(h, "<div class=\"issue {vcls}\"><b>spec <code>{}</code> &middot; latest tag <code>{}</code></b><div class=\"m\">{}</div></div>",
+    let vcls = if o.version_verdict == VersionVerdict::DocBehind {
+        "risk"
+    } else if o.version_verdict == VersionVerdict::InSync {
+        "ok"
+    } else {
+        "warn"
+    };
+    let _ = writeln!(
+        h,
+        "<div class=\"issue {vcls}\"><b>spec <code>{}</code> &middot; latest tag <code>{}</code></b><div class=\"m\">{}</div></div>",
         esc(o.doc_version.as_deref().unwrap_or("?")),
         esc(o.latest_tag.as_deref().unwrap_or("none")),
         match o.version_verdict {
             VersionVerdict::InSync => "In sync.",
             VersionVerdict::DocBehind => "Spec is stale — refresh it to the shipped version.",
-            VersionVerdict::DocAhead => "Spec is ahead of the latest tag — unreleased, or tags lag.",
+            VersionVerdict::DocAhead =>
+                "Spec is ahead of the latest tag — unreleased, or tags lag.",
             VersionVerdict::Unknown => "Could not compare.",
         }
     );
 
     // Changes since last audit.
     if let Some((since, lines)) = &o.changes {
-        let _ = writeln!(h, "<h2 id=\"changes\">Changes since last audit ({})</h2>", esc(since));
+        let _ = writeln!(
+            h,
+            "<h2 id=\"changes\">Changes since last audit ({})</h2>",
+            esc(since)
+        );
         if lines.is_empty() {
             h.push_str("<div class=\"issue ok\"><div class=\"m\">No changes.</div></div>\n");
         } else {
             for l in lines {
-                let _ = writeln!(h, "<div class=\"issue\"><div class=\"m\">{}</div></div>", esc(l));
+                let _ = writeln!(
+                    h,
+                    "<div class=\"issue\"><div class=\"m\">{}</div></div>",
+                    esc(l)
+                );
             }
         }
     }
 
     // Route-drift sections.
-    let route_section = |h: &mut String, id: &str, title: &str, blurb: &str, cls: &str, rows: &[&RouteAudit], show_hits: bool| {
+    let route_section = |h: &mut String,
+                         id: &str,
+                         title: &str,
+                         blurb: &str,
+                         cls: &str,
+                         rows: &[&RouteAudit],
+                         show_hits: bool| {
         if rows.is_empty() {
             return;
         }
@@ -1644,18 +1894,48 @@ fn render_html(o: &AuditOutcome) -> String {
             } else {
                 String::new()
             };
-            let _ = writeln!(h, "<div class=\"issue {cls}\"><b><code>{}</code></b>{label}{hits}</div>",
+            let _ = writeln!(
+                h,
+                "<div class=\"issue {cls}\"><b><code>{}</code></b>{label}{hits}</div>",
                 esc(&a.route.path)
             );
         }
     };
-    route_section(&mut h, "cleanup", "Cleanup debt", "Spec flags these for removal, but they're still wired in code.", "warn", &by(Verdict::CleanupDebt), true);
-    route_section(&mut h, "drift", "Drift", "Spec lists these as active, but they're missing from code.", "warn", &by(Verdict::Drift), false);
-    route_section(&mut h, "stale", "Stale doc rows", "Flagged for removal and already gone — safe to delete from the spec.", "ok", &by(Verdict::StaleDoc), false);
+    route_section(
+        &mut h,
+        "cleanup",
+        "Cleanup debt",
+        "Spec flags these for removal, but they're still wired in code.",
+        "warn",
+        &by(Verdict::CleanupDebt),
+        true,
+    );
+    route_section(
+        &mut h,
+        "drift",
+        "Drift",
+        "Spec lists these as active, but they're missing from code.",
+        "warn",
+        &by(Verdict::Drift),
+        false,
+    );
+    route_section(
+        &mut h,
+        "stale",
+        "Stale doc rows",
+        "Flagged for removal and already gone — safe to delete from the spec.",
+        "ok",
+        &by(Verdict::StaleDoc),
+        false,
+    );
 
     // Reverse drift.
     if !o.undocumented.is_empty() {
-        let _ = writeln!(h, "<h2 id=\"undocumented\">Undocumented endpoints ({})</h2>", o.undocumented.len());
+        let _ = writeln!(
+            h,
+            "<h2 id=\"undocumented\">Undocumented endpoints ({})</h2>",
+            o.undocumented.len()
+        );
         let blurb = if o.harvest_mode == "search" {
             "In code, not in the spec. Harvested by search within documented namespaces — pass a routes file for full coverage."
         } else {
@@ -1664,7 +1944,12 @@ fn render_html(o: &AuditOutcome) -> String {
         let _ = writeln!(h, "<p class=\"sub\">{blurb}</p>");
         h.push_str("<table>\n<tr><th>Endpoint</th><th>Location</th></tr>\n");
         for (path, line, file) in &o.undocumented {
-            let _ = writeln!(h, "<tr><td><code>{}</code></td><td>{}</td></tr>", esc(path), blob(file, *line));
+            let _ = writeln!(
+                h,
+                "<tr><td><code>{}</code></td><td>{}</td></tr>",
+                esc(path),
+                blob(file, *line)
+            );
         }
         h.push_str("</table>\n");
     }
@@ -1678,12 +1963,21 @@ fn render_html(o: &AuditOutcome) -> String {
         for s in ordered {
             let kind = s.finding.kind.label();
             if s.hardcoded_in.is_empty() {
-                let _ = writeln!(h, "<div class=\"issue warn\"><b><code>{}</code> [{kind}]</b><div class=\"m\">Doc-only leak — rotate the secret and restrict the doc.</div></div>",
+                let _ = writeln!(
+                    h,
+                    "<div class=\"issue warn\"><b><code>{}</code> [{kind}]</b><div class=\"m\">Doc-only leak — rotate the secret and restrict the doc.</div></div>",
                     esc(&s.finding.masked)
                 );
             } else {
-                let loc = s.hardcoded_in.iter().map(|(f, l)| blob(f, *l)).collect::<Vec<_>>().join(", ");
-                let _ = writeln!(h, "<div class=\"issue risk\"><b><code>{}</code> [{kind}]</b><div class=\"m\">Also hardcoded in code at {loc} — rotate AND remove from code.</div></div>",
+                let loc = s
+                    .hardcoded_in
+                    .iter()
+                    .map(|(f, l)| blob(f, *l))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let _ = writeln!(
+                    h,
+                    "<div class=\"issue risk\"><b><code>{}</code> [{kind}]</b><div class=\"m\">Also hardcoded in code at {loc} — rotate AND remove from code.</div></div>",
                     esc(&s.finding.masked)
                 );
             }
@@ -1696,19 +1990,30 @@ fn render_html(o: &AuditOutcome) -> String {
         let _ = writeln!(h, "<h2 id=\"review\">Needs review ({review})</h2>");
         h.push_str("<p class=\"sub\">Path too generic to match reliably — check by hand.</p>\n");
         for a in &review_rows {
-            let _ = writeln!(h, "<div class=\"issue\"><b><code>{}</code></b> <span class=\"gr\">({})</span></div>", esc(&a.route.path), esc(&a.route.label));
+            let _ = writeln!(
+                h,
+                "<div class=\"issue\"><b><code>{}</code></b> <span class=\"gr\">({})</span></div>",
+                esc(&a.route.path),
+                esc(&a.route.label)
+            );
         }
     }
 
     // In sync (collapsible).
     let synced = by(Verdict::InSync);
-    let _ = writeln!(h, "<details id=\"insync\"><summary>In sync ({in_sync})</summary>");
+    let _ = writeln!(
+        h,
+        "<details id=\"insync\"><summary>In sync ({in_sync})</summary>"
+    );
     for a in &synced {
         let _ = writeln!(h, "<div><code>{}</code></div>", esc(&a.route.path));
     }
     h.push_str("</details>\n");
 
-    let _ = write!(h, "\n<footer>gl-mcp v{version} &middot; {date_str}</footer>\n</body>\n</html>");
+    let _ = write!(
+        h,
+        "\n<footer>gl-mcp v{version} &middot; {date_str}</footer>\n</body>\n</html>"
+    );
     h
 }
 
@@ -1735,9 +2040,23 @@ fn render_sweep_html(teams: &[(String, Option<AuditOutcome>)]) -> String {
     let date_str = chrono::Utc::now().format("%A, %d %B %Y").to_string();
     let version = env!("CARGO_PKG_VERSION");
     let count = |o: &AuditOutcome, v: Verdict| o.audits.iter().filter(|a| a.verdict == v).count();
-    let hc = |o: &AuditOutcome| o.secrets.iter().filter(|s| !s.hardcoded_in.is_empty()).count();
+    let hc = |o: &AuditOutcome| {
+        o.secrets
+            .iter()
+            .filter(|s| !s.hardcoded_in.is_empty())
+            .count()
+    };
     let anchor_of = |label: &str| -> String {
-        label.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' }).collect()
+        label
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() {
+                    c.to_ascii_lowercase()
+                } else {
+                    '-'
+                }
+            })
+            .collect()
     };
     let vshort = |v: VersionVerdict| match v {
         VersionVerdict::DocBehind => "STALE",
@@ -1749,34 +2068,83 @@ fn render_sweep_html(teams: &[(String, Option<AuditOutcome>)]) -> String {
         if web_url.is_empty() {
             format!("<code>{}:{}</code>", esc(file), line)
         } else {
-            format!("<a href=\"{}/-/blob/{}/{}#L{}\"><code>{}:{}</code></a>", esc(web_url), esc(search_ref), esc(file), line, esc(file), line)
+            format!(
+                "<a href=\"{}/-/blob/{}/{}#L{}\"><code>{}:{}</code></a>",
+                esc(web_url),
+                esc(search_ref),
+                esc(file),
+                line,
+                esc(file),
+                line
+            )
         }
     };
 
-    let oks: Vec<(&String, &AuditOutcome)> = teams.iter().filter_map(|(l, o)| o.as_ref().map(|x| (l, x))).collect();
+    let oks: Vec<(&String, &AuditOutcome)> = teams
+        .iter()
+        .filter_map(|(l, o)| o.as_ref().map(|x| (l, x)))
+        .collect();
     let tot_drift: usize = oks.iter().map(|(_, o)| count(o, Verdict::Drift)).sum();
     let tot_stale: usize = oks.iter().map(|(_, o)| count(o, Verdict::StaleDoc)).sum();
     let tot_undoc: usize = oks.iter().map(|(_, o)| o.undocumented.len()).sum();
     let tot_secrets: usize = oks.iter().map(|(_, o)| o.secrets.len()).sum();
     let tot_hc: usize = oks.iter().map(|(_, o)| hc(o)).sum();
-    let stale_ver = oks.iter().filter(|(_, o)| o.version_verdict == VersionVerdict::DocBehind).count();
+    let stale_ver = oks
+        .iter()
+        .filter(|(_, o)| o.version_verdict == VersionVerdict::DocBehind)
+        .count();
 
     let mut h = html_head(&format!("Cross-team spec-drift report — {date_str}"));
-    let _ = write!(h, "<h1>Cross-team spec-drift report</h1>\n<div class=\"sub\">{} teams &middot; {date_str}</div>\n",
+    let _ = write!(
+        h,
+        "<h1>Cross-team spec-drift report</h1>\n<div class=\"sub\">{} teams &middot; {date_str}</div>\n",
         teams.len()
     );
 
     // Summary cards.
     let card = |t: &str, v: String, cls: &str, sub: &str| {
-        format!("<div class=\"card\"><div class=\"card-t\">{t}</div><div class=\"card-v {cls}\">{v}</div><div class=\"card-s\">{sub}</div></div>\n")
+        format!(
+            "<div class=\"card\"><div class=\"card-t\">{t}</div><div class=\"card-v {cls}\">{v}</div><div class=\"card-s\">{sub}</div></div>\n"
+        )
     };
     h.push_str("<div class=\"grid\">\n");
     h.push_str(&card("Teams", teams.len().to_string(), "b", "audited"));
-    h.push_str(&card("Stale versions", stale_ver.to_string(), if stale_ver > 0 { "r" } else { "g" }, "spec behind tag"));
-    h.push_str(&card("Drift", tot_drift.to_string(), if tot_drift > 0 { "y" } else { "g" }, "active, missing"));
-    h.push_str(&card("Stale doc", tot_stale.to_string(), "gr", "flagged & gone"));
-    h.push_str(&card("Undocumented", tot_undoc.to_string(), if tot_undoc > 0 { "y" } else { "g" }, "in code, not in spec"));
-    h.push_str(&card("Secrets", tot_secrets.to_string(), if tot_hc > 0 { "r" } else if tot_secrets > 0 { "y" } else { "g" }, &format!("{tot_hc} hardcoded")));
+    h.push_str(&card(
+        "Stale versions",
+        stale_ver.to_string(),
+        if stale_ver > 0 { "r" } else { "g" },
+        "spec behind tag",
+    ));
+    h.push_str(&card(
+        "Drift",
+        tot_drift.to_string(),
+        if tot_drift > 0 { "y" } else { "g" },
+        "active, missing",
+    ));
+    h.push_str(&card(
+        "Stale doc",
+        tot_stale.to_string(),
+        "gr",
+        "flagged & gone",
+    ));
+    h.push_str(&card(
+        "Undocumented",
+        tot_undoc.to_string(),
+        if tot_undoc > 0 { "y" } else { "g" },
+        "in code, not in spec",
+    ));
+    h.push_str(&card(
+        "Secrets",
+        tot_secrets.to_string(),
+        if tot_hc > 0 {
+            "r"
+        } else if tot_secrets > 0 {
+            "y"
+        } else {
+            "g"
+        },
+        &format!("{tot_hc} hardcoded"),
+    ));
     h.push_str("</div>\n");
 
     // Cross-team table.
@@ -1784,20 +2152,40 @@ fn render_sweep_html(teams: &[(String, Option<AuditOutcome>)]) -> String {
     let mut approx_seen = false;
     for (label, o) in teams {
         match o {
-            None => { let _ = writeln!(h, "<tr><td><b>{}</b></td><td class=\"r\">failed to audit</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>", esc(label)); },
+            None => {
+                let _ = writeln!(
+                    h,
+                    "<tr><td><b>{}</b></td><td class=\"r\">failed to audit</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>",
+                    esc(label)
+                );
+            }
             Some(o) => {
-                if o.harvest_mode == "search" { approx_seen = true; }
-                let undoc = if o.harvest_mode == "search" { format!("{}~", o.undocumented.len()) } else { o.undocumented.len().to_string() };
+                if o.harvest_mode == "search" {
+                    approx_seen = true;
+                }
+                let undoc = if o.harvest_mode == "search" {
+                    format!("{}~", o.undocumented.len())
+                } else {
+                    o.undocumented.len().to_string()
+                };
                 let vcls = match o.version_verdict {
                     VersionVerdict::DocBehind => "r",
                     VersionVerdict::InSync => "g",
                     VersionVerdict::DocAhead => "y",
                     VersionVerdict::Unknown => "gr",
                 };
-                let _ = writeln!(h, "<tr><td><b><a href=\"#{}\">{}</a></b></td><td class=\"{vcls}\">{}</td><td>{}</td><td>{}</td><td>{}</td><td>{undoc}</td><td>{} ({} hc)</td><td>{}</td></tr>",
-                    anchor_of(label), esc(label), vshort(o.version_verdict),
-                    count(o, Verdict::CleanupDebt), count(o, Verdict::Drift), count(o, Verdict::StaleDoc),
-                    o.secrets.len(), hc(o), count(o, Verdict::InSync)
+                let _ = writeln!(
+                    h,
+                    "<tr><td><b><a href=\"#{}\">{}</a></b></td><td class=\"{vcls}\">{}</td><td>{}</td><td>{}</td><td>{}</td><td>{undoc}</td><td>{} ({} hc)</td><td>{}</td></tr>",
+                    anchor_of(label),
+                    esc(label),
+                    vshort(o.version_verdict),
+                    count(o, Verdict::CleanupDebt),
+                    count(o, Verdict::Drift),
+                    count(o, Verdict::StaleDoc),
+                    o.secrets.len(),
+                    hc(o),
+                    count(o, Verdict::InSync)
                 );
             }
         }
@@ -1808,62 +2196,157 @@ fn render_sweep_html(teams: &[(String, Option<AuditOutcome>)]) -> String {
     }
 
     // Needs attention.
-    let flagged: Vec<(&String, &AuditOutcome)> = oks.iter().copied()
-        .filter(|(_, o)| count(o, Verdict::CleanupDebt) > 0 || count(o, Verdict::Drift) > 0 || o.version_verdict == VersionVerdict::DocBehind || hc(o) > 0)
+    let flagged: Vec<(&String, &AuditOutcome)> = oks
+        .iter()
+        .copied()
+        .filter(|(_, o)| {
+            count(o, Verdict::CleanupDebt) > 0
+                || count(o, Verdict::Drift) > 0
+                || o.version_verdict == VersionVerdict::DocBehind
+                || hc(o) > 0
+        })
         .collect();
     if !flagged.is_empty() {
         h.push_str("<h2>Needs attention</h2>\n");
         for (label, o) in flagged {
             let mut notes: Vec<String> = Vec::new();
-            if o.version_verdict == VersionVerdict::DocBehind { notes.push("version stale".to_string()); }
-            let d = count(o, Verdict::Drift); if d > 0 { notes.push(format!("{d} drift")); }
-            let c = count(o, Verdict::CleanupDebt); if c > 0 { notes.push(format!("{c} cleanup-debt")); }
-            if hc(o) > 0 { notes.push(format!("{} hardcoded secret(s)", hc(o))); }
-            let _ = writeln!(h, "<div class=\"issue warn\"><b><a href=\"#{}\">{}</a></b><div class=\"m\">{}</div></div>", anchor_of(label), esc(label), notes.join(", "));
+            if o.version_verdict == VersionVerdict::DocBehind {
+                notes.push("version stale".to_string());
+            }
+            let d = count(o, Verdict::Drift);
+            if d > 0 {
+                notes.push(format!("{d} drift"));
+            }
+            let c = count(o, Verdict::CleanupDebt);
+            if c > 0 {
+                notes.push(format!("{c} cleanup-debt"));
+            }
+            if hc(o) > 0 {
+                notes.push(format!("{} hardcoded secret(s)", hc(o)));
+            }
+            let _ = writeln!(
+                h,
+                "<div class=\"issue warn\"><b><a href=\"#{}\">{}</a></b><div class=\"m\">{}</div></div>",
+                anchor_of(label),
+                esc(label),
+                notes.join(", ")
+            );
         }
     }
 
     // Per-team detail.
     for (label, o) in teams {
         let Some(o) = o else { continue };
-        let _ = writeln!(h, "<details id=\"{}\"><summary>{} — {} routes, {} undocumented</summary>", anchor_of(label), esc(label), o.audits.len(), o.undocumented.len());
-        let _ = writeln!(h, "<div class=\"m\">Version: spec <code>{}</code> vs tag <code>{}</code> ({})</div>",
-            esc(o.doc_version.as_deref().unwrap_or("?")), esc(o.latest_tag.as_deref().unwrap_or("none")), vshort(o.version_verdict)
+        let _ = writeln!(
+            h,
+            "<details id=\"{}\"><summary>{} — {} routes, {} undocumented</summary>",
+            anchor_of(label),
+            esc(label),
+            o.audits.len(),
+            o.undocumented.len()
+        );
+        let _ = writeln!(
+            h,
+            "<div class=\"m\">Version: spec <code>{}</code> vs tag <code>{}</code> ({})</div>",
+            esc(o.doc_version.as_deref().unwrap_or("?")),
+            esc(o.latest_tag.as_deref().unwrap_or("none")),
+            vshort(o.version_verdict)
         );
         let routes_of = |v: Verdict| -> String {
-            o.audits.iter().filter(|x| x.verdict == v).map(|x| format!("<code>{}</code>", esc(&x.route.path))).collect::<Vec<_>>().join(", ")
+            o.audits
+                .iter()
+                .filter(|x| x.verdict == v)
+                .map(|x| format!("<code>{}</code>", esc(&x.route.path)))
+                .collect::<Vec<_>>()
+                .join(", ")
         };
         let drift = routes_of(Verdict::Drift);
-        if !drift.is_empty() { let _ = writeln!(h, "<div class=\"m\"><b>Drift (active, missing):</b> {drift}</div>"); }
+        if !drift.is_empty() {
+            let _ = writeln!(
+                h,
+                "<div class=\"m\"><b>Drift (active, missing):</b> {drift}</div>"
+            );
+        }
         let stale = routes_of(Verdict::StaleDoc);
-        if !stale.is_empty() { let _ = writeln!(h, "<div class=\"m\"><b>Stale doc rows:</b> {stale}</div>"); }
+        if !stale.is_empty() {
+            let _ = writeln!(h, "<div class=\"m\"><b>Stale doc rows:</b> {stale}</div>");
+        }
         if !o.undocumented.is_empty() {
-            let _ = writeln!(h, "<div class=\"m\"><b>Undocumented endpoints ({}):</b></div>", o.undocumented.len());
+            let _ = writeln!(
+                h,
+                "<div class=\"m\"><b>Undocumented endpoints ({}):</b></div>",
+                o.undocumented.len()
+            );
             for (p, line, file) in o.undocumented.iter().take(15) {
-                let _ = writeln!(h, "<div class=\"m\">&middot; <code>{}</code> &rarr; {}</div>", esc(p), blob(&o.web_url, &o.search_ref, file, *line));
+                let _ = writeln!(
+                    h,
+                    "<div class=\"m\">&middot; <code>{}</code> &rarr; {}</div>",
+                    esc(p),
+                    blob(&o.web_url, &o.search_ref, file, *line)
+                );
             }
-            if o.undocumented.len() > 15 { let _ = writeln!(h, "<div class=\"m\">&hellip; and {} more</div>", o.undocumented.len() - 15); }
+            if o.undocumented.len() > 15 {
+                let _ = writeln!(
+                    h,
+                    "<div class=\"m\">&hellip; and {} more</div>",
+                    o.undocumented.len() - 15
+                );
+            }
         }
         if !o.secrets.is_empty() {
-            let secs = o.secrets.iter().map(|s| format!("<code>{}</code>{}", esc(&s.finding.masked), if s.hardcoded_in.is_empty() { "" } else { " (hardcoded)" })).collect::<Vec<_>>().join(", ");
-            let _ = writeln!(h, "<div class=\"m\"><b>Secrets ({}):</b> {secs}</div>", o.secrets.len());
+            let secs = o
+                .secrets
+                .iter()
+                .map(|s| {
+                    format!(
+                        "<code>{}</code>{}",
+                        esc(&s.finding.masked),
+                        if s.hardcoded_in.is_empty() {
+                            ""
+                        } else {
+                            " (hardcoded)"
+                        }
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let _ = writeln!(
+                h,
+                "<div class=\"m\"><b>Secrets ({}):</b> {secs}</div>",
+                o.secrets.len()
+            );
         }
         h.push_str("</details>\n");
     }
 
-    let _ = write!(h, "\n<footer>gl-mcp v{version} &middot; {date_str}</footer>\n</body>\n</html>");
+    let _ = write!(
+        h,
+        "\n<footer>gl-mcp v{version} &middot; {date_str}</footer>\n</body>\n</html>"
+    );
     h
 }
 
 /// Audit several teams' specs against their repos concurrently and render one
 /// clickable cross-team HTML report (summary cards, team table, per-team detail).
-pub async fn generate_sweep_report(client: &GitLabClient, targets: &[SweepTarget]) -> Result<String> {
+pub async fn generate_sweep_report(
+    client: &GitLabClient,
+    targets: &[SweepTarget],
+) -> Result<String> {
     let mut teams: Vec<(String, Option<AuditOutcome>)> = Vec::with_capacity(targets.len());
     for chunk in targets.chunks(SWEEP_CONCURRENCY) {
         let futs = chunk.iter().map(|t| {
             let client = client.clone();
             async move {
-                let r = compute_audit(&client, &t.project_id, &t.spec, &t.ref_name, &t.routes_file, &t.label).await.ok();
+                let r = compute_audit(
+                    &client,
+                    &t.project_id,
+                    &t.spec,
+                    &t.ref_name,
+                    &t.routes_file,
+                    &t.label,
+                )
+                .await
+                .ok();
                 (t.label.clone(), r)
             }
         });
@@ -1890,7 +2373,10 @@ mod tests {
             normalize_path("/app/foo/version  (remove and clean up)"),
             Some("/app/foo/version".to_string())
         );
-        assert_eq!(normalize_path("token/refresh"), Some("token/refresh".to_string()));
+        assert_eq!(
+            normalize_path("token/refresh"),
+            Some("token/refresh".to_string())
+        );
     }
 
     #[test]
@@ -1908,7 +2394,10 @@ mod tests {
         );
         assert_eq!(route_search_query("/v3/user"), Some("v3/user".to_string()));
         // single distinctive segment (has a hyphen)
-        assert_eq!(route_search_query("/nodes-list"), Some("nodes-list".to_string()));
+        assert_eq!(
+            route_search_query("/nodes-list"),
+            Some("nodes-list".to_string())
+        );
         // single common word → too generic
         assert_eq!(route_search_query("/login"), None);
         assert_eq!(route_search_query("/register"), None);
@@ -1916,11 +2405,20 @@ mod tests {
 
     #[test]
     fn test_classify_matrix() {
-        assert_eq!(classify(DocStatus::Deprecated, true, true), Verdict::CleanupDebt);
-        assert_eq!(classify(DocStatus::Deprecated, true, false), Verdict::StaleDoc);
+        assert_eq!(
+            classify(DocStatus::Deprecated, true, true),
+            Verdict::CleanupDebt
+        );
+        assert_eq!(
+            classify(DocStatus::Deprecated, true, false),
+            Verdict::StaleDoc
+        );
         assert_eq!(classify(DocStatus::Active, true, false), Verdict::Drift);
         assert_eq!(classify(DocStatus::Active, true, true), Verdict::InSync);
-        assert_eq!(classify(DocStatus::Active, false, false), Verdict::NeedsReview);
+        assert_eq!(
+            classify(DocStatus::Active, false, false),
+            Verdict::NeedsReview
+        );
     }
 
     #[test]
@@ -1938,7 +2436,11 @@ mod tests {
         assert_eq!(parsed.version.as_deref(), Some("4.9.5"));
         // /login, /v3/user, /app/foo/version — policy URL excluded
         assert_eq!(parsed.routes.len(), 3);
-        let update = parsed.routes.iter().find(|r| r.path == "/app/foo/version").unwrap();
+        let update = parsed
+            .routes
+            .iter()
+            .find(|r| r.path == "/app/foo/version")
+            .unwrap();
         assert_eq!(update.status, DocStatus::Deprecated);
         let user = parsed.routes.iter().find(|r| r.path == "/v3/user").unwrap();
         assert_eq!(user.status, DocStatus::Active);
@@ -1960,21 +2462,45 @@ mod tests {
 
     #[test]
     fn test_compare_versions() {
-        assert_eq!(compare_versions(Some("4.9.5"), Some("4.9.5")), VersionVerdict::InSync);
-        assert_eq!(compare_versions(Some("4.9.5"), Some("v5.0.0")), VersionVerdict::DocBehind);
-        assert_eq!(compare_versions(Some("5.1.0"), Some("5.0.9")), VersionVerdict::DocAhead);
-        assert_eq!(compare_versions(Some("4.9"), Some("4.9.0")), VersionVerdict::InSync);
-        assert_eq!(compare_versions(None, Some("1.0.0")), VersionVerdict::Unknown);
+        assert_eq!(
+            compare_versions(Some("4.9.5"), Some("4.9.5")),
+            VersionVerdict::InSync
+        );
+        assert_eq!(
+            compare_versions(Some("4.9.5"), Some("v5.0.0")),
+            VersionVerdict::DocBehind
+        );
+        assert_eq!(
+            compare_versions(Some("5.1.0"), Some("5.0.9")),
+            VersionVerdict::DocAhead
+        );
+        assert_eq!(
+            compare_versions(Some("4.9"), Some("4.9.0")),
+            VersionVerdict::InSync
+        );
+        assert_eq!(
+            compare_versions(None, Some("1.0.0")),
+            VersionVerdict::Unknown
+        );
     }
 
     #[test]
     fn test_compare_versions_tag_prefix() {
         // Tags carry prefixes — the numeric run must still be found. (Regression:
         // a live run saw `release-4.9.10` come back Unknown.)
-        assert_eq!(compare_versions(Some("4.9.5"), Some("release-4.9.10")), VersionVerdict::DocBehind);
-        assert_eq!(compare_versions(Some("2.3.0"), Some("app-v2.3.0")), VersionVerdict::InSync);
+        assert_eq!(
+            compare_versions(Some("4.9.5"), Some("release-4.9.10")),
+            VersionVerdict::DocBehind
+        );
+        assert_eq!(
+            compare_versions(Some("2.3.0"), Some("app-v2.3.0")),
+            VersionVerdict::InSync
+        );
         // 4.9.5 vs 4.9.10 must compare numerically, not lexically (5 < 10).
-        assert_eq!(compare_versions(Some("4.9.10"), Some("4.9.5")), VersionVerdict::DocAhead);
+        assert_eq!(
+            compare_versions(Some("4.9.10"), Some("4.9.5")),
+            VersionVerdict::DocAhead
+        );
     }
 
     #[test]
@@ -2017,28 +2543,49 @@ short: abc123";
         let mac = map_path("org/desktop", "main", "macOS");
         let bare = map_path("org/desktop", "main", "");
         assert_ne!(win, mac);
-        assert!(win.to_string_lossy().ends_with("org_desktop__main__Windows.json"));
-        assert!(mac.to_string_lossy().ends_with("org_desktop__main__macOS.json"));
+        assert!(
+            win.to_string_lossy()
+                .ends_with("org_desktop__main__Windows.json")
+        );
+        assert!(
+            mac.to_string_lossy()
+                .ends_with("org_desktop__main__macOS.json")
+        );
         assert!(bare.to_string_lossy().ends_with("org_desktop__main.json"));
     }
 
     #[test]
     fn test_render_sweep_html_smoke() {
         let mk = |path: &str, v: Verdict| RouteAudit {
-            route: DocRoute { label: String::new(), path: path.to_string(), status: DocStatus::Active, query: None },
+            route: DocRoute {
+                label: String::new(),
+                path: path.to_string(),
+                status: DocStatus::Active,
+                query: None,
+            },
             hits: Vec::new(),
             verdict: v,
         };
         let ios = AuditOutcome {
-            project_id: "org/ios".into(), search_ref: "main".into(), web_url: "https://ex.com/org/ios".into(),
-            doc_version: Some("4.9.5".into()), latest_tag: Some("release-4.9.10".into()),
+            project_id: "org/ios".into(),
+            search_ref: "main".into(),
+            web_url: "https://ex.com/org/ios".into(),
+            doc_version: Some("4.9.5".into()),
+            latest_tag: Some("release-4.9.10".into()),
             version_verdict: VersionVerdict::DocBehind,
-            audits: vec![mk("/v3/feedbacks", Verdict::Drift), mk("/v3/user", Verdict::InSync)],
+            audits: vec![
+                mk("/v3/feedbacks", Verdict::Drift),
+                mk("/v3/user", Verdict::InSync),
+            ],
             secrets: Vec::new(),
             undocumented: vec![("/v4/devices".into(), 91, "Net.swift".into())],
-            harvest_mode: "file".into(), changes: None,
+            harvest_mode: "file".into(),
+            changes: None,
         };
-        let teams = vec![("iOS".to_string(), Some(ios)), ("Windows".to_string(), None)];
+        let teams = vec![
+            ("iOS".to_string(), Some(ios)),
+            ("Windows".to_string(), None),
+        ];
         let html = render_sweep_html(&teams);
         assert!(html.starts_with("<!DOCTYPE html>"));
         assert!(html.contains("Cross-team spec-drift report"));
@@ -2149,7 +2696,10 @@ short: abc123";
             }],
             undocumented: vec![("/v4/feedbacks".to_string(), 146, "Net.swift".to_string())],
             harvest_mode: "file".to_string(),
-            changes: Some(("2026-06-15 00:00 UTC".to_string(), vec!["+ route `/x`".to_string()])),
+            changes: Some((
+                "2026-06-15 00:00 UTC".to_string(),
+                vec!["+ route `/x`".to_string()],
+            )),
         };
         let html = render_html(&outcome);
         assert!(html.starts_with("<!DOCTYPE html>"));
@@ -2169,32 +2719,70 @@ short: abc123";
         let prev = SpecSnapshot {
             version_verdict: "STALE".into(),
             routes: vec![
-                RouteSnap { path: "/a".into(), verdict: "drift".into() },
-                RouteSnap { path: "/b".into(), verdict: "in-sync".into() },
-                RouteSnap { path: "/gone".into(), verdict: "in-sync".into() },
+                RouteSnap {
+                    path: "/a".into(),
+                    verdict: "drift".into(),
+                },
+                RouteSnap {
+                    path: "/b".into(),
+                    verdict: "in-sync".into(),
+                },
+                RouteSnap {
+                    path: "/gone".into(),
+                    verdict: "in-sync".into(),
+                },
             ],
-            secrets: vec![SecretSnap { masked: "x…y".into(), kind: "uuid".into(), hardcoded: false }],
+            secrets: vec![SecretSnap {
+                masked: "x…y".into(),
+                kind: "uuid".into(),
+                hardcoded: false,
+            }],
             undocumented: vec!["/v4/old".into()],
             ..Default::default()
         };
         let new = SpecSnapshot {
             version_verdict: "in-sync".into(),
             routes: vec![
-                RouteSnap { path: "/a".into(), verdict: "in-sync".into() }, // drift fixed
-                RouteSnap { path: "/b".into(), verdict: "in-sync".into() }, // unchanged
-                RouteSnap { path: "/new".into(), verdict: "drift".into() }, // added
+                RouteSnap {
+                    path: "/a".into(),
+                    verdict: "in-sync".into(),
+                }, // drift fixed
+                RouteSnap {
+                    path: "/b".into(),
+                    verdict: "in-sync".into(),
+                }, // unchanged
+                RouteSnap {
+                    path: "/new".into(),
+                    verdict: "drift".into(),
+                }, // added
             ],
-            secrets: vec![SecretSnap { masked: "x…y".into(), kind: "uuid".into(), hardcoded: true }], // now hardcoded
+            secrets: vec![SecretSnap {
+                masked: "x…y".into(),
+                kind: "uuid".into(),
+                hardcoded: true,
+            }], // now hardcoded
             undocumented: vec!["/v4/shadow".into()], // /v4/old resolved, /v4/shadow new
             ..Default::default()
         };
         let d = diff_snapshots(&prev, &new);
-        assert!(d.iter().any(|l| l.contains("version verdict") && l.contains("in-sync")));
-        assert!(d.iter().any(|l| l.contains("`/a`") && l.contains("drift → in-sync")));
+        assert!(
+            d.iter()
+                .any(|l| l.contains("version verdict") && l.contains("in-sync"))
+        );
+        assert!(
+            d.iter()
+                .any(|l| l.contains("`/a`") && l.contains("drift → in-sync"))
+        );
         assert!(d.iter().any(|l| l.contains("+ route `/new`")));
         assert!(d.iter().any(|l| l.contains("`/gone` removed")));
-        assert!(d.iter().any(|l| l.contains("secret") && l.contains("hardcoded false → true")));
-        assert!(d.iter().any(|l| l.contains("+ undocumented endpoint `/v4/shadow`")));
+        assert!(
+            d.iter()
+                .any(|l| l.contains("secret") && l.contains("hardcoded false → true"))
+        );
+        assert!(
+            d.iter()
+                .any(|l| l.contains("+ undocumented endpoint `/v4/shadow`"))
+        );
         assert!(d.iter().any(|l| l.contains("`/v4/old` resolved")));
         // unchanged /b must not appear
         assert!(!d.iter().any(|l| l.contains("`/b`")));
@@ -2234,8 +2822,14 @@ short: abc123";
     #[test]
     fn test_harvest_multi_dedup_and_attribution() {
         let files = vec![
-            ("routes/api.php".to_string(), "Route::get('/v3/user', f);\nRoute::post('/orders', f);".to_string()),
-            ("routes/crm.php".to_string(), "Route::get('/v3/user', f);\nRoute::get('/crm/stats', f);".to_string()),
+            (
+                "routes/api.php".to_string(),
+                "Route::get('/v3/user', f);\nRoute::post('/orders', f);".to_string(),
+            ),
+            (
+                "routes/crm.php".to_string(),
+                "Route::get('/v3/user', f);\nRoute::get('/crm/stats', f);".to_string(),
+            ),
         ];
         let eps = harvest_multi(&files);
         let paths: Vec<&str> = eps.iter().map(|(p, _, _)| p.as_str()).collect();
@@ -2254,8 +2848,10 @@ short: abc123";
     fn test_harvest_single_quoted_routes() {
         // PHP/Laravel and Ruby style — single-quoted leading-slash literals.
         let code = "Route::get('/user/settings', [C::class, 'm']);\n  get '/v1/votes'\n";
-        let paths: Vec<String> =
-            harvest_path_literals(code).into_iter().map(|(p, _)| p).collect();
+        let paths: Vec<String> = harvest_path_literals(code)
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect();
         assert!(paths.contains(&"/user/settings".to_string()));
         assert!(paths.contains(&"/v1/votes".to_string()));
     }
@@ -2279,8 +2875,10 @@ short: abc123";
         let ct = "application/json"
         let bearer = "Bearer " + token
         "#;
-        let paths: Vec<String> =
-            harvest_path_literals(code).into_iter().map(|(p, _)| p).collect();
+        let paths: Vec<String> = harvest_path_literals(code)
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect();
         // "/v3" + "/user" stitched into one endpoint, not split into /v3 and /user
         assert!(paths.contains(&"/v3/user".to_string()));
         assert!(!paths.contains(&"/v3".to_string()));
@@ -2297,7 +2895,10 @@ short: abc123";
     fn test_path_key_matching() {
         // last-two-segments key tolerates prefix differences
         assert_eq!(path_key("/v3/user"), "v3/user");
-        assert_eq!(path_key("/user/nodes-pools/favorites"), "nodes-pools/favorites");
+        assert_eq!(
+            path_key("/user/nodes-pools/favorites"),
+            "nodes-pools/favorites"
+        );
         assert_eq!(path_key("/login"), "login");
         // a code path and a doc path with the same tail match
         assert_eq!(path_key("/api/v3/user"), path_key("/v3/user"));
@@ -2305,10 +2906,22 @@ short: abc123";
 
     #[test]
     fn test_normalize_code_path() {
-        assert_eq!(normalize_code_path("/v3/user"), Some("/v3/user".to_string()));
-        assert_eq!(normalize_code_path("/hotspots/\\(identifier)"), Some("/hotspots".to_string()));
-        assert_eq!(normalize_code_path("/orders?currency=USD"), Some("/orders".to_string()));
-        assert_eq!(normalize_code_path("/users/{id}"), Some("/users".to_string()));
+        assert_eq!(
+            normalize_code_path("/v3/user"),
+            Some("/v3/user".to_string())
+        );
+        assert_eq!(
+            normalize_code_path("/hotspots/\\(identifier)"),
+            Some("/hotspots".to_string())
+        );
+        assert_eq!(
+            normalize_code_path("/orders?currency=USD"),
+            Some("/orders".to_string())
+        );
+        assert_eq!(
+            normalize_code_path("/users/{id}"),
+            Some("/users".to_string())
+        );
         assert_eq!(normalize_code_path("notapath"), None);
     }
 
@@ -2318,8 +2931,14 @@ short: abc123";
         let masked = mask_secret(SecretKind::Base64Secret, key);
         assert!(!masked.contains("BBBBCCCC"));
         assert!(masked.contains("chars"));
-        assert_eq!(mask_secret(SecretKind::Email, "svc@example.com"), "s***@example.com");
-        assert_eq!(mask_secret(SecretKind::Uuid, "12345678-90ab-cdef-1234-567890abcdef"), "12345678…");
+        assert_eq!(
+            mask_secret(SecretKind::Email, "svc@example.com"),
+            "s***@example.com"
+        );
+        assert_eq!(
+            mask_secret(SecretKind::Uuid, "12345678-90ab-cdef-1234-567890abcdef"),
+            "12345678…"
+        );
     }
 
     #[test]
@@ -2338,9 +2957,16 @@ short: abc123";
         ];
         for (proj, refn, key) in cases {
             let p = map_path(proj, refn, key);
-            assert_eq!(p.parent(), Some(root.as_path()), "escaped spec_maps for {proj:?}");
+            assert_eq!(
+                p.parent(),
+                Some(root.as_path()),
+                "escaped spec_maps for {proj:?}"
+            );
             let fname = p.file_name().unwrap().to_str().unwrap();
-            assert!(!fname.contains('/') && !fname.contains('\\'), "separator in {fname:?}");
+            assert!(
+                !fname.contains('/') && !fname.contains('\\'),
+                "separator in {fname:?}"
+            );
             assert!(!fname.starts_with('.'), "dotfile/leading-dot in {fname:?}");
             assert!(fname.ends_with(".json"));
         }

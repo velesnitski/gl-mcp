@@ -1,14 +1,16 @@
 //! HTML report generation for developer daily activity.
 
-use std::fmt::Write as _;
 use crate::client::GitLabClient;
 use crate::error::{Error, Result, ResultExt};
 use crate::tools::commits;
 use crate::tools::commits::detect_language;
+use crate::tools::lint::{
+    FileMetricsPub, Grade, compute_file_metrics, has_ticket_ref, validate_commit_message,
+};
 use crate::tools::repository::format_size;
-use crate::tools::lint::{compute_file_metrics, has_ticket_ref, Grade, validate_commit_message, FileMetricsPub};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 /// Shared print CSS + export button for all HTML reports.
 pub(crate) const PRINT_CSS: &str = r#"
@@ -48,13 +50,14 @@ pub async fn generate_dev_report(
     project_filter: &str,
 ) -> Result<String> {
     // 1. Resolve user
-    let users: Vec<Value> = client
-        .get("/users", &[("username", username)])
-        .await
-        ?;
+    let users: Vec<Value> = client.get("/users", &[("username", username)]).await?;
 
-    let user = users.first().ok_or_else(|| Error::NotFound(format!("User @{username} not found")))?;
-    let user_id = user["id"].as_u64().ok_or(Error::UserInput("User has no ID".into()))?;
+    let user = users
+        .first()
+        .ok_or_else(|| Error::NotFound(format!("User @{username} not found")))?;
+    let user_id = user["id"]
+        .as_u64()
+        .ok_or(Error::UserInput("User has no ID".into()))?;
     let display_name = user["name"].as_str().unwrap_or(username);
 
     // 2. Fetch events
@@ -91,7 +94,12 @@ pub async fn generate_dev_report(
         let action = event["action_name"].as_str().unwrap_or("");
         let target_type = event["target_type"].as_str().unwrap_or("");
         let stats = by_project.entry(pid).or_insert(ProjectStats {
-            pushes: 0, commits: 0, merges: 0, mr_opened: 0, mr_merged: 0, mr_approved: 0,
+            pushes: 0,
+            commits: 0,
+            merges: 0,
+            mr_opened: 0,
+            mr_merged: 0,
+            mr_approved: 0,
         });
 
         if action == "pushed to" || action == "pushed new" {
@@ -99,13 +107,23 @@ pub async fn generate_dev_report(
             let is_merge = raw > 20;
             stats.pushes += 1;
             stats.commits += if is_merge { 1 } else { raw };
-            if is_merge { stats.merges += 1; }
+            if is_merge {
+                stats.merges += 1;
+            }
             _total_commits += if is_merge { 1 } else { raw };
         } else if target_type == "MergeRequest" {
             match action {
-                "opened" => { stats.mr_opened += 1; _total_mr_opened += 1; }
-                "accepted" => { stats.mr_merged += 1; total_mr_merged += 1; }
-                "approved" => { stats.mr_approved += 1; }
+                "opened" => {
+                    stats.mr_opened += 1;
+                    _total_mr_opened += 1;
+                }
+                "accepted" => {
+                    stats.mr_merged += 1;
+                    total_mr_merged += 1;
+                }
+                "approved" => {
+                    stats.mr_approved += 1;
+                }
                 _ => {}
             }
         }
@@ -124,7 +142,10 @@ pub async fn generate_dev_report(
         if projects_processed >= MAX_PROJECTS {
             break;
         }
-        let proj_path = project_names.get(&pid).cloned().unwrap_or_else(|| pid.to_string());
+        let proj_path = project_names
+            .get(&pid)
+            .cloned()
+            .unwrap_or_else(|| pid.to_string());
 
         if !project_filter.is_empty() && !proj_path.contains(project_filter) {
             continue;
@@ -142,12 +163,16 @@ pub async fn generate_dev_report(
             .or_default_logged();
 
         let author_lower = display_name.to_lowercase();
-        let user_commits: Vec<&Value> = commits_data.iter().filter(|c| {
-            let name = c["author_name"].as_str().unwrap_or("").to_lowercase();
-            let email = c["author_email"].as_str().unwrap_or("").to_lowercase();
-            name.contains(&username.to_lowercase()) || name.contains(&author_lower)
-                || email.contains(&username.to_lowercase())
-        }).collect();
+        let user_commits: Vec<&Value> = commits_data
+            .iter()
+            .filter(|c| {
+                let name = c["author_name"].as_str().unwrap_or("").to_lowercase();
+                let email = c["author_email"].as_str().unwrap_or("").to_lowercase();
+                name.contains(&username.to_lowercase())
+                    || name.contains(&author_lower)
+                    || email.contains(&username.to_lowercase())
+            })
+            .collect();
 
         projects_processed += 1;
 
@@ -160,7 +185,11 @@ pub async fn generate_dev_report(
             let title = commit["title"].as_str().unwrap_or("?").to_string();
             let time = commit["created_at"].as_str().unwrap_or("?").to_string();
             // HH:MM of an RFC 3339 timestamp; anything shorter is shown as-is.
-            let time_short = time.get(11..16).filter(|_| time.len() > 16).unwrap_or(&time).to_string();
+            let time_short = time
+                .get(11..16)
+                .filter(|_| time.len() > 16)
+                .unwrap_or(&time)
+                .to_string();
 
             // Fetch diff
             let diffs: Vec<Value> = client
@@ -184,26 +213,52 @@ pub async fn generate_dev_report(
                 let mut add: u64 = 0;
                 let mut del: u64 = 0;
                 for line in diff_text.lines() {
-                    if line.starts_with('+') && !line.starts_with("+++") { add += 1; }
-                    if line.starts_with('-') && !line.starts_with("---") { del += 1; }
+                    if line.starts_with('+') && !line.starts_with("+++") {
+                        add += 1;
+                    }
+                    if line.starts_with('-') && !line.starts_with("---") {
+                        del += 1;
+                    }
                 }
                 c_add += add;
                 c_del += del;
                 all_files += 1;
 
-                files.push(DevFile { path, additions: add, deletions: del, is_new, lang });
+                files.push(DevFile {
+                    path,
+                    additions: add,
+                    deletions: del,
+                    is_new,
+                    lang,
+                });
             }
 
             total_additions += c_add;
             total_deletions += c_del;
 
-            all_commits.push((proj_path.clone(), DevCommit { short_sha, title, time: time_short, files }));
+            all_commits.push((
+                proj_path.clone(),
+                DevCommit {
+                    short_sha,
+                    title,
+                    time: time_short,
+                    files,
+                },
+            ));
         }
     }
 
     // 6. Fetch open MRs by author
     let mrs: Vec<Value> = client
-        .get("/merge_requests", &[("author_username", username), ("state", "opened"), ("per_page", "50"), ("scope", "all")])
+        .get(
+            "/merge_requests",
+            &[
+                ("author_username", username),
+                ("state", "opened"),
+                ("per_page", "50"),
+                ("scope", "all"),
+            ],
+        )
         .await
         .or_default_logged();
 
@@ -261,13 +316,30 @@ pub(crate) struct DevReportData<'a> {
 /// Pure: data in, report out — split from the async tool so the logic is
 /// verified on plain values instead of through the network calls that feed it.
 pub(crate) fn render_dev_report(d: DevReportData<'_>) -> String {
-    let DevReportData { username, display_name, hours, events, project_count, total_additions, total_deletions, total_mr_merged, all_commits, all_files, mrs } = d;
+    let DevReportData {
+        username,
+        display_name,
+        hours,
+        events,
+        project_count,
+        total_additions,
+        total_deletions,
+        total_mr_merged,
+        all_commits,
+        all_files,
+        mrs,
+    } = d;
     // GitLab display names are free text.
     let (display_name, username) = (htmlescape(display_name), htmlescape(username));
     let date_str = chrono::Utc::now().format("%A, %d %B %Y").to_string();
-    let period_label = if hours <= 24 { "Today".to_string() } else { format!("Last {}h", hours) };
+    let period_label = if hours <= 24 {
+        "Today".to_string()
+    } else {
+        format!("Last {}h", hours)
+    };
 
-    let mut html = format!(r#"<!DOCTYPE html>
+    let mut html = format!(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -294,8 +366,13 @@ pub(crate) fn render_dev_report(d: DevReportData<'_>) -> String {
   </div>
 </div>
 "#,
-        all_commits.len(), total_additions, total_deletions, all_files,
-        mrs.len(), total_mr_merged, project_count
+        all_commits.len(),
+        total_additions,
+        total_deletions,
+        all_files,
+        mrs.len(),
+        total_mr_merged,
+        project_count
     );
 
     html.push_str(&dev_commits_card(&all_commits));
@@ -310,7 +387,9 @@ pub(crate) fn render_dev_report(d: DevReportData<'_>) -> String {
     }
 
     // Footer
-    let _ = write!(html, r#"<div class="foot">made with &lt;3 by Alex Velesnitski &middot; gl-mcp + Claude &middot; {date_str}</div>
+    let _ = write!(
+        html,
+        r#"<div class="foot">made with &lt;3 by Alex Velesnitski &middot; gl-mcp + Claude &middot; {date_str}</div>
 
 </div>
 </body>
@@ -362,8 +441,17 @@ fn dev_commits_card(all_commits: &[(String, DevCommit)]) -> String {
     if !all_commits.is_empty() {
         html.push_str("<div class=\"card\">\n  <h2>Commits</h2>\n");
         for (proj_path, c) in all_commits {
-            let short_proj = proj_path.rsplit('/').take(2).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("/");
-            let _ = write!(html, r#"  <div class="commit">
+            let short_proj = proj_path
+                .rsplit('/')
+                .take(2)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("/");
+            let _ = write!(
+                html,
+                r#"  <div class="commit">
     <div class="cm-head">
       <span class="sha">{}</span>
       <span class="cm-msg">{}</span>
@@ -378,9 +466,19 @@ fn dev_commits_card(all_commits: &[(String, DevCommit)]) -> String {
                 c.time,
             );
             for f in &c.files {
-                let new_badge = if f.is_new { r#" <span class="badge b-new">NEW</span>"# } else { "" };
-                let _ = writeln!(html, r#"      <div class="file"><span class="fp">{}</span><span class="fs"><span class="add">+{}</span> <span class="del">-{}</span></span><span class="badge b-lang">{}</span>{}</div>"#,
-                    htmlescape(&f.path), f.additions, f.deletions, f.lang, new_badge
+                let new_badge = if f.is_new {
+                    r#" <span class="badge b-new">NEW</span>"#
+                } else {
+                    ""
+                };
+                let _ = writeln!(
+                    html,
+                    r#"      <div class="file"><span class="fp">{}</span><span class="fs"><span class="add">+{}</span> <span class="del">-{}</span></span><span class="badge b-lang">{}</span>{}</div>"#,
+                    htmlescape(&f.path),
+                    f.additions,
+                    f.deletions,
+                    f.lang,
+                    new_badge
                 );
             }
             html.push_str("    </div>\n  </div>\n");
@@ -404,38 +502,66 @@ fn dev_mrs_card(mrs: &[Value], total_mr_merged: u64) -> String {
     }
     let mut html = String::new();
     if !mrs.is_empty() {
-        let _ = write!(html, "<div class=\"card\">\n  <h2>Open Merge Requests &middot; {}</h2>\n", mrs.len());
+        let _ = write!(
+            html,
+            "<div class=\"card\">\n  <h2>Open Merge Requests &middot; {}</h2>\n",
+            mrs.len()
+        );
 
         for (target, target_mrs) in &mrs_by_target {
-            let badge_class = if target.contains("RC") || target.contains("rc") { "b-rc" } else { "b-open" };
+            let badge_class = if target.contains("RC") || target.contains("rc") {
+                "b-rc"
+            } else {
+                "b-open"
+            };
             // Branch names may contain `<` and `>`.
             let target_esc = htmlescape(target);
-            let _ = write!(html, "  <div class=\"grp-title\">{} ({})</div>\n  <table>\n", target_esc, target_mrs.len());
+            let _ = write!(
+                html,
+                "  <div class=\"grp-title\">{} ({})</div>\n  <table>\n",
+                target_esc,
+                target_mrs.len()
+            );
             for mr in target_mrs {
                 let iid = mr["iid"].as_u64().unwrap_or(0);
                 let title = mr["title"].as_str().unwrap_or("?");
-                let _ = writeln!(html, "    <tr><td style=\"width:60px\">!{}</td><td>{}</td><td style=\"width:60px\"><span class=\"badge {}\">{}</span></td></tr>",
-                    iid, htmlescape(title), badge_class, target_esc
+                let _ = writeln!(
+                    html,
+                    "    <tr><td style=\"width:60px\">!{}</td><td>{}</td><td style=\"width:60px\"><span class=\"badge {}\">{}</span></td></tr>",
+                    iid,
+                    htmlescape(title),
+                    badge_class,
+                    target_esc
                 );
             }
             html.push_str("  </table>\n");
         }
 
         if !draft_mrs.is_empty() {
-            let _ = write!(html, "  <div class=\"grp-title\">Drafts ({})</div>\n  <table>\n", draft_mrs.len());
+            let _ = write!(
+                html,
+                "  <div class=\"grp-title\">Drafts ({})</div>\n  <table>\n",
+                draft_mrs.len()
+            );
             for mr in &draft_mrs {
                 let iid = mr["iid"].as_u64().unwrap_or(0);
                 let title = mr["title"].as_str().unwrap_or("?");
-                let _ = writeln!(html, "    <tr><td style=\"width:60px\">!{}</td><td>{}</td><td style=\"width:60px\"><span class=\"badge b-draft\">Draft</span></td></tr>",
-                    iid, htmlescape(title)
+                let _ = writeln!(
+                    html,
+                    "    <tr><td style=\"width:60px\">!{}</td><td>{}</td><td style=\"width:60px\"><span class=\"badge b-draft\">Draft</span></td></tr>",
+                    iid,
+                    htmlescape(title)
                 );
             }
             html.push_str("  </table>\n");
         }
 
         if mrs.len() > 5 {
-            let _ = writeln!(html, "  <div class=\"alert\"><b>{} open MRs, {} merged.</b> Review bottleneck &mdash; consider assigning reviewers.</div>",
-                mrs.len(), total_mr_merged
+            let _ = writeln!(
+                html,
+                "  <div class=\"alert\"><b>{} open MRs, {} merged.</b> Review bottleneck &mdash; consider assigning reviewers.</div>",
+                mrs.len(),
+                total_mr_merged
             );
         }
 
@@ -445,17 +571,25 @@ fn dev_mrs_card(mrs: &[Value], total_mr_merged: u64) -> String {
 }
 
 /// Automatic observations as (css class, pre-escaped HTML message).
-fn dev_observations(all_commits: &[(String, DevCommit)], events: &[Value], mrs: &[Value]) -> Vec<(&'static str, String)> {
+fn dev_observations(
+    all_commits: &[(String, DevCommit)],
+    events: &[Value],
+    mrs: &[Value],
+) -> Vec<(&'static str, String)> {
     let mut observations: Vec<(&'static str, String)> = Vec::new(); // (css_class, message)
 
     // 1. Self-merging detection
-    let self_merged: Vec<&Value> = mrs.iter().filter(|mr| {
-        let author = mr["author"]["username"].as_str().unwrap_or("");
-        let merger = mr["merged_by"]["username"].as_str()
-            .or_else(|| mr["merge_user"]["username"].as_str())
-            .unwrap_or("");
-        !merger.is_empty() && author == merger
-    }).collect();
+    let self_merged: Vec<&Value> = mrs
+        .iter()
+        .filter(|mr| {
+            let author = mr["author"]["username"].as_str().unwrap_or("");
+            let merger = mr["merged_by"]["username"]
+                .as_str()
+                .or_else(|| mr["merge_user"]["username"].as_str())
+                .unwrap_or("");
+            !merger.is_empty() && author == merger
+        })
+        .collect();
     if !self_merged.is_empty() {
         observations.push(("obs-yellow", format!(
             "&#9888; <b>Self-merging:</b> {} MR(s) merged by their own author. Consider requiring external review.",
@@ -465,10 +599,17 @@ fn dev_observations(all_commits: &[(String, DevCommit)], events: &[Value], mrs: 
 
     // 2. Branch naming issues
     let branch_typos: &[(&str, &str)] = &[
-        ("hitfix", "hotfix"), ("hotifx", "hotfix"), ("hofix", "hotfix"),
-        ("relaese", "release"), ("relase", "release"), ("rlease", "release"),
-        ("feaure", "feature"), ("featrue", "feature"), ("faeture", "feature"),
-        ("bugifx", "bugfix"), ("bufgix", "bugfix"),
+        ("hitfix", "hotfix"),
+        ("hotifx", "hotfix"),
+        ("hofix", "hotfix"),
+        ("relaese", "release"),
+        ("relase", "release"),
+        ("rlease", "release"),
+        ("feaure", "feature"),
+        ("featrue", "feature"),
+        ("faeture", "feature"),
+        ("bugifx", "bugfix"),
+        ("bufgix", "bugfix"),
     ];
     let mut found_typos: Vec<(String, String)> = Vec::new();
     for (_, c) in all_commits {
@@ -482,25 +623,50 @@ fn dev_observations(all_commits: &[(String, DevCommit)], events: &[Value], mrs: 
         // `dedup` alone only drops adjacent repeats; the list is in commit order.
         let mut seen = std::collections::BTreeSet::new();
         found_typos.retain(|t| seen.insert(t.clone()));
-        let details: Vec<String> = found_typos.iter().map(|(t, c)| format!("\"{}\" &rarr; \"{}\"", t, c)).collect();
-        observations.push(("obs-red", format!(
-            "&#10060; <b>Branch naming typos:</b> {}",
-            details.join(", ")
-        )));
+        let details: Vec<String> = found_typos
+            .iter()
+            .map(|(t, c)| format!("\"{}\" &rarr; \"{}\"", t, c))
+            .collect();
+        observations.push((
+            "obs-red",
+            format!(
+                "&#10060; <b>Branch naming typos:</b> {}",
+                details.join(", ")
+            ),
+        ));
     }
 
     // 3. Test coverage indicator
-    let commits_with_tests = all_commits.iter().filter(|(_, c)| {
-        c.files.iter().any(|f| f.path.contains("tests/") || f.path.contains("test/") || f.path.contains("_test.") || f.path.ends_with("_test.go") || f.path.ends_with("Test.php") || f.path.ends_with("Test.java"))
-    }).count();
+    let commits_with_tests = all_commits
+        .iter()
+        .filter(|(_, c)| {
+            c.files.iter().any(|f| {
+                f.path.contains("tests/")
+                    || f.path.contains("test/")
+                    || f.path.contains("_test.")
+                    || f.path.ends_with("_test.go")
+                    || f.path.ends_with("Test.php")
+                    || f.path.ends_with("Test.java")
+            })
+        })
+        .count();
     let total_commit_count = all_commits.len();
     if total_commit_count > 0 {
         let pct = (commits_with_tests as f64 / total_commit_count as f64 * 100.0) as u32;
-        let (css, icon) = if pct >= 30 { ("obs-green", "&#9989;") } else if pct >= 10 { ("obs-yellow", "&#9888;") } else { ("obs-red", "&#10060;") };
-        observations.push((css, format!(
-            "{} <b>Test coverage:</b> {} of {} commits include test files ({}%)",
-            icon, commits_with_tests, total_commit_count, pct
-        )));
+        let (css, icon) = if pct >= 30 {
+            ("obs-green", "&#9989;")
+        } else if pct >= 10 {
+            ("obs-yellow", "&#9888;")
+        } else {
+            ("obs-red", "&#10060;")
+        };
+        observations.push((
+            css,
+            format!(
+                "{} <b>Test coverage:</b> {} of {} commits include test files ({}%)",
+                icon, commits_with_tests, total_commit_count, pct
+            ),
+        ));
     }
 
     // 4. Weekend/off-hours work (using events which have full timestamps)
@@ -523,42 +689,66 @@ fn dev_observations(all_commits: &[(String, DevCommit)], events: &[Value], mrs: 
         }
     }
     if weekend_count > 0 {
-        observations.push(("obs-yellow", format!(
-            "&#9888; <b>Weekend work:</b> {} event(s) on Saturday/Sunday",
-            weekend_count
-        )));
+        observations.push((
+            "obs-yellow",
+            format!(
+                "&#9888; <b>Weekend work:</b> {} event(s) on Saturday/Sunday",
+                weekend_count
+            ),
+        ));
     }
     if offhours_count > 0 {
-        observations.push(("obs-yellow", format!(
-            "&#9888; <b>Off-hours work:</b> {} event(s) before 7am or after 10pm",
-            offhours_count
-        )));
+        observations.push((
+            "obs-yellow",
+            format!(
+                "&#9888; <b>Off-hours work:</b> {} event(s) before 7am or after 10pm",
+                offhours_count
+            ),
+        ));
     }
 
     // 5. Ticket reference rate
-    let commits_with_tickets = all_commits.iter().filter(|(_, c)| has_ticket_ref(&c.title)).count();
+    let commits_with_tickets = all_commits
+        .iter()
+        .filter(|(_, c)| has_ticket_ref(&c.title))
+        .count();
     if total_commit_count > 0 {
         let pct = (commits_with_tickets as f64 / total_commit_count as f64 * 100.0) as u32;
-        let (css, icon) = if pct >= 70 { ("obs-green", "&#9989;") } else if pct >= 40 { ("obs-yellow", "&#9888;") } else { ("obs-red", "&#10060;") };
-        observations.push((css, format!(
-            "{} <b>Ticket references:</b> {} of {} commits reference tickets ({}%)",
-            icon, commits_with_tickets, total_commit_count, pct
-        )));
+        let (css, icon) = if pct >= 70 {
+            ("obs-green", "&#9989;")
+        } else if pct >= 40 {
+            ("obs-yellow", "&#9888;")
+        } else {
+            ("obs-red", "&#10060;")
+        };
+        observations.push((
+            css,
+            format!(
+                "{} <b>Ticket references:</b> {} of {} commits reference tickets ({}%)",
+                icon, commits_with_tickets, total_commit_count, pct
+            ),
+        ));
     }
 
     // 6. High output flag
     if total_commit_count > 50 {
-        observations.push(("obs-green", format!(
-            "&#128293; <b>High output:</b> {} commits in the period",
-            total_commit_count
-        )));
+        observations.push((
+            "obs-green",
+            format!(
+                "&#128293; <b>High output:</b> {} commits in the period",
+                total_commit_count
+            ),
+        ));
     }
 
     // 7. No review flag — MRs with 0 external reviews
-    let no_review_mrs: Vec<&Value> = mrs.iter().filter(|mr| {
-        let reviewers = mr["reviewers"].as_array().map(|a| a.len()).unwrap_or(0);
-        reviewers == 0
-    }).collect();
+    let no_review_mrs: Vec<&Value> = mrs
+        .iter()
+        .filter(|mr| {
+            let reviewers = mr["reviewers"].as_array().map(|a| a.len()).unwrap_or(0);
+            reviewers == 0
+        })
+        .collect();
     if !no_review_mrs.is_empty() && mrs.len() > 0 {
         let pct = (no_review_mrs.len() as f64 / mrs.len() as f64 * 100.0) as u32;
         if pct > 30 {
@@ -604,167 +794,194 @@ pub async fn generate_team_report(
         mr_sizes: (u64, u64, u64),
     }
 
-    let dev_futures: Vec<_> = usernames.iter().map(|&username| {
-        let client = client.clone();
-        let since = since.clone();
-        let mr_path = mr_path.clone();
-        let encoded_project = encoded_project.clone();
-        async move {
-            // Merged MRs by this author
-            let merged_mrs: Vec<Value> = client.get(&mr_path, &[
-                ("author_username", username),
-                ("state", "merged"),
-                ("created_after", &since),
-                ("per_page", "100"),
-            ]).await.or_default_logged();
+    let dev_futures: Vec<_> = usernames
+        .iter()
+        .map(|&username| {
+            let client = client.clone();
+            let since = since.clone();
+            let mr_path = mr_path.clone();
+            let encoded_project = encoded_project.clone();
+            async move {
+                // Merged MRs by this author
+                let merged_mrs: Vec<Value> = client
+                    .get(
+                        &mr_path,
+                        &[
+                            ("author_username", username),
+                            ("state", "merged"),
+                            ("created_after", &since),
+                            ("per_page", "100"),
+                        ],
+                    )
+                    .await
+                    .or_default_logged();
 
-            // MRs where this user is reviewer (merged)
-            let reviewed_mrs: Vec<Value> = client.get(&mr_path, &[
-                ("reviewer_username", username),
-                ("state", "merged"),
-                ("created_after", &since),
-                ("per_page", "100"),
-            ]).await.or_default_logged();
+                // MRs where this user is reviewer (merged)
+                let reviewed_mrs: Vec<Value> = client
+                    .get(
+                        &mr_path,
+                        &[
+                            ("reviewer_username", username),
+                            ("state", "merged"),
+                            ("created_after", &since),
+                            ("per_page", "100"),
+                        ],
+                    )
+                    .await
+                    .or_default_logged();
 
-            // Calc merge time + LOC/files from merged MRs
-            let mut merge_hours: Vec<f64> = Vec::new();
-            let mut total_additions: u64 = 0;
-            let mut total_deletions: u64 = 0;
-            let mut total_files: u64 = 0;
-            let mut mr_small: u64 = 0;
-            let mut mr_medium: u64 = 0;
-            let mut mr_large: u64 = 0;
+                // Calc merge time + LOC/files from merged MRs
+                let mut merge_hours: Vec<f64> = Vec::new();
+                let mut total_additions: u64 = 0;
+                let mut total_deletions: u64 = 0;
+                let mut total_files: u64 = 0;
+                let mut mr_small: u64 = 0;
+                let mut mr_medium: u64 = 0;
+                let mut mr_large: u64 = 0;
 
-            for mr in &merged_mrs {
-                let created = mr["created_at"].as_str().unwrap_or("");
-                let merged = mr["merged_at"].as_str().unwrap_or("");
-                let created_dt = chrono::DateTime::parse_from_rfc3339(created).ok();
-                let merged_dt = chrono::DateTime::parse_from_rfc3339(merged).ok();
-                if let (Some(c), Some(m)) = (created_dt, merged_dt) {
-                    merge_hours.push((m - c).num_minutes() as f64 / 60.0);
-                }
+                for mr in &merged_mrs {
+                    let created = mr["created_at"].as_str().unwrap_or("");
+                    let merged = mr["merged_at"].as_str().unwrap_or("");
+                    let created_dt = chrono::DateTime::parse_from_rfc3339(created).ok();
+                    let merged_dt = chrono::DateTime::parse_from_rfc3339(merged).ok();
+                    if let (Some(c), Some(m)) = (created_dt, merged_dt) {
+                        merge_hours.push((m - c).num_minutes() as f64 / 60.0);
+                    }
 
-                let mr_iid = mr["iid"].as_u64().unwrap_or(0);
-                if mr_iid > 0 {
-                    let changes: std::result::Result<Value, _> = client
-                        .get(
-                            &format!("/projects/{encoded_project}/merge_requests/{mr_iid}/changes"),
-                            &[("access_raw_diffs", "true")],
-                        )
-                        .await;
-                    if let Ok(detail) = changes {
-                        if let Some(files) = detail["changes"].as_array() {
-                            let file_count = files.len() as u64;
-                            total_files += file_count;
-                            match file_count {
-                                0..=9 => mr_small += 1,
-                                10..=50 => mr_medium += 1,
-                                _ => mr_large += 1,
-                            }
-                            for f in files {
-                                let diff = f["diff"].as_str().unwrap_or("");
-                                for line in diff.lines() {
-                                    if line.starts_with('+') && !line.starts_with("+++") {
-                                        total_additions += 1;
-                                    } else if line.starts_with('-') && !line.starts_with("---") {
-                                        total_deletions += 1;
+                    let mr_iid = mr["iid"].as_u64().unwrap_or(0);
+                    if mr_iid > 0 {
+                        let changes: std::result::Result<Value, _> = client
+                            .get(
+                                &format!(
+                                    "/projects/{encoded_project}/merge_requests/{mr_iid}/changes"
+                                ),
+                                &[("access_raw_diffs", "true")],
+                            )
+                            .await;
+                        if let Ok(detail) = changes {
+                            if let Some(files) = detail["changes"].as_array() {
+                                let file_count = files.len() as u64;
+                                total_files += file_count;
+                                match file_count {
+                                    0..=9 => mr_small += 1,
+                                    10..=50 => mr_medium += 1,
+                                    _ => mr_large += 1,
+                                }
+                                for f in files {
+                                    let diff = f["diff"].as_str().unwrap_or("");
+                                    for line in diff.lines() {
+                                        if line.starts_with('+') && !line.starts_with("+++") {
+                                            total_additions += 1;
+                                        } else if line.starts_with('-') && !line.starts_with("---")
+                                        {
+                                            total_deletions += 1;
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            let avg_merge = if merge_hours.is_empty() {
-                0.0
-            } else {
-                merge_hours.iter().sum::<f64>() / merge_hours.len() as f64
-            };
+                let avg_merge = if merge_hours.is_empty() {
+                    0.0
+                } else {
+                    merge_hours.iter().sum::<f64>() / merge_hours.len() as f64
+                };
 
-            // Review matrix: who did this user review
-            let mut reviewed_authors: BTreeMap<String, u64> = BTreeMap::new();
-            for mr in &reviewed_mrs {
-                let author = mr["author"]["username"].as_str().unwrap_or("?").to_string();
-                *reviewed_authors.entry(author).or_insert(0) += 1;
-            }
-
-            // Events for approvals, comments, commits
-            let cache_key = format!("user:{username}");
-            let users: Vec<Value> = client
-                .get_cached(&cache_key, "/users", &[("username", username)], 60)
-                .await
-                .or_default_logged();
-
-            let user_id = users.first().and_then(|u| u["id"].as_u64()).unwrap_or(0);
-            let since_ts = (chrono::Utc::now() - chrono::Duration::days(days as i64)).timestamp();
-            let events = if user_id > 0 {
-                commits::fetch_user_events(&client, user_id, since_ts).await.or_default_logged()
-            } else {
-                Vec::new()
-            };
-
-            let project_info: Option<Value> = client
-                .get_cached(
-                    &format!("project_info:{encoded_project}"),
-                    &format!("/projects/{encoded_project}"),
-                    &[("simple", "true")],
-                    60,
-                )
-                .await
-                .ok();
-            let project_numeric_id = project_info.as_ref().and_then(|p| p["id"].as_u64());
-
-            let mut approvals = 0u64;
-            let mut comments = 0u64;
-            let mut dev_commits = 0u64;
-
-            for event in &events {
-                let event_pid = event["project_id"].as_u64();
-                if project_numeric_id.is_some() && event_pid != project_numeric_id {
-                    continue;
+                // Review matrix: who did this user review
+                let mut reviewed_authors: BTreeMap<String, u64> = BTreeMap::new();
+                for mr in &reviewed_mrs {
+                    let author = mr["author"]["username"].as_str().unwrap_or("?").to_string();
+                    *reviewed_authors.entry(author).or_insert(0) += 1;
                 }
-                let action = event["action_name"].as_str().unwrap_or("");
-                let target_type = event["target_type"].as_str().unwrap_or("");
-                match (action, target_type) {
-                    ("approved", "MergeRequest") => approvals += 1,
-                    ("commented on", "MergeRequest") => comments += 1,
-                    ("pushed to", _) | ("pushed new", _) => {
-                        let raw = event["push_data"]["commit_count"].as_u64().unwrap_or(1);
-                        dev_commits += if raw > 20 { 1 } else { raw };
+
+                // Events for approvals, comments, commits
+                let cache_key = format!("user:{username}");
+                let users: Vec<Value> = client
+                    .get_cached(&cache_key, "/users", &[("username", username)], 60)
+                    .await
+                    .or_default_logged();
+
+                let user_id = users.first().and_then(|u| u["id"].as_u64()).unwrap_or(0);
+                let since_ts =
+                    (chrono::Utc::now() - chrono::Duration::days(days as i64)).timestamp();
+                let events = if user_id > 0 {
+                    commits::fetch_user_events(&client, user_id, since_ts)
+                        .await
+                        .or_default_logged()
+                } else {
+                    Vec::new()
+                };
+
+                let project_info: Option<Value> = client
+                    .get_cached(
+                        &format!("project_info:{encoded_project}"),
+                        &format!("/projects/{encoded_project}"),
+                        &[("simple", "true")],
+                        60,
+                    )
+                    .await
+                    .ok();
+                let project_numeric_id = project_info.as_ref().and_then(|p| p["id"].as_u64());
+
+                let mut approvals = 0u64;
+                let mut comments = 0u64;
+                let mut dev_commits = 0u64;
+
+                for event in &events {
+                    let event_pid = event["project_id"].as_u64();
+                    if project_numeric_id.is_some() && event_pid != project_numeric_id {
+                        continue;
                     }
-                    _ => {}
+                    let action = event["action_name"].as_str().unwrap_or("");
+                    let target_type = event["target_type"].as_str().unwrap_or("");
+                    match (action, target_type) {
+                        ("approved", "MergeRequest") => approvals += 1,
+                        ("commented on", "MergeRequest") => comments += 1,
+                        ("pushed to", _) | ("pushed new", _) => {
+                            let raw = event["push_data"]["commit_count"].as_u64().unwrap_or(1);
+                            dev_commits += if raw > 20 { 1 } else { raw };
+                        }
+                        _ => {}
+                    }
+                }
+
+                DevStats {
+                    username: username.to_string(),
+                    mrs_merged: merged_mrs.len() as u64,
+                    mrs_reviewed: reviewed_mrs.len() as u64,
+                    reviewed_authors,
+                    approvals_given: approvals,
+                    avg_merge_hours: avg_merge,
+                    mr_comments: comments,
+                    commits: dev_commits,
+                    additions: total_additions,
+                    deletions: total_deletions,
+                    files_changed: total_files,
+                    mr_sizes: (mr_small, mr_medium, mr_large),
                 }
             }
-
-            DevStats {
-                username: username.to_string(),
-                mrs_merged: merged_mrs.len() as u64,
-                mrs_reviewed: reviewed_mrs.len() as u64,
-                reviewed_authors,
-                approvals_given: approvals,
-                avg_merge_hours: avg_merge,
-                mr_comments: comments,
-                commits: dev_commits,
-                additions: total_additions,
-                deletions: total_deletions,
-                files_changed: total_files,
-                mr_sizes: (mr_small, mr_medium, mr_large),
-            }
-        }
-    }).collect();
+        })
+        .collect();
 
     let dev_results = join_all(dev_futures).await;
 
     // ── MR turnaround data ──
 
-    let turnaround_mrs: Vec<Value> = client.get(&mr_path, &[
-        ("state", "merged"),
-        ("created_after", &since),
-        ("per_page", "50"),
-        ("order_by", "updated_at"),
-        ("sort", "desc"),
-    ]).await.or_default_logged();
+    let turnaround_mrs: Vec<Value> = client
+        .get(
+            &mr_path,
+            &[
+                ("state", "merged"),
+                ("created_after", &since),
+                ("per_page", "50"),
+                ("order_by", "updated_at"),
+                ("sort", "desc"),
+            ],
+        )
+        .await
+        .or_default_logged();
 
     struct TurnaroundMr {
         iid: u64,
@@ -810,7 +1027,10 @@ pub async fn generate_team_report(
     let total_mrs_merged: u64 = dev_results.iter().map(|d| d.mrs_merged).sum();
     let total_loc: u64 = dev_results.iter().map(|d| d.additions + d.deletions).sum();
     let reviewers_active = dev_results.iter().filter(|d| d.mrs_reviewed > 0).count();
-    let inactive_count = dev_results.iter().filter(|d| d.commits == 0 && d.mrs_merged == 0 && d.mrs_reviewed == 0).count();
+    let inactive_count = dev_results
+        .iter()
+        .filter(|d| d.commits == 0 && d.mrs_merged == 0 && d.mrs_reviewed == 0)
+        .count();
     let date_str = chrono::Utc::now().format("%A, %d %B %Y").to_string();
 
     // Review bus factor: developers who reviewed anything.
@@ -818,7 +1038,8 @@ pub async fn generate_team_report(
 
     // ── Build HTML ──
 
-    let mut html = format!(r#"<!DOCTYPE html>
+    let mut html = format!(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -876,7 +1097,9 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
         } else {
             format!("{:.1}h", d.avg_merge_hours)
         };
-        let _ = writeln!(html, "<tr><td><b>@{}</b></td><td>{}</td><td class=\"g\">+{}</td><td class=\"r\">-{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+        let _ = writeln!(
+            html,
+            "<tr><td><b>@{}</b></td><td>{}</td><td class=\"g\">+{}</td><td class=\"r\">-{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
             htmlescape(&d.username),
             d.commits,
             d.additions,
@@ -902,10 +1125,21 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
         html.push_str("</tr>\n");
 
         for reviewer in &dev_results {
-            let _ = write!(html, "<tr><td><b>@{}</b></td>", htmlescape(&reviewer.username));
+            let _ = write!(
+                html,
+                "<tr><td><b>@{}</b></td>",
+                htmlescape(&reviewer.username)
+            );
             for author in &dev_results {
-                let count = reviewer.reviewed_authors.get(&author.username).unwrap_or(&0);
-                let cell = if *count == 0 { "&ndash;".to_string() } else { format!("<b>{count}</b>") };
+                let count = reviewer
+                    .reviewed_authors
+                    .get(&author.username)
+                    .unwrap_or(&0);
+                let cell = if *count == 0 {
+                    "&ndash;".to_string()
+                } else {
+                    format!("<b>{count}</b>")
+                };
                 let _ = write!(html, "<td>{cell}</td>");
             }
             html.push_str("</tr>\n");
@@ -923,22 +1157,35 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
     html.push_str("<h2>MR Size Distribution</h2>\n");
     if total_sized > 0 {
         html.push_str("<div class=\"grid\">\n");
-        let _ = writeln!(html, "  <div class=\"card\"><div class=\"card-t\">Small (&lt;10 files)</div><div class=\"card-v g\">{total_small}</div><div class=\"card-s\">{:.0}%</div></div>",
+        let _ = writeln!(
+            html,
+            "  <div class=\"card\"><div class=\"card-t\">Small (&lt;10 files)</div><div class=\"card-v g\">{total_small}</div><div class=\"card-s\">{:.0}%</div></div>",
             total_small as f64 / total_sized as f64 * 100.0
         );
-        let _ = writeln!(html, "  <div class=\"card\"><div class=\"card-t\">Medium (10–50 files)</div><div class=\"card-v y\">{total_medium}</div><div class=\"card-s\">{:.0}%</div></div>",
+        let _ = writeln!(
+            html,
+            "  <div class=\"card\"><div class=\"card-t\">Medium (10–50 files)</div><div class=\"card-v y\">{total_medium}</div><div class=\"card-s\">{:.0}%</div></div>",
             total_medium as f64 / total_sized as f64 * 100.0
         );
-        let _ = writeln!(html, "  <div class=\"card\"><div class=\"card-t\">Large (&gt;50 files)</div><div class=\"card-v r\">{total_large}</div><div class=\"card-s\">{:.0}%</div></div>",
+        let _ = writeln!(
+            html,
+            "  <div class=\"card\"><div class=\"card-t\">Large (&gt;50 files)</div><div class=\"card-v r\">{total_large}</div><div class=\"card-s\">{:.0}%</div></div>",
             total_large as f64 / total_sized as f64 * 100.0
         );
         html.push_str("</div>\n");
 
         // Per-developer breakdown
-        html.push_str("<table>\n<tr><th>Developer</th><th>Small</th><th>Medium</th><th>Large</th></tr>\n");
+        html.push_str(
+            "<table>\n<tr><th>Developer</th><th>Small</th><th>Medium</th><th>Large</th></tr>\n",
+        );
         for d in &dev_results {
-            let _ = writeln!(html, "<tr><td>@{}</td><td class=\"g\">{}</td><td class=\"y\">{}</td><td class=\"r\">{}</td></tr>",
-                htmlescape(&d.username), d.mr_sizes.0, d.mr_sizes.1, d.mr_sizes.2,
+            let _ = writeln!(
+                html,
+                "<tr><td>@{}</td><td class=\"g\">{}</td><td class=\"y\">{}</td><td class=\"r\">{}</td></tr>",
+                htmlescape(&d.username),
+                d.mr_sizes.0,
+                d.mr_sizes.1,
+                d.mr_sizes.2,
             );
         }
         html.push_str("</table>\n");
@@ -952,16 +1199,24 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
     if !turnaround_stats.is_empty() {
         let total_hours: f64 = turnaround_stats.iter().map(|t| t.hours).sum();
         let avg_hours = total_hours / turnaround_stats.len() as f64;
-        let median_hours = crate::tools::stats::median(&mut turnaround_stats.iter().map(|t| t.hours).collect::<Vec<_>>());
+        let median_hours = crate::tools::stats::median(
+            &mut turnaround_stats.iter().map(|t| t.hours).collect::<Vec<_>>(),
+        );
 
         html.push_str("<div class=\"grid\">\n");
-        let _ = writeln!(html, "  <div class=\"card\"><div class=\"card-t\">Average</div><div class=\"card-v\">{:.1}h</div></div>",
+        let _ = writeln!(
+            html,
+            "  <div class=\"card\"><div class=\"card-t\">Average</div><div class=\"card-v\">{:.1}h</div></div>",
             avg_hours
         );
-        let _ = writeln!(html, "  <div class=\"card\"><div class=\"card-t\">Median</div><div class=\"card-v\">{:.1}h</div></div>",
+        let _ = writeln!(
+            html,
+            "  <div class=\"card\"><div class=\"card-t\">Median</div><div class=\"card-v\">{:.1}h</div></div>",
             median_hours
         );
-        let _ = writeln!(html, "  <div class=\"card\"><div class=\"card-t\">MRs Analyzed</div><div class=\"card-v\">{}</div></div>",
+        let _ = writeln!(
+            html,
+            "  <div class=\"card\"><div class=\"card-t\">MRs Analyzed</div><div class=\"card-v\">{}</div></div>",
             turnaround_stats.len()
         );
         html.push_str("</div>\n");
@@ -976,11 +1231,19 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
             } else {
                 format!("{:.1}h", t.hours)
             };
-            let _ = writeln!(html, "<tr><td>!{}</td><td>{}</td><td>@{}</td><td class=\"{}\">{}</td></tr>",
+            let _ = writeln!(
+                html,
+                "<tr><td>!{}</td><td>{}</td><td>@{}</td><td class=\"{}\">{}</td></tr>",
                 t.iid,
                 htmlescape(&t.title),
                 htmlescape(&t.author),
-                if t.hours > 48.0 { "r" } else if t.hours > 24.0 { "y" } else { "" },
+                if t.hours > 48.0 {
+                    "r"
+                } else if t.hours > 24.0 {
+                    "y"
+                } else {
+                    ""
+                },
                 duration,
             );
         }
@@ -1009,8 +1272,11 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
     // Zero review participation
     for d in &dev_results {
         if d.mrs_reviewed == 0 && d.commits > 10 {
-            let _ = writeln!(html, "<div class=\"issue risk\"><b>@{} — no review participation</b><div class=\"m\">{} commits but 0 reviews given. Consider requiring cross-reviews.</div></div>",
-                htmlescape(&d.username), d.commits,
+            let _ = writeln!(
+                html,
+                "<div class=\"issue risk\"><b>@{} — no review participation</b><div class=\"m\">{} commits but 0 reviews given. Consider requiring cross-reviews.</div></div>",
+                htmlescape(&d.username),
+                d.commits,
             );
             issues_found += 1;
         }
@@ -1021,8 +1287,11 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
         if d.mrs_merged > 0 {
             let avg_files_per_mr = d.files_changed as f64 / d.mrs_merged as f64;
             if avg_files_per_mr > 50.0 {
-                let _ = writeln!(html, "<div class=\"issue warn\"><b>@{} — MRs too large</b><div class=\"m\">Average {:.0} files/MR. Break down into smaller, reviewable chunks.</div></div>",
-                    htmlescape(&d.username), avg_files_per_mr,
+                let _ = writeln!(
+                    html,
+                    "<div class=\"issue warn\"><b>@{} — MRs too large</b><div class=\"m\">Average {:.0} files/MR. Break down into smaller, reviewable chunks.</div></div>",
+                    htmlescape(&d.username),
+                    avg_files_per_mr,
                 );
                 issues_found += 1;
             }
@@ -1038,13 +1307,20 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
 
     // Inactive members
     if inactive_count > 0 {
-        let inactive_names: Vec<&str> = dev_results.iter()
+        let inactive_names: Vec<&str> = dev_results
+            .iter()
             .filter(|d| d.commits == 0 && d.mrs_merged == 0 && d.mrs_reviewed == 0)
             .map(|d| d.username.as_str())
             .collect();
-        let _ = writeln!(html, "<div class=\"issue warn\"><b>{} inactive member(s)</b><div class=\"m\">No commits, MRs, or reviews: {}. May be on leave or assigned to other projects.</div></div>",
+        let _ = writeln!(
+            html,
+            "<div class=\"issue warn\"><b>{} inactive member(s)</b><div class=\"m\">No commits, MRs, or reviews: {}. May be on leave or assigned to other projects.</div></div>",
             inactive_count,
-            inactive_names.iter().map(|n| format!("@{}", htmlescape(n))).collect::<Vec<_>>().join(", "),
+            inactive_names
+                .iter()
+                .map(|n| format!("@{}", htmlescape(n)))
+                .collect::<Vec<_>>()
+                .join(", "),
         );
         issues_found += 1;
     }
@@ -1055,7 +1331,9 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
 
     // ── Footer ──
 
-    let _ = write!(html, r#"
+    let _ = write!(
+        html,
+        r#"
 <footer>made with &lt;3 by Alex Velesnitski &middot; gl-mcp + Claude &middot; {date_str}</footer>
 
 </body>
@@ -1095,7 +1373,6 @@ pub async fn generate_project_report(
     ref_name: &str,
     max_files: usize,
 ) -> Result<String> {
-
     let encoded = urlencoding::encode(project_id);
 
     // 1. Fetch project info
@@ -1106,8 +1383,14 @@ pub async fn generate_project_report(
     let project_name = project["name"].as_str().unwrap_or(project_id);
     let project_desc = project["description"].as_str().unwrap_or("");
     let default_branch = project["default_branch"].as_str().unwrap_or("main");
-    let ref_param = if ref_name.is_empty() { default_branch } else { ref_name };
-    let repo_size = project["statistics"]["repository_size"].as_u64().unwrap_or(0);
+    let ref_param = if ref_name.is_empty() {
+        default_branch
+    } else {
+        ref_name
+    };
+    let repo_size = project["statistics"]["repository_size"]
+        .as_u64()
+        .unwrap_or(0);
 
     // 2. Fetch languages
     let langs: Value = client
@@ -1126,26 +1409,73 @@ pub async fn generate_project_report(
 
     // Categorize files
     let source_extensions: &[&str] = &[
-        ".swift", ".kt", ".kts", ".java", ".go", ".rs", ".py", ".rb",
-        ".php", ".ts", ".tsx", ".js", ".jsx", ".vue", ".c", ".cpp", ".h",
-        ".m", ".mm", ".cs", ".sql", ".sh", ".bash", ".r", ".scala",
+        ".swift", ".kt", ".kts", ".java", ".go", ".rs", ".py", ".rb", ".php", ".ts", ".tsx", ".js",
+        ".jsx", ".vue", ".c", ".cpp", ".h", ".m", ".mm", ".cs", ".sql", ".sh", ".bash", ".r",
+        ".scala",
     ];
     let config_extensions: &[&str] = &[
-        ".json", ".yaml", ".yml", ".toml", ".xml", ".plist", ".properties",
-        ".env", ".ini", ".cfg", ".conf", ".gradle", ".tf", ".tfvars", ".hcl",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".xml",
+        ".plist",
+        ".properties",
+        ".env",
+        ".ini",
+        ".cfg",
+        ".conf",
+        ".gradle",
+        ".tf",
+        ".tfvars",
+        ".hcl",
     ];
     let doc_extensions: &[&str] = &[
         ".md", ".txt", ".rst", ".adoc", ".html", ".css", ".scss", ".less",
     ];
     let binary_extensions: &[&str] = &[
-        ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".bmp", ".tiff",
-        ".woff", ".woff2", ".ttf", ".eot", ".otf",
-        ".zip", ".tar", ".gz", ".rar", ".7z",
-        ".pdf", ".doc", ".docx", ".xls", ".xlsx",
-        ".mp3", ".mp4", ".wav", ".avi", ".mov",
-        ".o", ".obj", ".exe", ".dll", ".class", ".jar",
-        ".a", ".dylib", ".so", ".framework",
-        ".dat", ".bin", ".db", ".sqlite",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".ico",
+        ".svg",
+        ".bmp",
+        ".tiff",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".eot",
+        ".otf",
+        ".zip",
+        ".tar",
+        ".gz",
+        ".rar",
+        ".7z",
+        ".pdf",
+        ".doc",
+        ".docx",
+        ".xls",
+        ".xlsx",
+        ".mp3",
+        ".mp4",
+        ".wav",
+        ".avi",
+        ".mov",
+        ".o",
+        ".obj",
+        ".exe",
+        ".dll",
+        ".class",
+        ".jar",
+        ".a",
+        ".dylib",
+        ".so",
+        ".framework",
+        ".dat",
+        ".bin",
+        ".db",
+        ".sqlite",
     ];
     let binary_dirs: &[&str] = &[".xcframework/", ".framework/"];
 
@@ -1176,7 +1506,10 @@ pub async fn generate_project_report(
         }
     }
 
-    let total_files = entries.iter().filter(|e| e["type"].as_str() == Some("blob")).count();
+    let total_files = entries
+        .iter()
+        .filter(|e| e["type"].as_str() == Some("blob"))
+        .count();
 
     // 4. Fetch contributors
     let contributors: Vec<Value> = client
@@ -1205,7 +1538,9 @@ pub async fn generate_project_report(
         .iter()
         .filter(|c| {
             let msg = c["message"].as_str().unwrap_or("");
-            !msg.starts_with("Merge branch") && !msg.starts_with("Merge remote") && !msg.starts_with("Merge ")
+            !msg.starts_with("Merge branch")
+                && !msg.starts_with("Merge remote")
+                && !msg.starts_with("Merge ")
         })
         .collect();
 
@@ -1221,9 +1556,15 @@ pub async fn generate_project_report(
 
         let report = validate_commit_message(msg);
 
-        if report.has_conventional_prefix { conventional_pass += 1; }
-        if report.has_ticket_ref { ticket_pass += 1; }
-        if !report.is_too_long { length_pass += 1; }
+        if report.has_conventional_prefix {
+            conventional_pass += 1;
+        }
+        if report.has_ticket_ref {
+            ticket_pass += 1;
+        }
+        if !report.is_too_long {
+            length_pass += 1;
+        }
 
         if !report.failures.is_empty() {
             failing_messages.push((short_sha.to_string(), subject.to_string(), report.failures));
@@ -1233,13 +1574,16 @@ pub async fn generate_project_report(
     let commit_total = non_merge.len() as u32;
 
     // 6. Analyze source files (up to max_files)
-    let skip_extensions: &[&str] = &[
-        ".lock", ".sum", ".map", ".min.js", ".min.css", ".pb.go",
-    ];
+    let skip_extensions: &[&str] = &[".lock", ".sum", ".map", ".min.js", ".min.css", ".pb.go"];
     let skip_dirs: &[&str] = &[
-        "vendor/", "node_modules/", "dist/", "build/",
-        ".xcframework/", ".framework/",
-        "__generated__", "Pods/",
+        "vendor/",
+        "node_modules/",
+        "dist/",
+        "build/",
+        ".xcframework/",
+        ".framework/",
+        "__generated__",
+        "Pods/",
     ];
 
     let analyzable: Vec<&str> = source_files
@@ -1292,7 +1636,24 @@ pub async fn generate_project_report(
         }
     }
 
-    Ok(render_project_report(ProjectReportData { project_name, project_desc, ref_param, repo_size, langs, binary_files, total_files, contributors, recent_commits, conventional_pass, ticket_pass, length_pass, failing_messages, commit_total, total_source, all_metrics }))
+    Ok(render_project_report(ProjectReportData {
+        project_name,
+        project_desc,
+        ref_param,
+        repo_size,
+        langs,
+        binary_files,
+        total_files,
+        contributors,
+        recent_commits,
+        conventional_pass,
+        ticket_pass,
+        length_pass,
+        failing_messages,
+        commit_total,
+        total_source,
+        all_metrics,
+    }))
 }
 
 /// Last `max` characters of `s`, prefixed with "..." when cut. Counts characters, not
@@ -1312,7 +1673,24 @@ pub(crate) fn tail_ellipsis(s: &str, max: usize) -> String {
 /// Pure: data in, report out — split from the async tool so the logic is
 /// verified on plain values instead of through the network call that feeds it.
 pub(crate) fn render_project_report(d: ProjectReportData<'_>) -> String {
-    let ProjectReportData { project_name, project_desc, ref_param, repo_size, langs, binary_files, total_files, contributors, recent_commits, conventional_pass, ticket_pass, length_pass, failing_messages, commit_total, total_source, mut all_metrics } = d;
+    let ProjectReportData {
+        project_name,
+        project_desc,
+        ref_param,
+        repo_size,
+        langs,
+        binary_files,
+        total_files,
+        contributors,
+        recent_commits,
+        conventional_pass,
+        ticket_pass,
+        length_pass,
+        failing_messages,
+        commit_total,
+        total_source,
+        mut all_metrics,
+    } = d;
     // Sort worst first
     all_metrics.sort_by(|a, b| a.score.cmp(&b.score));
     let avg_score: f64 = if all_metrics.is_empty() {
@@ -1321,12 +1699,18 @@ pub(crate) fn render_project_report(d: ProjectReportData<'_>) -> String {
         all_metrics.iter().map(|m| m.score as f64).sum::<f64>() / all_metrics.len() as f64
     };
     let issues = issue_counts(&all_metrics);
-    let commits = CommitStats { total: commit_total, conventional: conventional_pass, ticket: ticket_pass, length: length_pass };
+    let commits = CommitStats {
+        total: commit_total,
+        conventional: conventional_pass,
+        ticket: ticket_pass,
+        length: length_pass,
+    };
     let date_str = chrono::Utc::now().format("%A, %d %B %Y").to_string();
     // GitLab project names are restricted, but branch names may contain `<` and `>`.
     let (project_name, ref_param) = (htmlescape(project_name), htmlescape(ref_param));
 
-    let mut html = format!(r#"<!DOCTYPE html>
+    let mut html = format!(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -1344,7 +1728,14 @@ pub(crate) fn render_project_report(d: ProjectReportData<'_>) -> String {
 "#,
         htmlescape(project_desc),
     );
-    html.push_str(&rp_cards(avg_score, total_files, total_source, repo_size, contributors.len(), recent_commits.len()));
+    html.push_str(&rp_cards(
+        avg_score,
+        total_files,
+        total_source,
+        repo_size,
+        contributors.len(),
+        recent_commits.len(),
+    ));
     html.push_str(&rp_grade_distribution(&all_metrics));
     html.push_str(&rp_languages(&langs));
     html.push_str(&rp_file_table(&all_metrics, total_source));
@@ -1352,8 +1743,15 @@ pub(crate) fn render_project_report(d: ProjectReportData<'_>) -> String {
     html.push_str(&rp_binary_files(&binary_files));
     html.push_str(&rp_commit_quality(&commits, &failing_messages));
     html.push_str(&rp_contributors(&contributors));
-    html.push_str(&rp_recommendations(&all_metrics, &binary_files, &commits, &issues));
-    let _ = write!(html, r#"
+    html.push_str(&rp_recommendations(
+        &all_metrics,
+        &binary_files,
+        &commits,
+        &issues,
+    ));
+    let _ = write!(
+        html,
+        r#"
 <footer>made with &lt;3 by Alex Velesnitski &middot; gl-mcp + Claude &middot; {date_str}</footer>
 
 </body>
@@ -1393,13 +1791,18 @@ struct CommitStats {
 
 impl CommitStats {
     fn pct(&self, pass: u32) -> f64 {
-        if self.total > 0 { pass as f64 / self.total as f64 * 100.0 } else { 0.0 }
+        if self.total > 0 {
+            pass as f64 / self.total as f64 * 100.0
+        } else {
+            0.0
+        }
     }
 }
 
 /// Rule hits across all files, most frequent first (ties by rule id).
 fn issue_counts(metrics: &[FileMetricsPub]) -> Vec<((String, String), usize)> {
-    let mut counts: std::collections::BTreeMap<(String, String), usize> = std::collections::BTreeMap::new();
+    let mut counts: std::collections::BTreeMap<(String, String), usize> =
+        std::collections::BTreeMap::new();
     for m in metrics {
         for (rule_id, name) in &m.violation_details {
             *counts.entry((rule_id.clone(), name.clone())).or_insert(0) += 1;
@@ -1410,21 +1813,44 @@ fn issue_counts(metrics: &[FileMetricsPub]) -> Vec<((String, String), usize)> {
     sorted
 }
 
-fn rp_cards(avg_score: f64, total_files: usize, total_source: usize, repo_size: u64, contributors: usize, recent_commits: usize) -> String {
+fn rp_cards(
+    avg_score: f64,
+    total_files: usize,
+    total_source: usize,
+    repo_size: u64,
+    contributors: usize,
+    recent_commits: usize,
+) -> String {
     let mut html = String::from("<div class=\"grid\">\n");
-    let _ = writeln!(html, "  <div class=\"card\"><div class=\"card-t\">Avg Quality</div><div class=\"card-v{}\">{:.0}/100</div></div>",
-        if avg_score >= 75.0 { " g" } else if avg_score >= 60.0 { " y" } else { " r" },
+    let _ = writeln!(
+        html,
+        "  <div class=\"card\"><div class=\"card-t\">Avg Quality</div><div class=\"card-v{}\">{:.0}/100</div></div>",
+        if avg_score >= 75.0 {
+            " g"
+        } else if avg_score >= 60.0 {
+            " y"
+        } else {
+            " r"
+        },
         avg_score,
     );
-    let _ = writeln!(html, "  <div class=\"card\"><div class=\"card-t\">Total Files</div><div class=\"card-v\">{total_files}</div><div class=\"card-s\">{total_source} source</div></div>",
+    let _ = writeln!(
+        html,
+        "  <div class=\"card\"><div class=\"card-t\">Total Files</div><div class=\"card-v\">{total_files}</div><div class=\"card-s\">{total_source} source</div></div>",
     );
-    let _ = writeln!(html, "  <div class=\"card\"><div class=\"card-t\">Repo Size</div><div class=\"card-v\">{}</div></div>",
+    let _ = writeln!(
+        html,
+        "  <div class=\"card\"><div class=\"card-t\">Repo Size</div><div class=\"card-v\">{}</div></div>",
         format_size(repo_size),
     );
-    let _ = writeln!(html, "  <div class=\"card\"><div class=\"card-t\">Contributors</div><div class=\"card-v\">{}</div></div>",
+    let _ = writeln!(
+        html,
+        "  <div class=\"card\"><div class=\"card-t\">Contributors</div><div class=\"card-v\">{}</div></div>",
         contributors,
     );
-    let _ = writeln!(html, "  <div class=\"card\"><div class=\"card-t\">Commits (14d)</div><div class=\"card-v\">{}</div></div>",
+    let _ = writeln!(
+        html,
+        "  <div class=\"card\"><div class=\"card-t\">Commits (14d)</div><div class=\"card-v\">{}</div></div>",
         recent_commits,
     );
     html.push_str("</div>\n");
@@ -1438,7 +1864,10 @@ fn rp_grade_distribution(all_metrics: &[FileMetricsPub]) -> String {
         Grade::ALL.map(|g| all_metrics.iter().filter(|m| m.grade == g).count());
     if total_analyzed > 0 {
         html.push_str("<h2>Grade Distribution</h2>\n");
-        let max_grade = *[grade_a, grade_b, grade_c, grade_d, grade_f].iter().max().unwrap_or(&1);
+        let max_grade = *[grade_a, grade_b, grade_c, grade_d, grade_f]
+            .iter()
+            .max()
+            .unwrap_or(&1);
         let bar_max = 300; // max bar width in px
 
         for (label, count, color) in [
@@ -1448,9 +1877,15 @@ fn rp_grade_distribution(all_metrics: &[FileMetricsPub]) -> String {
             ("D", grade_d, "#f85149"),
             ("F", grade_f, "#f85149"),
         ] {
-            let width = if max_grade > 0 { count * bar_max / max_grade } else { 0 };
+            let width = if max_grade > 0 {
+                count * bar_max / max_grade
+            } else {
+                0
+            };
             let pct = count as f64 / total_analyzed as f64 * 100.0;
-            let _ = writeln!(html, "<div style=\"margin:6px 0;display:flex;align-items:center;gap:10px\"><span style=\"width:24px;font-weight:700;color:{color}\">{label}</span><span class=\"bar\" style=\"width:{width}px;background:{color}\"></span><span style=\"color:#8b949e;font-size:13px\">{count} ({pct:.0}%)</span></div>"
+            let _ = writeln!(
+                html,
+                "<div style=\"margin:6px 0;display:flex;align-items:center;gap:10px\"><span style=\"width:24px;font-weight:700;color:{color}\">{label}</span><span class=\"bar\" style=\"width:{width}px;background:{color}\"></span><span style=\"color:#8b949e;font-size:13px\">{count} ({pct:.0}%)</span></div>"
             );
         }
     }
@@ -1468,11 +1903,16 @@ fn rp_languages(langs: &Value) -> String {
                 .collect();
             lang_entries.sort_by(|a, b| b.1.total_cmp(&a.1));
 
-            let lang_colors = ["#58a6ff", "#3fb950", "#d29922", "#f85149", "#bc8cff", "#f78166", "#7ee787", "#79c0ff"];
+            let lang_colors = [
+                "#58a6ff", "#3fb950", "#d29922", "#f85149", "#bc8cff", "#f78166", "#7ee787",
+                "#79c0ff",
+            ];
             for (i, (lang, pct)) in lang_entries.iter().enumerate() {
                 let color = lang_colors.get(i).unwrap_or(&"#8b949e");
                 let width = (*pct * 3.0) as u32; // 100% = 300px
-                let _ = writeln!(html, "<div style=\"margin:6px 0;display:flex;align-items:center;gap:10px\"><span style=\"width:100px;text-align:right;font-size:13px\">{}</span><span class=\"bar\" style=\"width:{width}px;background:{color}\"></span><span style=\"color:#8b949e;font-size:13px\">{pct:.1}%</span></div>",
+                let _ = writeln!(
+                    html,
+                    "<div style=\"margin:6px 0;display:flex;align-items:center;gap:10px\"><span style=\"width:100px;text-align:right;font-size:13px\">{}</span><span class=\"bar\" style=\"width:{width}px;background:{color}\"></span><span style=\"color:#8b949e;font-size:13px\">{pct:.1}%</span></div>",
                     htmlescape(lang),
                 );
             }
@@ -1486,7 +1926,10 @@ fn rp_file_table(all_metrics: &[FileMetricsPub], total_source: usize) -> String 
     let total_analyzed = all_metrics.len();
     if !all_metrics.is_empty() {
         html.push_str("<h2>File Quality</h2>\n");
-        let _ = writeln!(html, "<div class=\"sub\">{total_analyzed} of {total_source} source files analyzed</div>");
+        let _ = writeln!(
+            html,
+            "<div class=\"sub\">{total_analyzed} of {total_source} source files analyzed</div>"
+        );
         html.push_str("<table>\n<tr><th>File</th><th>Lines</th><th>Functions</th><th>Max Nesting</th><th>Violations</th><th>Score</th><th>Grade</th></tr>\n");
 
         for m in all_metrics {
@@ -1497,7 +1940,9 @@ fn rp_file_table(all_metrics: &[FileMetricsPub], total_source: usize) -> String 
                 Grade::C => "color:#d29922;font-weight:700",
                 Grade::D | Grade::F => "color:#f85149;font-weight:700",
             };
-            let _ = writeln!(html, "<tr><td title=\"{}\">{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td style=\"{}\">{}</td></tr>",
+            let _ = writeln!(
+                html,
+                "<tr><td title=\"{}\">{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td style=\"{}\">{}</td></tr>",
                 htmlescape(&m.path),
                 htmlescape(&short_path),
                 m.total_lines,
@@ -1519,8 +1964,16 @@ fn rp_top_issues(issues: &[((String, String), usize)]) -> String {
     if !issues.is_empty() {
         html.push_str("<h2>Top Issues</h2>\n");
         for ((rule_id, name), count) in issues.iter().take(15) {
-            let border_class = if *count > 10 { "risk" } else if *count > 3 { "warn" } else { "ok" };
-            let _ = writeln!(html, "<div class=\"issue {border_class}\"><b>[{rule_id}] {}</b><div class=\"m\">{count} occurrences across analyzed files</div></div>",
+            let border_class = if *count > 10 {
+                "risk"
+            } else if *count > 3 {
+                "warn"
+            } else {
+                "ok"
+            };
+            let _ = writeln!(
+                html,
+                "<div class=\"issue {border_class}\"><b>[{rule_id}] {}</b><div class=\"m\">{count} occurrences across analyzed files</div></div>",
                 htmlescape(name),
             );
         }
@@ -1538,47 +1991,90 @@ fn rp_binary_files(binary_files: &[String]) -> String {
             let _ = writeln!(html, "<tr><td>{}</td></tr>", htmlescape(f));
         }
         if binary_files.len() > 30 {
-            let _ = writeln!(html, "<tr><td>...and {} more</td></tr>", binary_files.len() - 30);
+            let _ = writeln!(
+                html,
+                "<tr><td>...and {} more</td></tr>",
+                binary_files.len() - 30
+            );
         }
         html.push_str("</table>\n");
     }
     html
 }
 
-fn rp_commit_quality(c: &CommitStats, failing_messages: &[(String, String, Vec<String>)]) -> String {
-    let CommitStats { total: commit_total, conventional: conventional_pass, ticket: ticket_pass, length: length_pass } = *c;
-    let (conv_pct, ticket_pct, length_pct) = (c.pct(conventional_pass), c.pct(ticket_pass), c.pct(length_pass));
+fn rp_commit_quality(
+    c: &CommitStats,
+    failing_messages: &[(String, String, Vec<String>)],
+) -> String {
+    let CommitStats {
+        total: commit_total,
+        conventional: conventional_pass,
+        ticket: ticket_pass,
+        length: length_pass,
+    } = *c;
+    let (conv_pct, ticket_pct, length_pct) = (
+        c.pct(conventional_pass),
+        c.pct(ticket_pass),
+        c.pct(length_pass),
+    );
     let mut html = String::from("<h2>Commit Quality</h2>\n");
     if commit_total > 0 {
-        let _ = writeln!(html, "<div class=\"sub\">{commit_total} non-merge commits in the last 14 days</div>");
+        let _ = writeln!(
+            html,
+            "<div class=\"sub\">{commit_total} non-merge commits in the last 14 days</div>"
+        );
         html.push_str("<table>\n<tr><th>Check</th><th>Pass</th><th>Fail</th><th>%</th></tr>\n");
-        let _ = writeln!(html, "<tr><td>Conventional format</td><td class=\"g\">{conventional_pass}</td><td class=\"r\">{}</td><td{}>{conv_pct:.0}%</td></tr>",
+        let _ = writeln!(
+            html,
+            "<tr><td>Conventional format</td><td class=\"g\">{conventional_pass}</td><td class=\"r\">{}</td><td{}>{conv_pct:.0}%</td></tr>",
             commit_total - conventional_pass,
             if conv_pct >= 80.0 { "" } else { " class=\"r\"" },
         );
-        let _ = writeln!(html, "<tr><td>Ticket reference</td><td class=\"g\">{ticket_pass}</td><td class=\"r\">{}</td><td{}>{ticket_pct:.0}%</td></tr>",
+        let _ = writeln!(
+            html,
+            "<tr><td>Ticket reference</td><td class=\"g\">{ticket_pass}</td><td class=\"r\">{}</td><td{}>{ticket_pct:.0}%</td></tr>",
             commit_total - ticket_pass,
-            if ticket_pct >= 80.0 { "" } else { " class=\"r\"" },
+            if ticket_pct >= 80.0 {
+                ""
+            } else {
+                " class=\"r\""
+            },
         );
-        let _ = writeln!(html, "<tr><td>Subject length &lt;72</td><td class=\"g\">{length_pass}</td><td class=\"r\">{}</td><td{}>{length_pct:.0}%</td></tr>",
+        let _ = writeln!(
+            html,
+            "<tr><td>Subject length &lt;72</td><td class=\"g\">{length_pass}</td><td class=\"r\">{}</td><td{}>{length_pct:.0}%</td></tr>",
             commit_total - length_pass,
-            if length_pct >= 80.0 { "" } else { " class=\"r\"" },
+            if length_pct >= 80.0 {
+                ""
+            } else {
+                " class=\"r\""
+            },
         );
         html.push_str("</table>\n");
 
         if !failing_messages.is_empty() {
-            let _ = writeln!(html, "<h2>Failing Commit Messages ({})</h2>", failing_messages.len());
+            let _ = writeln!(
+                html,
+                "<h2>Failing Commit Messages ({})</h2>",
+                failing_messages.len()
+            );
             html.push_str("<table>\n<tr><th>SHA</th><th>Subject</th><th>Issues</th></tr>\n");
             for (sha, subject, issues) in failing_messages.iter().take(20) {
                 let short_subject: String = subject.chars().take(50).collect();
-                let _ = writeln!(html, "<tr><td><code>{}</code></td><td>{}</td><td class=\"r\">{}</td></tr>",
+                let _ = writeln!(
+                    html,
+                    "<tr><td><code>{}</code></td><td>{}</td><td class=\"r\">{}</td></tr>",
                     htmlescape(sha),
                     htmlescape(&short_subject),
                     issues.join(", "),
                 );
             }
             if failing_messages.len() > 20 {
-                let _ = writeln!(html, "<tr><td colspan=\"3\">...and {} more</td></tr>", failing_messages.len() - 20);
+                let _ = writeln!(
+                    html,
+                    "<tr><td colspan=\"3\">...and {} more</td></tr>",
+                    failing_messages.len() - 20
+                );
             }
             html.push_str("</table>\n");
         }
@@ -1592,26 +2088,44 @@ fn rp_contributors(contributors: &[Value]) -> String {
     let mut html = String::new();
     if !contributors.is_empty() {
         html.push_str("<h2>Contributors</h2>\n");
-        html.push_str("<table>\n<tr><th>Name</th><th>Commits</th><th>Additions</th><th>Deletions</th></tr>\n");
+        html.push_str(
+            "<table>\n<tr><th>Name</th><th>Commits</th><th>Additions</th><th>Deletions</th></tr>\n",
+        );
         for c in contributors.iter().take(20) {
             let name = c["name"].as_str().unwrap_or("?");
             let commits_count = c["commits"].as_u64().unwrap_or(0);
             let additions = c["additions"].as_u64().unwrap_or(0);
             let deletions = c["deletions"].as_u64().unwrap_or(0);
-            let _ = writeln!(html, "<tr><td>{}</td><td>{commits_count}</td><td class=\"g\">+{additions}</td><td class=\"r\">-{deletions}</td></tr>",
+            let _ = writeln!(
+                html,
+                "<tr><td>{}</td><td>{commits_count}</td><td class=\"g\">+{additions}</td><td class=\"r\">-{deletions}</td></tr>",
                 htmlescape(name),
             );
         }
         if contributors.len() > 20 {
-            let _ = writeln!(html, "<tr><td colspan=\"4\">...and {} more</td></tr>", contributors.len() - 20);
+            let _ = writeln!(
+                html,
+                "<tr><td colspan=\"4\">...and {} more</td></tr>",
+                contributors.len() - 20
+            );
         }
         html.push_str("</table>\n");
     }
     html
 }
 
-fn rp_recommendations(all_metrics: &[FileMetricsPub], binary_files: &[String], c: &CommitStats, issues: &[((String, String), usize)]) -> String {
-    let CommitStats { total: commit_total, conventional: conventional_pass, ticket: ticket_pass, .. } = *c;
+fn rp_recommendations(
+    all_metrics: &[FileMetricsPub],
+    binary_files: &[String],
+    c: &CommitStats,
+    issues: &[((String, String), usize)],
+) -> String {
+    let CommitStats {
+        total: commit_total,
+        conventional: conventional_pass,
+        ticket: ticket_pass,
+        ..
+    } = *c;
     let (conv_pct, ticket_pct) = (c.pct(conventional_pass), c.pct(ticket_pass));
     let mut html = String::from("<h2>Recommendations</h2>\n");
     let mut rec_count = 0;
@@ -1621,11 +2135,19 @@ fn rp_recommendations(all_metrics: &[FileMetricsPub], binary_files: &[String], c
         for m in bad_files.iter().take(10) {
             let short = m.path.rsplit('/').next().unwrap_or(&m.path);
             let reason = if m.total_lines > 300 {
-                format!("Grade {}, {} lines &mdash; needs splitting", m.grade, m.total_lines)
+                format!(
+                    "Grade {}, {} lines &mdash; needs splitting",
+                    m.grade, m.total_lines
+                )
             } else {
-                format!("Grade {}, {} violations &mdash; needs cleanup", m.grade, m.violations)
+                format!(
+                    "Grade {}, {} violations &mdash; needs cleanup",
+                    m.grade, m.violations
+                )
             };
-            let _ = writeln!(html, "<div class=\"issue risk\"><b>{}</b><div class=\"m\">{reason}</div></div>",
+            let _ = writeln!(
+                html,
+                "<div class=\"issue risk\"><b>{}</b><div class=\"m\">{reason}</div></div>",
                 htmlescape(short),
             );
             rec_count += 1;
@@ -1633,20 +2155,26 @@ fn rp_recommendations(all_metrics: &[FileMetricsPub], binary_files: &[String], c
     }
 
     if !binary_files.is_empty() {
-        let _ = writeln!(html, "<div class=\"issue warn\"><b>{} binary files in repository</b><div class=\"m\">Move to Git LFS or generate via CI to reduce repo size.</div></div>",
+        let _ = writeln!(
+            html,
+            "<div class=\"issue warn\"><b>{} binary files in repository</b><div class=\"m\">Move to Git LFS or generate via CI to reduce repo size.</div></div>",
             binary_files.len(),
         );
         rec_count += 1;
     }
 
     if commit_total > 0 && ticket_pct < 50.0 {
-        let _ = writeln!(html, "<div class=\"issue warn\"><b>Low ticket reference rate ({ticket_pct:.0}%)</b><div class=\"m\">Only {ticket_pass}/{commit_total} commits reference a ticket. Enforce ticket IDs in commit messages.</div></div>"
+        let _ = writeln!(
+            html,
+            "<div class=\"issue warn\"><b>Low ticket reference rate ({ticket_pct:.0}%)</b><div class=\"m\">Only {ticket_pass}/{commit_total} commits reference a ticket. Enforce ticket IDs in commit messages.</div></div>"
         );
         rec_count += 1;
     }
 
     if commit_total > 0 && conv_pct < 50.0 {
-        let _ = writeln!(html, "<div class=\"issue warn\"><b>Low conventional commit rate ({conv_pct:.0}%)</b><div class=\"m\">Only {conventional_pass}/{commit_total} commits use conventional format. Consider adopting commitlint.</div></div>"
+        let _ = writeln!(
+            html,
+            "<div class=\"issue warn\"><b>Low conventional commit rate ({conv_pct:.0}%)</b><div class=\"m\">Only {conventional_pass}/{commit_total} commits use conventional format. Consider adopting commitlint.</div></div>"
         );
         rec_count += 1;
     }
@@ -1654,11 +2182,16 @@ fn rp_recommendations(all_metrics: &[FileMetricsPub], binary_files: &[String], c
     // Check for force unwraps in issues
     let force_unwrap_count: usize = issues
         .iter()
-        .filter(|((_, name), _)| name.to_lowercase().contains("force unwrap") || name.to_lowercase().contains("force cast"))
+        .filter(|((_, name), _)| {
+            name.to_lowercase().contains("force unwrap")
+                || name.to_lowercase().contains("force cast")
+        })
         .map(|(_, c)| *c)
         .sum();
     if force_unwrap_count > 0 {
-        let _ = writeln!(html, "<div class=\"issue risk\"><b>{force_unwrap_count} force unwraps/casts detected</b><div class=\"m\">Replace with safe alternatives (guard let, if let, as?) to prevent runtime crashes.</div></div>"
+        let _ = writeln!(
+            html,
+            "<div class=\"issue risk\"><b>{force_unwrap_count} force unwraps/casts detected</b><div class=\"m\">Replace with safe alternatives (guard let, if let, as?) to prevent runtime crashes.</div></div>"
         );
         rec_count += 1;
     }
@@ -1671,9 +2204,9 @@ fn rp_recommendations(all_metrics: &[FileMetricsPub], binary_files: &[String], c
 
 pub(crate) fn htmlescape(s: &str) -> String {
     s.replace('&', "&amp;")
-     .replace('<', "&lt;")
-     .replace('>', "&gt;")
-     .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 #[cfg(test)]
@@ -1702,7 +2235,10 @@ mod tests {
             violations: v.len(),
             score,
             grade,
-            violation_details: v.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect(),
+            violation_details: v
+                .iter()
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+                .collect(),
         }
     }
 
@@ -1715,18 +2251,39 @@ mod tests {
             langs: json!({"Rust": 71.5, "Shell": 28.5}),
             binary_files: vec!["assets/logo.png".into()],
             total_files: 42,
-            contributors: vec![json!({"name": "Ada", "commits": 30, "additions": 900, "deletions": 100})],
-            recent_commits: vec![json!({"short_id": "a1b2c3d4", "title": "fix: handle empty payload"})],
+            contributors: vec![
+                json!({"name": "Ada", "commits": 30, "additions": 900, "deletions": 100}),
+            ],
+            recent_commits: vec![
+                json!({"short_id": "a1b2c3d4", "title": "fix: handle empty payload"}),
+            ],
             conventional_pass: 8,
             ticket_pass: 5,
             length_pass: 10,
-            failing_messages: vec![("deadbeef".into(), "updated stuff".into(), vec!["no ticket reference".into()])],
+            failing_messages: vec![(
+                "deadbeef".into(),
+                "updated stuff".into(),
+                vec!["no ticket reference".into()],
+            )],
             commit_total: 10,
             total_source: 3,
             all_metrics: vec![
                 metric("src/good.rs", 95, Grade::A, &[]),
-                metric("src/bad.rs", 30, Grade::F, &[("G002", "Hardcoded secret"), ("G003", "TODO without ticket")]),
-                metric("src/mid.rs", 70, Grade::C, &[("G003", "TODO without ticket")]),
+                metric(
+                    "src/bad.rs",
+                    30,
+                    Grade::F,
+                    &[
+                        ("G002", "Hardcoded secret"),
+                        ("G003", "TODO without ticket"),
+                    ],
+                ),
+                metric(
+                    "src/mid.rs",
+                    70,
+                    Grade::C,
+                    &[("G003", "TODO without ticket")],
+                ),
             ],
         }
     }
@@ -1739,8 +2296,14 @@ mod tests {
         d.langs = json!({"<img src=x onerror=alert(1)>": 100.0});
         d.failing_messages = vec![("<b>".into(), "s".into(), vec![])];
         let html = render_project_report(d);
-        assert!(!html.contains("<script>alert"), "branch name must be escaped");
-        assert!(!html.contains("<img src=x"), "language name must be escaped");
+        assert!(
+            !html.contains("<script>alert"),
+            "branch name must be escaped"
+        );
+        assert!(
+            !html.contains("<img src=x"),
+            "language name must be escaped"
+        );
         assert!(!html.contains("<code><b></code>"), "sha must be escaped");
         assert!(html.contains("x&lt;script&gt;"));
     }
@@ -1752,7 +2315,13 @@ mod tests {
             time: "10:15".into(),
             files: files
                 .iter()
-                .map(|p| DevFile { path: (*p).into(), additions: 10, deletions: 2, is_new: p.contains("new"), lang: "Rust".into() })
+                .map(|p| DevFile {
+                    path: (*p).into(),
+                    additions: 10,
+                    deletions: 2,
+                    is_new: p.contains("new"),
+                    lang: "Rust".into(),
+                })
                 .collect(),
         }
     }
@@ -1773,9 +2342,21 @@ mod tests {
             total_deletions: 12,
             total_mr_merged: 1,
             all_commits: vec![
-                ("acme/core/api".into(), dev_commit("fix: PROJ-7 hitfix parser", &["src/lib.rs", "tests/parser_test.rs"])),
-                ("acme/core/api".into(), dev_commit("relase prep", &["src/new_mod.rs"])),
-                ("acme/web/site".into(), dev_commit("hitfix again <b>", &["index.ts"])),
+                (
+                    "acme/core/api".into(),
+                    dev_commit(
+                        "fix: PROJ-7 hitfix parser",
+                        &["src/lib.rs", "tests/parser_test.rs"],
+                    ),
+                ),
+                (
+                    "acme/core/api".into(),
+                    dev_commit("relase prep", &["src/new_mod.rs"]),
+                ),
+                (
+                    "acme/web/site".into(),
+                    dev_commit("hitfix again <b>", &["index.ts"]),
+                ),
             ],
             all_files: 4,
             mrs: vec![
@@ -1816,7 +2397,10 @@ mod tests {
         d.mrs = vec![json!({"iid": 1, "title": "t", "target_branch": "a<img src=x>"})];
         let html = render_dev_report(d);
         assert!(!html.contains("<script>x"), "display name must be escaped");
-        assert!(!html.contains("<img src=x>"), "target branch must be escaped");
+        assert!(
+            !html.contains("<img src=x>"),
+            "target branch must be escaped"
+        );
         assert!(!html.contains("again <b>"), "commit title must be escaped");
     }
 
@@ -1832,7 +2416,10 @@ mod tests {
         assert!(html.contains("widgets") && html.contains("Example service"));
         assert!(html.contains("3.0 MB"), "repository size is humanised");
         assert!(html.contains("Rust"), "languages appear");
-        assert!(html.contains("updated stuff"), "a failing commit message is shown");
+        assert!(
+            html.contains("updated stuff"),
+            "a failing commit message is shown"
+        );
     }
 
     #[test]
@@ -1868,7 +2455,13 @@ mod tests {
         d.project_desc = "<img src=x onerror=alert(1)>";
         d.failing_messages[0].1 = "<script>alert(1)</script>".into();
         let html = render_project_report(d);
-        assert!(!html.contains("<img src=x onerror"), "description must be escaped");
-        assert!(!html.contains("<script>alert(1)</script>"), "commit subject must be escaped");
+        assert!(
+            !html.contains("<img src=x onerror"),
+            "description must be escaped"
+        );
+        assert!(
+            !html.contains("<script>alert(1)</script>"),
+            "commit subject must be escaped"
+        );
     }
 }

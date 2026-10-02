@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.1] - 2026-10-02
+
+### Fixed
+
+- **`search_code` group sweeps** state scope and finding separately
+  (`N repos searched, M match(es) in K repo(s)`); `0 matches in 0 of 104
+  repos searched` read as no search at all (ADR 059).
+- **`list_projects`** marks a page as long as its cap as a first page and says
+  how to see more, instead of presenting it as the whole list (ADR 059).
+
 ## [1.12.0] - 2026-09-28
 
 ### Added

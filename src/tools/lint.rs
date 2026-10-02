@@ -23,18 +23,22 @@ const MAX_VIOLATIONS_PER_RULE_PER_FILE: usize = 3;
 
 /// Files to always skip during linting (data files, generated, binary-like).
 const SKIP_FILE_EXTENSIONS: &[&str] = &[
-    ".list", ".csv", ".tsv", ".dat", ".log",
-    ".lock", ".sum", ".map",
-    ".min.js", ".min.css",
-    ".png", ".jpg", ".gif", ".ico", ".svg", ".woff", ".woff2", ".ttf",
-    ".zip", ".tar", ".gz",
+    ".list", ".csv", ".tsv", ".dat", ".log", ".lock", ".sum", ".map", ".min.js", ".min.css",
+    ".png", ".jpg", ".gif", ".ico", ".svg", ".woff", ".woff2", ".ttf", ".zip", ".tar", ".gz",
 ];
 
 const SKIP_FILE_PATTERNS: &[&str] = &[
-    "vendor/", "node_modules/", "dist/", "build/",
-    "__generated__", ".pb.go",
-    "package-lock.json", "yarn.lock", "composer.lock",
-    "go.sum", "Cargo.lock",
+    "vendor/",
+    "node_modules/",
+    "dist/",
+    "build/",
+    "__generated__",
+    ".pb.go",
+    "package-lock.json",
+    "yarn.lock",
+    "composer.lock",
+    "go.sum",
+    "Cargo.lock",
 ];
 
 pub(crate) fn should_skip_lint_file(path: &str) -> bool {
@@ -163,9 +167,19 @@ struct CompiledRule {
 impl CompiledRule {
     fn compile(rule: Rule) -> Self {
         let pattern_re = compile_rule_regex(&rule.id, "pattern", &rule.pattern);
-        let neg_pattern_re = compile_rule_regex(&rule.id, "negative_pattern", &rule.negative_pattern);
-        let neg_file_re = compile_rule_regex(&rule.id, "negative_file_pattern", &rule.negative_file_pattern);
-        Self { rule, pattern_re, neg_pattern_re, neg_file_re }
+        let neg_pattern_re =
+            compile_rule_regex(&rule.id, "negative_pattern", &rule.negative_pattern);
+        let neg_file_re = compile_rule_regex(
+            &rule.id,
+            "negative_file_pattern",
+            &rule.negative_file_pattern,
+        );
+        Self {
+            rule,
+            pattern_re,
+            neg_pattern_re,
+            neg_file_re,
+        }
     }
 }
 
@@ -177,7 +191,9 @@ fn compile_rule_regex(rule_id: &str, field: &str, pattern: &str) -> Option<regex
         return None;
     }
     regex::Regex::new(pattern)
-        .inspect_err(|e| tracing::error!("lint rule {rule_id}: invalid {field}, rule disabled: {e}"))
+        .inspect_err(|e| {
+            tracing::error!("lint rule {rule_id}: invalid {field}, rule disabled: {e}")
+        })
         .ok()
 }
 
@@ -186,7 +202,9 @@ fn compile_rule_regex(rule_id: &str, field: &str, pattern: &str) -> Option<regex
 fn parse_embedded_rules(content: &str) -> Vec<Rule> {
     toml::from_str::<RuleFile>(content)
         .map(|rf| rf.rule)
-        .inspect_err(|e| tracing::error!("embedded lint rule file does not parse, its rules are disabled: {e}"))
+        .inspect_err(|e| {
+            tracing::error!("embedded lint rule file does not parse, its rules are disabled: {e}")
+        })
         .unwrap_or_default()
 }
 
@@ -206,7 +224,10 @@ static COMPILED_RULES: LazyLock<BTreeMap<&'static str, Vec<CompiledRule>>> = Laz
     let mut map: BTreeMap<&str, Vec<CompiledRule>> = BTreeMap::new();
 
     // Global-only entry
-    map.insert("global", global.iter().cloned().map(CompiledRule::compile).collect());
+    map.insert(
+        "global",
+        global.iter().cloned().map(CompiledRule::compile).collect(),
+    );
 
     for &(lang, content) in lang_sources {
         let mut rules = global.clone();
@@ -225,7 +246,10 @@ static COMPILED_RULES: LazyLock<BTreeMap<&'static str, Vec<CompiledRule>>> = Laz
     ];
     for &(alias, target) in alias_map {
         if let Some(rules) = map.get(target) {
-            let cloned: Vec<CompiledRule> = rules.iter().map(|cr| CompiledRule::compile(cr.rule.clone())).collect();
+            let cloned: Vec<CompiledRule> = rules
+                .iter()
+                .map(|cr| CompiledRule::compile(cr.rule.clone()))
+                .collect();
             map.insert(alias, cloned);
         }
     }
@@ -237,12 +261,20 @@ fn get_compiled_rules(lang: &str) -> &'static [CompiledRule] {
     COMPILED_RULES
         .get(lang)
         .map(|v| v.as_slice())
-        .unwrap_or_else(|| COMPILED_RULES.get("global").map(|v| v.as_slice()).unwrap_or(&[]))
+        .unwrap_or_else(|| {
+            COMPILED_RULES
+                .get("global")
+                .map(|v| v.as_slice())
+                .unwrap_or(&[])
+        })
 }
 
 /// Load raw rules for display purposes (list_rules).
 fn load_rules_for_language(lang: &str) -> Vec<Rule> {
-    get_compiled_rules(lang).iter().map(|cr| cr.rule.clone()).collect()
+    get_compiled_rules(lang)
+        .iter()
+        .map(|cr| cr.rule.clone())
+        .collect()
 }
 
 // ─── Pattern matching ───
@@ -279,25 +311,29 @@ fn matches_compiled_rule(cr: &CompiledRule, line: &str, file_path: &str) -> bool
 // ─── Validation tools ───
 
 /// Validate a single commit against rules. Returns only violations.
-pub async fn validate_commit(
-    client: &GitLabClient,
-    project_id: &str,
-    sha: &str,
-) -> Result<String> {
+pub async fn validate_commit(client: &GitLabClient, project_id: &str, sha: &str) -> Result<String> {
     let encoded = urlencoding::encode(project_id);
 
     // Fetch commit metadata
     let commit: Value = client
-        .get(&format!("/projects/{encoded}/repository/commits/{sha}"), &[])
+        .get(
+            &format!("/projects/{encoded}/repository/commits/{sha}"),
+            &[],
+        )
         .await?;
 
     let message = commit["message"].as_str().unwrap_or("");
     let author = commit["author_name"].as_str().unwrap_or("?");
-    let short_sha = commit["short_id"].as_str().unwrap_or(&sha[..8.min(sha.len())]);
+    let short_sha = commit["short_id"]
+        .as_str()
+        .unwrap_or(&sha[..8.min(sha.len())]);
 
     // Fetch diffs
     let diffs: Vec<Value> = client
-        .get(&format!("/projects/{encoded}/repository/commits/{sha}/diff"), &[])
+        .get(
+            &format!("/projects/{encoded}/repository/commits/{sha}/diff"),
+            &[],
+        )
         .await?;
 
     let mut violations: Vec<Violation> = Vec::new();
@@ -341,7 +377,9 @@ pub async fn validate_commit(
         for (i, line) in diff_text.lines().enumerate() {
             // Only check added lines
             if !line.starts_with('+') || line.starts_with("+++") {
-                if line.starts_with('+') { additions += 1; }
+                if line.starts_with('+') {
+                    additions += 1;
+                }
                 continue;
             }
             additions += 1;
@@ -372,7 +410,9 @@ pub async fn validate_commit(
             }
 
             // EOF check
-            if compiled_rules.iter().any(|cr| cr.rule.applies_to == "file_end")
+            if compiled_rules
+                .iter()
+                .any(|cr| cr.rule.applies_to == "file_end")
                 && line.contains("No newline at end of file")
             {
                 violations.push(Violation {
@@ -389,7 +429,10 @@ pub async fn validate_commit(
 
         // File stats rules (e.g., large file)
         for cr in compiled_rules {
-            if cr.rule.applies_to == "file_stats" && cr.rule.max_additions > 0 && additions > cr.rule.max_additions {
+            if cr.rule.applies_to == "file_stats"
+                && cr.rule.max_additions > 0
+                && additions > cr.rule.max_additions
+            {
                 violations.push(Violation {
                     rule_id: cr.rule.id.clone(),
                     severity: cr.rule.severity,
@@ -431,7 +474,12 @@ pub async fn validate_commit(
 
     for (sev, sevs) in &by_severity {
         {
-            lines.push(format!("### {} {} ({})", sev.icon(), sev.heading(), sevs.len()));
+            lines.push(format!(
+                "### {} {} ({})",
+                sev.icon(),
+                sev.heading(),
+                sevs.len()
+            ));
             for v in sevs {
                 let loc = if v.line > 0 {
                     format!("{}:{}", v.file, v.line)
@@ -465,11 +513,7 @@ pub async fn validate_commit(
 }
 
 /// Validate all commits in an MR.
-pub async fn validate_mr(
-    client: &GitLabClient,
-    project_id: &str,
-    mr_iid: u64,
-) -> Result<String> {
+pub async fn validate_mr(client: &GitLabClient, project_id: &str, mr_iid: u64) -> Result<String> {
     let encoded = urlencoding::encode(project_id);
 
     // Get MR commits
@@ -555,9 +599,11 @@ pub async fn validate_mr_changes(
     let changes = mr_detail["changes"].as_array();
     let diffs = match changes {
         Some(c) if !c.is_empty() => c,
-        _ => return Ok(format!(
-            "**{project_id} !{mr_iid}** by @{author} — **No changes found**"
-        )),
+        _ => {
+            return Ok(format!(
+                "**{project_id} !{mr_iid}** by @{author} — **No changes found**"
+            ));
+        }
     };
 
     let mut violations: Vec<Violation> = Vec::new();
@@ -581,7 +627,9 @@ pub async fn validate_mr_changes(
 
         for (i, line) in diff_text.lines().enumerate() {
             if !line.starts_with('+') || line.starts_with("+++") {
-                if line.starts_with('+') { additions += 1; }
+                if line.starts_with('+') {
+                    additions += 1;
+                }
                 continue;
             }
             additions += 1;
@@ -614,7 +662,10 @@ pub async fn validate_mr_changes(
 
         // File stats rules
         for cr in compiled_rules {
-            if cr.rule.applies_to == "file_stats" && cr.rule.max_additions > 0 && additions > cr.rule.max_additions {
+            if cr.rule.applies_to == "file_stats"
+                && cr.rule.max_additions > 0
+                && additions > cr.rule.max_additions
+            {
                 violations.push(Violation {
                     rule_id: cr.rule.id.clone(),
                     severity: cr.rule.severity,
@@ -646,14 +697,20 @@ pub async fn validate_mr_changes(
     let mut lines = vec![
         format!(
             "**{project_id} !{mr_iid}** \"{}\" by @{author} — **{} violations** ({files_checked} files)",
-            title, total_shown + total_suppressed
+            title,
+            total_shown + total_suppressed
         ),
         String::new(),
     ];
 
     for (sev, sevs) in &by_severity {
         {
-            lines.push(format!("### {} {} ({})", sev.icon(), sev.heading(), sevs.len()));
+            lines.push(format!(
+                "### {} {} ({})",
+                sev.icon(),
+                sev.heading(),
+                sevs.len()
+            ));
             for v in sevs {
                 let loc = if v.line > 0 {
                     format!("{}:{}", v.file, v.line)
@@ -690,7 +747,16 @@ pub fn list_rules(language: &str) -> String {
     let rules = if language.is_empty() {
         // All rules
         let mut all = Vec::new();
-        for lang in &["global", "PHP", "Kotlin", "Swift", "Go", "TypeScript", "YAML/Ansible", "Ansible/Inventory"] {
+        for lang in &[
+            "global",
+            "PHP",
+            "Kotlin",
+            "Swift",
+            "Go",
+            "TypeScript",
+            "YAML/Ansible",
+            "Ansible/Inventory",
+        ] {
             all.extend(load_rules_for_language(lang));
         }
         // Dedup by ID
@@ -714,7 +780,12 @@ pub fn list_rules(language: &str) -> String {
 
     for (sev, sevs) in &by_severity {
         {
-            lines.push(format!("### {} {} ({})", sev.icon(), sev.heading(), sevs.len()));
+            lines.push(format!(
+                "### {} {} ({})",
+                sev.icon(),
+                sev.heading(),
+                sevs.len()
+            ));
             for r in sevs {
                 lines.push(format!("- **[{}]** {} — {}", r.id, r.name, r.message));
             }
@@ -811,11 +882,18 @@ const FALLBACK_FUNCTION_PATTERN: &str = r"function\s+|func\s+|fn\s+|def\s+";
 static FUNCTION_RES: LazyLock<Vec<(&'static [&'static str], regex::Regex)>> = LazyLock::new(|| {
     FUNCTION_PATTERNS
         .iter()
-        .map(|&(langs, p)| (langs, regex::Regex::new(p).expect("function pattern is a valid regex")))
+        .map(|&(langs, p)| {
+            (
+                langs,
+                regex::Regex::new(p).expect("function pattern is a valid regex"),
+            )
+        })
         .collect()
 });
-static FALLBACK_FUNCTION_RE: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new(FALLBACK_FUNCTION_PATTERN).expect("fallback function pattern is a valid regex"));
+static FALLBACK_FUNCTION_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(FALLBACK_FUNCTION_PATTERN)
+        .expect("fallback function pattern is a valid regex")
+});
 
 fn function_regex(lang: &str) -> &'static regex::Regex {
     FUNCTION_RES
@@ -839,8 +917,9 @@ fn import_prefix(lang: &str) -> &'static str {
 /// Shared by commit validation and the reports, which used to disagree — the report
 /// accepted any capitals (`A-1`, `UTF-8`), so its ticket rate overstated what commit
 /// validation would pass.
-static TICKET_RE: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new(r"[A-Z]{2,10}-\d+").expect("ticket pattern is a valid regex"));
+static TICKET_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"[A-Z]{2,10}-\d+").expect("ticket pattern is a valid regex")
+});
 
 pub(crate) fn has_ticket_ref(text: &str) -> bool {
     TICKET_RE.is_match(text)
@@ -919,7 +998,11 @@ pub(crate) fn file_facts(file_path: &str, content: &str, lang: &str) -> FileFact
         .collect();
 
     let (mut max_nesting, mut max_nesting_line, mut deep_lines) = (0, 0, 0);
-    for (i, line) in lines.iter().enumerate().filter(|(_, l)| !l.trim().is_empty()) {
+    for (i, line) in lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| !l.trim().is_empty())
+    {
         let nesting = nesting_level(line);
         if nesting >= 4 {
             deep_lines += 1;
@@ -939,7 +1022,10 @@ pub(crate) fn file_facts(file_path: &str, content: &str, lang: &str) -> FileFact
         .collect();
 
     let prefix = import_prefix(lang);
-    let imports = lines.iter().filter(|l| l.trim().starts_with(prefix)).count();
+    let imports = lines
+        .iter()
+        .filter(|l| l.trim().starts_with(prefix))
+        .count();
 
     let rules = get_compiled_rules(lang);
     let violations = lines
@@ -951,7 +1037,10 @@ pub(crate) fn file_facts(file_path: &str, content: &str, lang: &str) -> FileFact
                     (cr.rule.applies_to.is_empty() || cr.rule.applies_to == "line")
                         && matches_compiled_rule(cr, line, file_path)
                 })
-                .map(|cr| LineViolation { rule_id: cr.rule.id.clone(), name: cr.rule.name.clone() })
+                .map(|cr| LineViolation {
+                    rule_id: cr.rule.id.clone(),
+                    name: cr.rule.name.clone(),
+                })
         })
         .collect();
 
@@ -978,7 +1067,11 @@ pub async fn analyze_file(
 ) -> Result<String> {
     let encoded = urlencoding::encode(project_id);
     let encoded_path = urlencoding::encode(file_path);
-    let ref_param = if ref_name.is_empty() { "HEAD" } else { ref_name };
+    let ref_param = if ref_name.is_empty() {
+        "HEAD"
+    } else {
+        ref_name
+    };
 
     let file_info: Value = client
         .get(
@@ -1027,26 +1120,69 @@ pub(crate) fn analyze_content(file_path: &str, ref_param: &str, content: &str) -
     ];
 
     // Total lines
-    let lines_assessment = if total_lines > 500 { "Too long" } else if total_lines > 300 { "Consider splitting" } else { "OK" };
-    out.push(format!("| Total lines | {} | {} |", total_lines, lines_assessment));
+    let lines_assessment = if total_lines > 500 {
+        "Too long"
+    } else if total_lines > 300 {
+        "Consider splitting"
+    } else {
+        "OK"
+    };
+    out.push(format!(
+        "| Total lines | {} | {} |",
+        total_lines, lines_assessment
+    ));
     out.push(format!("| Code lines | {} | |", code_lines));
-    out.push(format!("| Comments | {} ({:.0}%) | {} |", comment_lines, comment_lines as f64 / total_lines as f64 * 100.0,
-        if comment_lines == 0 { "No comments" } else { "OK" }));
+    out.push(format!(
+        "| Comments | {} ({:.0}%) | {} |",
+        comment_lines,
+        comment_lines as f64 / total_lines as f64 * 100.0,
+        if comment_lines == 0 {
+            "No comments"
+        } else {
+            "OK"
+        }
+    ));
     out.push(format!("| Blank lines | {} | |", blank_lines));
 
     // Functions
-    let func_assessment = if functions.len() > 20 { "Too many — god class?" } else { "OK" };
-    out.push(format!("| Functions | {} | {} |", functions.len(), func_assessment));
+    let func_assessment = if functions.len() > 20 {
+        "Too many — god class?"
+    } else {
+        "OK"
+    };
+    out.push(format!(
+        "| Functions | {} | {} |",
+        functions.len(),
+        func_assessment
+    ));
 
     // Imports
-    let import_assessment = if imports > 15 { "Many imports — high coupling" } else if imports > 10 { "Moderate" } else { "OK" };
+    let import_assessment = if imports > 15 {
+        "Many imports — high coupling"
+    } else if imports > 10 {
+        "Moderate"
+    } else {
+        "OK"
+    };
     out.push(format!("| Imports | {} | {} |", imports, import_assessment));
 
     // Nesting
-    let nesting_assessment = if max_nesting >= 6 { "Deeply nested — refactor" } else if max_nesting >= 4 { "Consider flattening" } else { "OK" };
-    out.push(format!("| Max nesting depth | {} (line {}) | {} |", max_nesting, max_nesting_line, nesting_assessment));
+    let nesting_assessment = if max_nesting >= 6 {
+        "Deeply nested — refactor"
+    } else if max_nesting >= 4 {
+        "Consider flattening"
+    } else {
+        "OK"
+    };
+    out.push(format!(
+        "| Max nesting depth | {} (line {}) | {} |",
+        max_nesting, max_nesting_line, nesting_assessment
+    ));
     if deep_lines > 0 {
-        out.push(format!("| Lines at 4+ depth | {} | Complexity indicator |", deep_lines));
+        out.push(format!(
+            "| Lines at 4+ depth | {} | Complexity indicator |",
+            deep_lines
+        ));
     }
 
     // Long functions
@@ -1093,7 +1229,11 @@ pub async fn analyze_project(
     summary_only: bool,
 ) -> Result<String> {
     let encoded = urlencoding::encode(project_id);
-    let ref_param = if ref_name.is_empty() { "HEAD" } else { ref_name };
+    let ref_param = if ref_name.is_empty() {
+        "HEAD"
+    } else {
+        ref_name
+    };
 
     // 1. Fetch recursive tree
     let entries: Vec<Value> = client
@@ -1106,23 +1246,67 @@ pub async fn analyze_project(
 
     // 2. Filter to source files only
     let skip_extensions: &[&str] = &[
-        ".xcframework", ".framework", ".a", ".dylib", ".so",
-        ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".bmp", ".tiff",
-        ".woff", ".woff2", ".ttf", ".eot", ".otf",
-        ".lock", ".sum", ".map",
-        ".min.js", ".min.css",
+        ".xcframework",
+        ".framework",
+        ".a",
+        ".dylib",
+        ".so",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".ico",
+        ".svg",
+        ".bmp",
+        ".tiff",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".eot",
+        ".otf",
+        ".lock",
+        ".sum",
+        ".map",
+        ".min.js",
+        ".min.css",
         ".pb.go",
-        ".xcassets", ".plist",
-        ".zip", ".tar", ".gz", ".rar", ".7z",
-        ".pdf", ".doc", ".docx", ".xls", ".xlsx",
-        ".mp3", ".mp4", ".wav", ".avi", ".mov",
-        ".o", ".obj", ".exe", ".dll", ".class", ".jar",
-        ".dat", ".bin", ".db", ".sqlite",
+        ".xcassets",
+        ".plist",
+        ".zip",
+        ".tar",
+        ".gz",
+        ".rar",
+        ".7z",
+        ".pdf",
+        ".doc",
+        ".docx",
+        ".xls",
+        ".xlsx",
+        ".mp3",
+        ".mp4",
+        ".wav",
+        ".avi",
+        ".mov",
+        ".o",
+        ".obj",
+        ".exe",
+        ".dll",
+        ".class",
+        ".jar",
+        ".dat",
+        ".bin",
+        ".db",
+        ".sqlite",
     ];
     let skip_dirs: &[&str] = &[
-        "vendor/", "node_modules/", "dist/", "build/",
-        ".xcframework/", ".framework/",
-        "__generated__", "Pods/",
+        "vendor/",
+        "node_modules/",
+        "dist/",
+        "build/",
+        ".xcframework/",
+        ".framework/",
+        "__generated__",
+        "Pods/",
     ];
 
     let source_files: Vec<&str> = entries
@@ -1150,7 +1334,9 @@ pub async fn analyze_project(
     let files_to_analyze: Vec<&str> = source_files.into_iter().take(max_files).collect();
 
     if files_to_analyze.is_empty() {
-        return Ok(format!("No source files found in {project_id} at {ref_param}."));
+        return Ok(format!(
+            "No source files found in {project_id} at {ref_param}."
+        ));
     }
 
     // 3. Fetch file contents concurrently in batches of 10, compute metrics via shared helper.
@@ -1226,15 +1412,23 @@ pub async fn analyze_project(
         let mut issue_counts: BTreeMap<(String, String), usize> = BTreeMap::new();
         for m in &all_metrics {
             for (rule_id, name) in &m.violation_details {
-                *issue_counts.entry((rule_id.clone(), name.clone())).or_insert(0) += 1;
+                *issue_counts
+                    .entry((rule_id.clone(), name.clone()))
+                    .or_insert(0) += 1;
             }
         }
         let mut sorted_issues: Vec<_> = issue_counts.into_iter().collect();
         sorted_issues.sort_by(|a, b| b.1.cmp(&a.1));
-        let top_issues: Vec<String> = sorted_issues.iter().take(3)
+        let top_issues: Vec<String> = sorted_issues
+            .iter()
+            .take(3)
             .map(|((_, name), count)| format!("{name} ({count})"))
             .collect();
-        let issues_str = if top_issues.is_empty() { "none".to_string() } else { top_issues.join(", ") };
+        let issues_str = if top_issues.is_empty() {
+            "none".to_string()
+        } else {
+            top_issues.join(", ")
+        };
 
         return Ok(format!(
             "{project_id}: {total_analyzed} files, avg {:.0}/100 ({avg_grade}). A:{grade_a} B:{grade_b} C:{grade_c} D:{grade_d} F:{grade_f}. Top issues: {issues_str}",
@@ -1292,7 +1486,9 @@ pub async fn analyze_project(
     for m in &all_metrics {
         let mut seen_rules: std::collections::HashSet<String> = std::collections::HashSet::new();
         for (rule_id, name) in &m.violation_details {
-            *issue_counts.entry((rule_id.clone(), name.clone())).or_insert(0) += 1;
+            *issue_counts
+                .entry((rule_id.clone(), name.clone()))
+                .or_insert(0) += 1;
             if seen_rules.insert(rule_id.clone()) {
                 *issue_file_counts.entry(rule_id.clone()).or_insert(0) += 1;
             }
@@ -1305,22 +1501,27 @@ pub async fn analyze_project(
 
         out.push("\n### Top Issues (across all files)".to_string());
         for ((rule_id, name), count) in sorted_issues.iter().take(10) {
-            let files = issue_file_counts.get(rule_id.as_str()).copied().unwrap_or(0);
-            out.push(format!("- **{name}** [{rule_id}]: {files} files, {count} occurrences"));
+            let files = issue_file_counts
+                .get(rule_id.as_str())
+                .copied()
+                .unwrap_or(0);
+            out.push(format!(
+                "- **{name}** [{rule_id}]: {files} files, {count} occurrences"
+            ));
         }
     }
 
     // Recommendations
-    let bad_files: Vec<_> = all_metrics
-        .iter()
-        .filter(|m| m.score < 60)
-        .collect();
+    let bad_files: Vec<_> = all_metrics.iter().filter(|m| m.score < 60).collect();
     if !bad_files.is_empty() {
         out.push("\n### Recommendations".to_string());
         for m in &bad_files {
             let short_path = m.path.rsplit('/').next().unwrap_or(&m.path);
             let reason = if m.total_lines > 300 {
-                format!("Grade {}, {} lines – needs splitting", m.grade, m.total_lines)
+                format!(
+                    "Grade {}, {} lines – needs splitting",
+                    m.grade, m.total_lines
+                )
             } else {
                 format!("Grade {}, {} violations", m.grade, m.violations)
             };
@@ -1343,10 +1544,7 @@ pub async fn validate_project_commits(
         .format("%Y-%m-%dT00:00:00Z")
         .to_string();
 
-    let mut params: Vec<(&str, &str)> = vec![
-        ("since", &since),
-        ("per_page", "100"),
-    ];
+    let mut params: Vec<(&str, &str)> = vec![("since", &since), ("per_page", "100")];
     if !branch.is_empty() {
         params.push(("ref_name", branch));
     }
@@ -1360,7 +1558,9 @@ pub async fn validate_project_commits(
         .await?;
 
     if commits.is_empty() {
-        return Ok(format!("No commits in the last {days} days for {project_id}."));
+        return Ok(format!(
+            "No commits in the last {days} days for {project_id}."
+        ));
     }
 
     // Filter out merge commits
@@ -1374,7 +1574,9 @@ pub async fn validate_project_commits(
 
     let total = non_merge.len();
     if total == 0 {
-        return Ok(format!("Only merge commits in the last {days} days for {project_id}."));
+        return Ok(format!(
+            "Only merge commits in the last {days} days for {project_id}."
+        ));
     }
 
     let mut conventional_pass = 0u32;
@@ -1385,15 +1587,19 @@ pub async fn validate_project_commits(
     for commit in &non_merge {
         let msg = commit["message"].as_str().unwrap_or("");
         let subject = msg.lines().next().unwrap_or("").trim();
-        let short_sha = commit["short_id"]
-            .as_str()
-            .unwrap_or("???????");
+        let short_sha = commit["short_id"].as_str().unwrap_or("???????");
 
         let report = validate_commit_message(msg);
 
-        if report.has_conventional_prefix { conventional_pass += 1; }
-        if report.has_ticket_ref { ticket_pass += 1; }
-        if !report.is_too_long { length_pass += 1; }
+        if report.has_conventional_prefix {
+            conventional_pass += 1;
+        }
+        if report.has_ticket_ref {
+            ticket_pass += 1;
+        }
+        if !report.is_too_long {
+            length_pass += 1;
+        }
 
         if !report.failures.is_empty() {
             failing_messages.push((short_sha.to_string(), subject.to_string(), report.failures));
@@ -1421,9 +1627,21 @@ pub async fn validate_project_commits(
     let branch_label = if branch.is_empty() { "default" } else { branch };
     let total_u32 = total as u32;
 
-    let conv_pct = if total > 0 { conventional_pass as f64 / total as f64 * 100.0 } else { 0.0 };
-    let ticket_pct = if total > 0 { ticket_pass as f64 / total as f64 * 100.0 } else { 0.0 };
-    let length_pct = if total > 0 { length_pass as f64 / total as f64 * 100.0 } else { 0.0 };
+    let conv_pct = if total > 0 {
+        conventional_pass as f64 / total as f64 * 100.0
+    } else {
+        0.0
+    };
+    let ticket_pct = if total > 0 {
+        ticket_pass as f64 / total as f64 * 100.0
+    } else {
+        0.0
+    };
+    let length_pct = if total > 0 {
+        length_pass as f64 / total as f64 * 100.0
+    } else {
+        0.0
+    };
 
     let mut out = vec![
         format!("## Commit Quality: {project_id} (last {days} days, {total} commits)\n"),
@@ -1489,16 +1707,34 @@ pub struct CommitMessageReport {
     pub has_conventional_prefix: bool,
     pub has_ticket_ref: bool,
     pub subject_length: usize,
-    pub is_too_long: bool, // subject >72 chars
+    pub is_too_long: bool,     // subject >72 chars
     pub failures: Vec<String>, // human-readable issues
 }
 
 /// Conventional Commit prefixes recognized by `validate_commit_message`.
 const CONVENTIONAL_PREFIXES: &[&str] = &[
-    "feat:", "fix:", "docs:", "build:", "chore:", "refactor:",
-    "test:", "ci:", "perf:", "style:", "revert:",
-    "feat(", "fix(", "docs(", "build(", "chore(", "refactor(",
-    "test(", "ci(", "perf(", "style(", "revert(",
+    "feat:",
+    "fix:",
+    "docs:",
+    "build:",
+    "chore:",
+    "refactor:",
+    "test:",
+    "ci:",
+    "perf:",
+    "style:",
+    "revert:",
+    "feat(",
+    "fix(",
+    "docs(",
+    "build(",
+    "chore(",
+    "refactor(",
+    "test(",
+    "ci(",
+    "perf(",
+    "style(",
+    "revert(",
 ];
 
 /// Validate a commit message against shared project conventions:
@@ -1548,7 +1784,6 @@ pub struct FileMetricsPub {
     pub violation_details: Vec<(String, String)>,
 }
 
-
 /// Compute quality metrics for a file given its content and detected language.
 /// Reuses the same scoring logic as analyze_project.
 pub fn compute_file_metrics(file_path: &str, content: &str, lang: &str) -> FileMetricsPub {
@@ -1562,11 +1797,13 @@ pub fn compute_file_metrics(file_path: &str, content: &str, lang: &str) -> FileM
         violations: facts.violations.len(),
         score,
         grade,
-        violation_details: facts.violations.into_iter().map(|v| (v.rule_id, v.name)).collect(),
+        violation_details: facts
+            .violations
+            .into_iter()
+            .map(|v| (v.rule_id, v.name))
+            .collect(),
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -1579,7 +1816,12 @@ mod tests {
     /// lines that trip rules. Regenerate with `UPDATE_GOLDEN=1 cargo test golden`.
     fn golden_inputs() -> Vec<(&'static str, String)> {
         let deep = |d: usize| format!("{}x = 1;", "    ".repeat(d));
-        let long_body = |n: usize| (0..n).map(|i| format!("    let v{i} = {i};")).collect::<Vec<_>>().join("\n");
+        let long_body = |n: usize| {
+            (0..n)
+                .map(|i| format!("    let v{i} = {i};"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
         vec![
             ("src/lib.rs", format!("use std::io;\nuse std::fmt;\n// helper\nfn a() {{\n{}\n}}\nfn b() {{\n{}\n{}\n}}\n// TODO fix this\nlet port = 8080;", long_body(55), deep(5), deep(7))),
             ("app/Ctrl.php", "<?php\nuse App\\Models\\User;\nfunction handle() {\n    $x = $request->input('email');\n    // TODO clean up\n    return 4096;\n}\n".to_string()),
@@ -1599,7 +1841,13 @@ mod tests {
         format!(
             "{}\n---\ntotal={} functions={} max_nesting={} violations={} score={} grade={} details={:?}\n",
             analyze_content(path, "main", content),
-            m.total_lines, m.functions, m.max_nesting, m.violations, m.score, m.grade, m.violation_details
+            m.total_lines,
+            m.functions,
+            m.max_nesting,
+            m.violations,
+            m.score,
+            m.grade,
+            m.violation_details
         )
     }
 
@@ -1616,12 +1864,17 @@ mod tests {
                 std::fs::write(&file, &got).unwrap();
                 continue;
             }
-            let want = std::fs::read_to_string(&file).unwrap_or_else(|_| panic!("missing golden {}", file.display()));
+            let want = std::fs::read_to_string(&file)
+                .unwrap_or_else(|_| panic!("missing golden {}", file.display()));
             if got != want {
                 drift.push(format!("{path}\n--- want\n{want}\n--- got\n{got}"));
             }
         }
-        assert!(drift.is_empty(), "analysis output changed:\n{}", drift.join("\n\n"));
+        assert!(
+            drift.is_empty(),
+            "analysis output changed:\n{}",
+            drift.join("\n\n")
+        );
     }
 
     #[test]
@@ -1647,8 +1900,14 @@ mod tests {
             ("Python", "def main():", "fn main()"),
         ];
         for &(lang, yes, no) in cases {
-            assert!(function_regex(lang).is_match(yes), "{lang} should detect {yes:?}");
-            assert!(!function_regex(lang).is_match(no), "{lang} should not detect {no:?}");
+            assert!(
+                function_regex(lang).is_match(yes),
+                "{lang} should detect {yes:?}"
+            );
+            assert!(
+                !function_regex(lang).is_match(no),
+                "{lang} should not detect {no:?}"
+            );
         }
         assert!(function_regex("Unknown").is_match("fn x()"));
         assert!(function_regex("Unknown").is_match("function x()"));
@@ -1688,10 +1947,19 @@ mod tests {
         let fifty = format!("fn a() {{\n{}", body(49));
         let fifty_one = format!("fn a() {{\n{}", body(50));
         assert!(file_facts("a.rs", &fifty, "Rust").long_functions.is_empty());
-        assert_eq!(file_facts("a.rs", &fifty_one, "Rust").long_functions.len(), 1);
+        assert_eq!(
+            file_facts("a.rs", &fifty_one, "Rust").long_functions.len(),
+            1
+        );
         let f = file_facts("a.rs", "use a;\n\n// c\n                x", "Rust");
-        assert_eq!((f.total_lines, f.blank_lines, f.comment_lines, f.code_lines), (4, 1, 1, 2));
-        assert_eq!((f.imports, f.max_nesting, f.max_nesting_line, f.deep_lines), (1, 4, 4, 1));
+        assert_eq!(
+            (f.total_lines, f.blank_lines, f.comment_lines, f.code_lines),
+            (4, 1, 1, 2)
+        );
+        assert_eq!(
+            (f.imports, f.max_nesting, f.max_nesting_line, f.deep_lines),
+            (1, 4, 4, 1)
+        );
         let empty = file_facts("a.rs", "", "Rust");
         assert_eq!(empty.score(), (100, Grade::A));
     }
@@ -1705,7 +1973,10 @@ mod tests {
         ("kotlin.toml", include_str!("../../rules/kotlin.toml")),
         ("swift.toml", include_str!("../../rules/swift.toml")),
         ("go.toml", include_str!("../../rules/go.toml")),
-        ("typescript.toml", include_str!("../../rules/typescript.toml")),
+        (
+            "typescript.toml",
+            include_str!("../../rules/typescript.toml"),
+        ),
         ("ansible.toml", include_str!("../../rules/ansible.toml")),
     ];
 
@@ -1744,7 +2015,11 @@ mod tests {
                 }
             }
         }
-        assert!(problems.is_empty(), "broken rules:\n  {}", problems.join("\n  "));
+        assert!(
+            problems.is_empty(),
+            "broken rules:\n  {}",
+            problems.join("\n  ")
+        );
     }
 
     #[test]
@@ -1765,10 +2040,19 @@ mod tests {
         let global = get_compiled_rules("global").len();
         assert!(global > 0);
         for lang in ["PHP", "Kotlin", "Swift", "Go", "TypeScript", "YAML/Ansible"] {
-            assert!(get_compiled_rules(lang).len() > global, "{lang} must add to the global set");
+            assert!(
+                get_compiled_rules(lang).len() > global,
+                "{lang} must add to the global set"
+            );
         }
-        assert_eq!(get_compiled_rules("Java").len(), get_compiled_rules("Kotlin").len());
-        assert_eq!(get_compiled_rules("Vue").len(), get_compiled_rules("TypeScript").len());
+        assert_eq!(
+            get_compiled_rules("Java").len(),
+            get_compiled_rules("Kotlin").len()
+        );
+        assert_eq!(
+            get_compiled_rules("Vue").len(),
+            get_compiled_rules("TypeScript").len()
+        );
         // An unknown language falls back to the global set rather than to nothing.
         assert_eq!(get_compiled_rules("Cobol").len(), global);
     }
@@ -1784,19 +2068,54 @@ mod tests {
     fn rewritten_rules_fire_where_they_should_and_not_where_they_should_not() {
         // G003 / PHP014 — these never fired before (lookahead).
         assert!(fires("G003", "global", "// TODO: handle retries", "a.rs"));
-        assert!(!fires("G003", "global", "// TODO PROJ-12 handle retries", "a.rs"));
+        assert!(!fires(
+            "G003",
+            "global",
+            "// TODO PROJ-12 handle retries",
+            "a.rs"
+        ));
         assert!(fires("PHP014", "PHP", "// TODO clean this up", "a.php"));
-        assert!(!fires("PHP014", "PHP", "// TODO APP-7 clean this up", "a.php"));
+        assert!(!fires(
+            "PHP014",
+            "PHP",
+            "// TODO APP-7 clean this up",
+            "a.php"
+        ));
         // PHP009 — raw request input, unless validated on the same line.
-        assert!(fires("PHP009", "PHP", "$x = $request->input('email');", "a.php"));
-        assert!(!fires("PHP009", "PHP", "$x = $request->input('email')->validate();", "a.php"));
+        assert!(fires(
+            "PHP009",
+            "PHP",
+            "$x = $request->input('email');",
+            "a.php"
+        ));
+        assert!(!fires(
+            "PHP009",
+            "PHP",
+            "$x = $request->input('email')->validate();",
+            "a.php"
+        ));
         // ANS001 — its exclusion was dead, so it fired on vaulted values too.
         let line = format!("password: {}", ["sample", "value", "42"].concat());
         assert!(fires("ANS001", "YAML/Ansible", &line, "x.yml"));
-        assert!(!fires("ANS001", "YAML/Ansible", "password: \"{{ vault_db_password }}\"", "x.yml"));
+        assert!(!fires(
+            "ANS001",
+            "YAML/Ansible",
+            "password: \"{{ vault_db_password }}\"",
+            "x.yml"
+        ));
         // SW017 — interpolation in a log call; never fired before (unclosed group).
-        assert!(fires("SW017", "Swift", r#"print("user \(name) logged in")"#, "a.swift"));
-        assert!(!fires("SW017", "Swift", r#"print("static message")"#, "a.swift"));
+        assert!(fires(
+            "SW017",
+            "Swift",
+            r#"print("user \(name) logged in")"#,
+            "a.swift"
+        ));
+        assert!(!fires(
+            "SW017",
+            "Swift",
+            r#"print("static message")"#,
+            "a.swift"
+        ));
         // Magic numbers: a bare literal fires, an arithmetic expression does not.
         assert!(fires("G007", "global", "if retries > 4096 {", "a.rs"));
         assert!(!fires("G007", "global", "let buf = 1024 * 1024;", "a.rs"));
@@ -1818,12 +2137,36 @@ mod tests {
                 message: "m".into(),
             })
         };
-        assert!(!matches_compiled_rule(&rule("", "", ""), "anything", "a.rs"));
-        assert!(matches_compiled_rule(&rule("foo", "", ""), "a foo b", "a.rs"));
-        assert!(!matches_compiled_rule(&rule("foo", "", ""), "a bar b", "a.rs"));
-        assert!(!matches_compiled_rule(&rule("foo", "ok", ""), "foo ok", "a.rs"));
-        assert!(!matches_compiled_rule(&rule("foo", "", r"_test\.rs$"), "foo", "x_test.rs"));
-        assert!(matches_compiled_rule(&rule("foo", "", r"_test\.rs$"), "foo", "x.rs"));
+        assert!(!matches_compiled_rule(
+            &rule("", "", ""),
+            "anything",
+            "a.rs"
+        ));
+        assert!(matches_compiled_rule(
+            &rule("foo", "", ""),
+            "a foo b",
+            "a.rs"
+        ));
+        assert!(!matches_compiled_rule(
+            &rule("foo", "", ""),
+            "a bar b",
+            "a.rs"
+        ));
+        assert!(!matches_compiled_rule(
+            &rule("foo", "ok", ""),
+            "foo ok",
+            "a.rs"
+        ));
+        assert!(!matches_compiled_rule(
+            &rule("foo", "", r"_test\.rs$"),
+            "foo",
+            "x_test.rs"
+        ));
+        assert!(matches_compiled_rule(
+            &rule("foo", "", r"_test\.rs$"),
+            "foo",
+            "x.rs"
+        ));
     }
 
     // ─── Scoring: one decision, pinned at every boundary ───
@@ -1849,7 +2192,13 @@ mod tests {
     #[test]
     fn length_penalty_is_tiered_not_cumulative() {
         // The drift bug: one copy charged a >500-line file both tiers (-30).
-        let at = |n| quality_score(&ScoreInputs { total_lines: n, ..inputs() }).0;
+        let at = |n| {
+            quality_score(&ScoreInputs {
+                total_lines: n,
+                ..inputs()
+            })
+            .0
+        };
         assert_eq!(at(300), 100);
         assert_eq!(at(301), 90);
         assert_eq!(at(500), 90);
@@ -1859,23 +2208,117 @@ mod tests {
     #[test]
     fn every_other_threshold_sits_exactly_where_documented() {
         let s = |m: ScoreInputs| quality_score(&m).0;
-        assert_eq!(s(ScoreInputs { func_count: 20, ..inputs() }), 100);
-        assert_eq!(s(ScoreInputs { func_count: 21, ..inputs() }), 85);
-        assert_eq!(s(ScoreInputs { max_nesting: 3, ..inputs() }), 100);
-        assert_eq!(s(ScoreInputs { max_nesting: 4, ..inputs() }), 90);
-        assert_eq!(s(ScoreInputs { max_nesting: 5, ..inputs() }), 90);
-        assert_eq!(s(ScoreInputs { max_nesting: 6, ..inputs() }), 80, "tiered, not -30");
-        assert_eq!(s(ScoreInputs { imports: 15, ..inputs() }), 100);
-        assert_eq!(s(ScoreInputs { imports: 16, ..inputs() }), 90);
+        assert_eq!(
+            s(ScoreInputs {
+                func_count: 20,
+                ..inputs()
+            }),
+            100
+        );
+        assert_eq!(
+            s(ScoreInputs {
+                func_count: 21,
+                ..inputs()
+            }),
+            85
+        );
+        assert_eq!(
+            s(ScoreInputs {
+                max_nesting: 3,
+                ..inputs()
+            }),
+            100
+        );
+        assert_eq!(
+            s(ScoreInputs {
+                max_nesting: 4,
+                ..inputs()
+            }),
+            90
+        );
+        assert_eq!(
+            s(ScoreInputs {
+                max_nesting: 5,
+                ..inputs()
+            }),
+            90
+        );
+        assert_eq!(
+            s(ScoreInputs {
+                max_nesting: 6,
+                ..inputs()
+            }),
+            80,
+            "tiered, not -30"
+        );
+        assert_eq!(
+            s(ScoreInputs {
+                imports: 15,
+                ..inputs()
+            }),
+            100
+        );
+        assert_eq!(
+            s(ScoreInputs {
+                imports: 16,
+                ..inputs()
+            }),
+            90
+        );
         // Uncommented code is only penalised past 50 lines of it.
-        assert_eq!(s(ScoreInputs { comment_lines: 0, code_lines: 50, ..inputs() }), 100);
-        assert_eq!(s(ScoreInputs { comment_lines: 0, code_lines: 51, ..inputs() }), 95);
-        assert_eq!(s(ScoreInputs { comment_lines: 1, code_lines: 51, ..inputs() }), 100);
-        assert_eq!(s(ScoreInputs { long_funcs: 3, ..inputs() }), 85);
+        assert_eq!(
+            s(ScoreInputs {
+                comment_lines: 0,
+                code_lines: 50,
+                ..inputs()
+            }),
+            100
+        );
+        assert_eq!(
+            s(ScoreInputs {
+                comment_lines: 0,
+                code_lines: 51,
+                ..inputs()
+            }),
+            95
+        );
+        assert_eq!(
+            s(ScoreInputs {
+                comment_lines: 1,
+                code_lines: 51,
+                ..inputs()
+            }),
+            100
+        );
+        assert_eq!(
+            s(ScoreInputs {
+                long_funcs: 3,
+                ..inputs()
+            }),
+            85
+        );
         // Violations cost one point each, capped at twenty.
-        assert_eq!(s(ScoreInputs { violations: 7, ..inputs() }), 93);
-        assert_eq!(s(ScoreInputs { violations: 20, ..inputs() }), 80);
-        assert_eq!(s(ScoreInputs { violations: 500, ..inputs() }), 80);
+        assert_eq!(
+            s(ScoreInputs {
+                violations: 7,
+                ..inputs()
+            }),
+            93
+        );
+        assert_eq!(
+            s(ScoreInputs {
+                violations: 20,
+                ..inputs()
+            }),
+            80
+        );
+        assert_eq!(
+            s(ScoreInputs {
+                violations: 500,
+                ..inputs()
+            }),
+            80
+        );
     }
 
     #[test]
@@ -1891,11 +2334,22 @@ mod tests {
             violations: 99,
         };
         assert_eq!(quality_score(&worst), (0, Grade::F));
-        let grade = |v: usize| quality_score(&ScoreInputs { violations: v, ..inputs() }).1;
+        let grade = |v: usize| {
+            quality_score(&ScoreInputs {
+                violations: v,
+                ..inputs()
+            })
+            .1
+        };
         assert_eq!(grade(10), Grade::A); // 90
         assert_eq!(grade(11), Grade::B); // 89
         // Grades below B need more than violations alone can remove (capped at 20).
-        let g = |long| quality_score(&ScoreInputs { long_funcs: long, ..inputs() });
+        let g = |long| {
+            quality_score(&ScoreInputs {
+                long_funcs: long,
+                ..inputs()
+            })
+        };
         assert_eq!(g(5), (75, Grade::B));
         assert_eq!(g(6), (70, Grade::C));
         assert_eq!(g(8), (60, Grade::C));
@@ -1914,8 +2368,16 @@ mod tests {
     // ─── The two analyses must agree ───
 
     fn score_in_report(report: &str) -> i32 {
-        let tail = report.split("Quality Score: ").nth(1).expect("report has a score");
-        tail.split('/').next().unwrap().trim().parse().expect("numeric score")
+        let tail = report
+            .split("Quality Score: ")
+            .nth(1)
+            .expect("report has a score");
+        tail.split('/')
+            .next()
+            .unwrap()
+            .trim()
+            .parse()
+            .expect("numeric score")
     }
 
     #[test]
@@ -1923,25 +2385,40 @@ mod tests {
         // Regression for the drift: the same file used to score differently depending
         // on which tool was asked. Exercise the paths where the copies disagreed —
         // a very long file, and a long function sitting at the end of the file.
-        let body = |n: usize| (0..n).map(|i| format!("    let v{i} = {i};")).collect::<Vec<_>>().join("\n");
+        let body = |n: usize| {
+            (0..n)
+                .map(|i| format!("    let v{i} = {i};"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
         let cases = [
             ("short.rs", format!("fn a() {{\n{}\n}}", body(10))),
             ("long.rs", format!("fn a() {{\n{}\n}}", body(600))),
-            ("tail.rs", format!("fn a() {{}}\nfn b() {{\n{}\n}}", body(49))),
-            ("mid.rs", format!("fn a() {{\n{}\n}}\nfn b() {{}}", body(320))),
+            (
+                "tail.rs",
+                format!("fn a() {{}}\nfn b() {{\n{}\n}}", body(49)),
+            ),
+            (
+                "mid.rs",
+                format!("fn a() {{\n{}\n}}\nfn b() {{}}", body(320)),
+            ),
         ];
         for (path, content) in &cases {
             let lang = crate::tools::commits::detect_language(path);
             let project = compute_file_metrics(path, content, lang).score;
             let file = score_in_report(&analyze_content(path, "main", content));
-            assert_eq!(file, project, "{path}: analyze_file={file} analyze_project={project}");
+            assert_eq!(
+                file, project,
+                "{path}: analyze_file={file} analyze_project={project}"
+            );
         }
     }
 
     #[test]
     fn analyze_content_reports_metrics_violations_and_the_empty_case() {
         assert_eq!(analyze_content("e.rs", "main", ""), "**e.rs** — empty file");
-        let src = "use std::io;\n// helper\nfn main() {\n    let token = \"abcdefghijklmnop\";\n}\n";
+        let src =
+            "use std::io;\n// helper\nfn main() {\n    let token = \"abcdefghijklmnop\";\n}\n";
         let out = analyze_content("src/main.rs", "dev", src);
         assert!(out.contains("## src/main.rs"));
         assert!(out.contains("**Branch:** dev"));
@@ -1950,8 +2427,10 @@ mod tests {
         assert!(out.contains("| Imports | 1 | OK |"));
         assert!(out.contains("Quality Score:"));
         let deep = format!("fn f() {{\n{}x\n}}", " ".repeat(24));
-        assert!(analyze_content("d.rs", "m", &deep).contains("Consider flattening")
-            || analyze_content("d.rs", "m", &deep).contains("Deeply nested"));
+        assert!(
+            analyze_content("d.rs", "m", &deep).contains("Consider flattening")
+                || analyze_content("d.rs", "m", &deep).contains("Deeply nested")
+        );
     }
 
     #[test]
@@ -1959,7 +2438,11 @@ mod tests {
         let all = list_rules("");
         assert!(all.starts_with("**Rules: "));
         assert!(all.contains("CRITICAL"));
-        let ids: Vec<&str> = all.lines().filter_map(|l| l.split("**[").nth(1)).map(|t| t.split(']').next().unwrap()).collect();
+        let ids: Vec<&str> = all
+            .lines()
+            .filter_map(|l| l.split("**[").nth(1))
+            .map(|t| t.split(']').next().unwrap())
+            .collect();
         let unique: std::collections::HashSet<_> = ids.iter().collect();
         assert_eq!(ids.len(), unique.len(), "a rule listed twice");
         assert!(list_rules("PHP").contains("PHP009"));
@@ -1974,7 +2457,10 @@ mod tests {
 
         let bad = validate_commit_message("updated stuff");
         assert!(!bad.has_conventional_prefix && !bad.has_ticket_ref);
-        assert_eq!(bad.failures, vec!["no conventional prefix", "no ticket reference"]);
+        assert_eq!(
+            bad.failures,
+            vec!["no conventional prefix", "no ticket reference"]
+        );
 
         // The limit is 72: 72 passes, 73 fails.
         let at = |n: usize| validate_commit_message(&format!("fix: {} PROJ-1", "x".repeat(n - 12)));
@@ -1984,8 +2470,14 @@ mod tests {
         assert!(at(73).failures.contains(&"subject >72 chars".to_string()));
         // Prefix match is case-insensitive; only the first line is the subject.
         assert!(validate_commit_message("FIX: thing ABC-1").has_conventional_prefix);
-        assert_eq!(validate_commit_message("fix: a\n\nbody ABC-9").subject_length, 6);
-        assert!(validate_commit_message("fix: a\n\nrefs ABC-9").has_ticket_ref, "ticket may live in the body");
+        assert_eq!(
+            validate_commit_message("fix: a\n\nbody ABC-9").subject_length,
+            6
+        );
+        assert!(
+            validate_commit_message("fix: a\n\nrefs ABC-9").has_ticket_ref,
+            "ticket may live in the body"
+        );
     }
 
     #[test]

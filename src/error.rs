@@ -6,10 +6,7 @@ use reqwest::StatusCode;
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("GitLab API error ({status}): {message}")]
-    GitLab {
-        status: StatusCode,
-        message: String,
-    },
+    GitLab { status: StatusCode, message: String },
 
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
@@ -133,7 +130,10 @@ mod tests {
     #[test]
     fn or_default_logged_keeps_values_and_defaults_errors() {
         assert_eq!(Ok::<_, Error>(vec![1]).or_default_logged(), vec![1]);
-        assert_eq!(Err::<Vec<u8>, _>(gitlab(500)).or_default_logged(), Vec::<u8>::new());
+        assert_eq!(
+            Err::<Vec<u8>, _>(gitlab(500)).or_default_logged(),
+            Vec::<u8>::new()
+        );
         assert_eq!(Err::<String, _>(gitlab(404)).or_default_logged(), "");
     }
 }

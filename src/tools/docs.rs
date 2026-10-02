@@ -59,10 +59,17 @@ async fn classify_repo(
     cyr_threshold: u8,
 ) -> RepoReadme {
     let id = project["id"].as_u64().unwrap_or(0);
-    let path = project["path_with_namespace"].as_str().unwrap_or("?").to_string();
+    let path = project["path_with_namespace"]
+        .as_str()
+        .unwrap_or("?")
+        .to_string();
     let web_url = project["web_url"].as_str().unwrap_or("").to_string();
     let branch = project["default_branch"].as_str().unwrap_or("").to_string();
-    let ref_name = if branch.is_empty() { "HEAD" } else { branch.as_str() };
+    let ref_name = if branch.is_empty() {
+        "HEAD"
+    } else {
+        branch.as_str()
+    };
 
     let mk = |verdict, size, cyr_pct, fname: &str| RepoReadme {
         path: path.clone(),
@@ -151,7 +158,9 @@ pub async fn audit_readmes(
         .await?;
 
     if projects.is_empty() {
-        return Ok(format!("No (non-archived) projects found in group `{group_path}`."));
+        return Ok(format!(
+            "No (non-archived) projects found in group `{group_path}`."
+        ));
     }
 
     // Fetch in bounded-concurrency chunks.
@@ -237,7 +246,11 @@ mod tests {
         let mostly_english = "# Backend service\n\nInstall with cargo build and run the \
             server. Configure the database connection and the redis cache. \
             See docs for deployment. Примечание: смотри конфиг.";
-        assert!(cyrillic_pct(mostly_english) < 20, "got {}", cyrillic_pct(mostly_english));
+        assert!(
+            cyrillic_pct(mostly_english) < 20,
+            "got {}",
+            cyrillic_pct(mostly_english)
+        );
         assert_eq!(cyrillic_pct("```\n1234 5678\n```"), 0); // no letters
     }
 }

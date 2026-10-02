@@ -55,11 +55,11 @@ pub fn instance_id() -> &'static str {
 
 /// Initialize tracing subscriber (JSON to stderr).
 pub fn setup_logging() {
-    use tracing_subscriber::fmt;
     use tracing_subscriber::EnvFilter;
+    use tracing_subscriber::fmt;
 
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("gl_mcp=info"));
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("gl_mcp=info"));
 
     fmt()
         .json()
@@ -121,10 +121,12 @@ pub fn setup_sentry() {}
 
 /// Scrub GitLab tokens and other secrets from strings.
 pub(crate) fn scrub_tokens(s: &str) -> String {
-    static RE: std::sync::LazyLock<regex::Regex> =
-        std::sync::LazyLock::new(|| {
-            regex::Regex::new(r"(?:glpat-[A-Za-z0-9_\-\.]+|(?i)(?:bearer|private-token)\s+[A-Za-z0-9_\-\.]{20,})").unwrap()
-        });
+    static RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(
+            r"(?:glpat-[A-Za-z0-9_\-\.]+|(?i)(?:bearer|private-token)\s+[A-Za-z0-9_\-\.]{20,})",
+        )
+        .unwrap()
+    });
     RE.replace_all(s, "[REDACTED]").to_string()
 }
 
@@ -136,7 +138,10 @@ fn add_sentry_breadcrumb(tool: &str, duration_ms: u128, status: &str, error: Opt
     }
     let mut data = std::collections::BTreeMap::new();
     data.insert("tool".to_string(), sentry::protocol::Value::from(tool));
-    data.insert("duration_ms".to_string(), sentry::protocol::Value::from(duration_ms as f64));
+    data.insert(
+        "duration_ms".to_string(),
+        sentry::protocol::Value::from(duration_ms as f64),
+    );
     data.insert("status".to_string(), sentry::protocol::Value::from(status));
     if let Some(err) = error {
         data.insert("error".to_string(), sentry::protocol::Value::from(err));
@@ -187,10 +192,10 @@ fn is_actionable_error(err: &str) -> bool {
     // case-insensitively and by *phrase* (not exact string), so variably-worded
     // messages like "User '@x' not found" or lowercase "has no id" are covered.
     const USER_ERROR_MARKERS: &[&str] = &[
-        "not found",          // "User '@x' not found", "Not found: ...", 404
-        "not accessible",     // "Group '...' not found or not accessible"
-        "unauthorized",       // 401
-        "forbidden",          // 403
+        "not found",      // "User '@x' not found", "Not found: ...", 404
+        "not accessible", // "Group '...' not found or not accessible"
+        "unauthorized",   // 401
+        "forbidden",      // 403
         "unknown instance",
         "unknown access level",
         "has no id",
@@ -211,7 +216,6 @@ fn is_actionable_error(err: &str) -> bool {
     }
     true
 }
-
 
 /// Analytics event for tool calls.
 #[derive(serde::Serialize)]
@@ -314,7 +318,9 @@ mod tests {
     #[test]
     fn test_is_actionable_error() {
         // User errors — should NOT be captured
-        assert!(!is_actionable_error("GitLab API error (404 Not Found): \"404 Project Not Found\""));
+        assert!(!is_actionable_error(
+            "GitLab API error (404 Not Found): \"404 Project Not Found\""
+        ));
         assert!(!is_actionable_error("GitLab API error (401 Unauthorized)"));
         assert!(!is_actionable_error("GitLab API error (403 Forbidden)"));
         assert!(!is_actionable_error("Not found: User @foo"));
@@ -323,19 +329,33 @@ mod tests {
         // these previously leaked to Sentry because the filter matched exact strings.
         assert!(!is_actionable_error("User '@ghost' not found"));
         assert!(!is_actionable_error("User '@foo' has no id"));
-        assert!(!is_actionable_error("Group 'my-org/devops' not found or not accessible"));
-        assert!(!is_actionable_error("Unknown access level 'boss'. Use one of: guest, ..."));
-        assert!(!is_actionable_error("Refusing to delete: confirm_full_path ('a') does not match ('b')."));
-        assert!(!is_actionable_error("Nothing to update — set at least one of title, description..."));
+        assert!(!is_actionable_error(
+            "Group 'my-org/devops' not found or not accessible"
+        ));
+        assert!(!is_actionable_error(
+            "Unknown access level 'boss'. Use one of: guest, ..."
+        ));
+        assert!(!is_actionable_error(
+            "Refusing to delete: confirm_full_path ('a') does not match ('b')."
+        ));
+        assert!(!is_actionable_error(
+            "Nothing to update — set at least one of title, description..."
+        ));
 
         // Real errors — should be captured
-        assert!(is_actionable_error("GitLab API error (500 Internal Server Error)"));
+        assert!(is_actionable_error(
+            "GitLab API error (500 Internal Server Error)"
+        ));
         assert!(is_actionable_error("GitLab API error (502 Bad Gateway)"));
         assert!(is_actionable_error("HTTP error: connection timeout"));
         assert!(is_actionable_error("JSON parse error: invalid syntax"));
 
         // 408 timeout and 429 rate limit are still captured
-        assert!(is_actionable_error("GitLab API error (408 Request Timeout)"));
-        assert!(is_actionable_error("GitLab API error (429 Too Many Requests)"));
+        assert!(is_actionable_error(
+            "GitLab API error (408 Request Timeout)"
+        ));
+        assert!(is_actionable_error(
+            "GitLab API error (429 Too Many Requests)"
+        ));
     }
 }

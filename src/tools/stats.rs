@@ -24,7 +24,15 @@ mod tests {
         assert_eq!(median(&mut []), 0.0);
         assert_eq!(median(&mut [5.0]), 5.0);
         assert_eq!(median(&mut [9.0, 1.0, 5.0]), 5.0);
-        assert_eq!(median(&mut [1.0, 100.0, 2.0, 3.0]), 2.5, "even: mean of the two middle values");
-        assert_eq!(median(&mut [f64::NAN, 1.0, 2.0]), 2.0, "NaN sorts last under total_cmp");
+        assert_eq!(
+            median(&mut [1.0, 100.0, 2.0, 3.0]),
+            2.5,
+            "even: mean of the two middle values"
+        );
+        assert_eq!(
+            median(&mut [f64::NAN, 1.0, 2.0]),
+            2.0,
+            "NaN sorts last under total_cmp"
+        );
     }
 }

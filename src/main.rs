@@ -29,7 +29,10 @@ async fn main() -> anyhow::Result<()> {
     logging::setup_logging();
     logging::setup_sentry();
     let instance_id = logging::instance_id();
-    eprintln!("gl-mcp v{} starting (instance: {instance_id})", env!("CARGO_PKG_VERSION"));
+    eprintln!(
+        "gl-mcp v{} starting (instance: {instance_id})",
+        env!("CARGO_PKG_VERSION")
+    );
 
     let config = Config::from_env().unwrap_or_else(|e| {
         eprintln!("Configuration error: {e}");
@@ -49,37 +52,49 @@ async fn main() -> anyhow::Result<()> {
     // Prints the same HTML the generate_ai_adoption_report MCP tool returns,
     // then exits. Lets cron/CI (e.g. a weekly email workflow) reuse the exact
     // adoption engine without speaking MCP.
-    if let Some(group) = args.iter()
+    if let Some(group) = args
+        .iter()
         .position(|a| a == "--adoption-report")
         .and_then(|i| args.get(i + 1))
     {
-        let days: u32 = args.iter()
+        let days: u32 = args
+            .iter()
             .position(|a| a == "--days")
             .and_then(|i| args.get(i + 1))
             .and_then(|s| s.parse().ok())
             .unwrap_or(30);
-        let instance = args.iter()
+        let instance = args
+            .iter()
             .position(|a| a == "--gl-instance")
             .and_then(|i| args.get(i + 1))
             .map(|s| s.as_str())
             .unwrap_or("");
 
         let resolver = gl_mcp::resolver::Resolver::new(&config);
-        let client = resolver.resolve(instance, "").map_err(|e| anyhow::anyhow!("{e}"))?;
+        let client = resolver
+            .resolve(instance, "")
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         let html = tools::adoption::generate_ai_adoption_report(
-            client, group, days, tools::adoption::DORMANT_DAYS,
-        ).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+            client,
+            group,
+            days,
+            tools::adoption::DORMANT_DAYS,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
         println!("{html}");
         return Ok(());
     }
 
-    let transport = args.iter()
+    let transport = args
+        .iter()
         .position(|a| a == "--transport")
         .and_then(|i| args.get(i + 1))
         .map(|s| s.as_str())
         .unwrap_or("stdio");
 
-    let port: u16 = args.iter()
+    let port: u16 = args
+        .iter()
         .position(|a| a == "--port")
         .and_then(|i| args.get(i + 1))
         .and_then(|s| s.parse().ok())
@@ -118,11 +133,10 @@ async fn serve_stdio(config: Config) -> anyhow::Result<()> {
 #[cfg(feature = "http")]
 async fn serve_http(config: Config, port: u16) -> anyhow::Result<()> {
     use rmcp::transport::streamable_http_server::{
-        StreamableHttpService, StreamableHttpServerConfig,
-        session::local::LocalSessionManager,
+        StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
     };
-    use std::sync::Arc;
     use std::net::SocketAddr;
+    use std::sync::Arc;
 
     let session_manager = Arc::new(LocalSessionManager::default());
     let http_config = StreamableHttpServerConfig::default();
@@ -133,8 +147,7 @@ async fn serve_http(config: Config, port: u16) -> anyhow::Result<()> {
         http_config,
     );
 
-    let app = axum::Router::new()
-        .fallback_service(mcp_service);
+    let app = axum::Router::new().fallback_service(mcp_service);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;

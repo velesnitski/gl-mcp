@@ -8,10 +8,10 @@
 //! whatever came out, as if it were the whole file.
 
 use crate::error::{Error, Result};
+use base64::Engine as _;
 use base64::alphabet;
 use base64::engine::general_purpose::GeneralPurpose;
 use base64::engine::{DecodePaddingMode, GeneralPurposeConfig};
-use base64::Engine as _;
 use serde_json::Value;
 
 /// Standard alphabet with padding optional. GitLab pads, but being strict about
@@ -51,22 +51,42 @@ mod tests {
     #[test]
     fn decodes_padded_unpadded_and_line_wrapped_input() {
         assert_eq!(decode_base64("aGVsbG8=").unwrap(), b"hello");
-        assert_eq!(decode_base64("aGVsbG8").unwrap(), b"hello", "padding is optional");
-        assert_eq!(decode_base64("aGVs\nbG8=\n").unwrap(), b"hello", "GitLab wraps lines");
+        assert_eq!(
+            decode_base64("aGVsbG8").unwrap(),
+            b"hello",
+            "padding is optional"
+        );
+        assert_eq!(
+            decode_base64("aGVs\nbG8=\n").unwrap(),
+            b"hello",
+            "GitLab wraps lines"
+        );
         assert_eq!(decode_base64("").unwrap(), b"");
     }
 
     #[test]
     fn malformed_input_is_an_error_not_a_silent_partial() {
         // The hand-rolled decoder returned "he" for this — the rest of the file gone.
-        assert!(decode_base64("aGVs*G8=").is_err(), "invalid character mid-stream");
-        assert!(decode_base64("a").is_err(), "a lone trailing symbol cannot be data");
+        assert!(
+            decode_base64("aGVs*G8=").is_err(),
+            "invalid character mid-stream"
+        );
+        assert!(
+            decode_base64("a").is_err(),
+            "a lone trailing symbol cannot be data"
+        );
     }
 
     #[test]
     fn file_text_honours_the_encoding_field() {
-        assert_eq!(file_text(&json!({"content": "aGk=", "encoding": "base64"})).unwrap(), "hi");
-        assert_eq!(file_text(&json!({"content": "plain", "encoding": "text"})).unwrap(), "plain");
+        assert_eq!(
+            file_text(&json!({"content": "aGk=", "encoding": "base64"})).unwrap(),
+            "hi"
+        );
+        assert_eq!(
+            file_text(&json!({"content": "plain", "encoding": "text"})).unwrap(),
+            "plain"
+        );
         // A missing encoding is GitLab's default: base64.
         assert_eq!(file_text(&json!({"content": "aGk="})).unwrap(), "hi");
         assert!(file_text(&json!({"content": "@@@", "encoding": "base64"})).is_err());

@@ -1,9 +1,9 @@
 //! GitLab issue tools.
 
-use std::fmt::Write as _;
 use crate::client::GitLabClient;
 use crate::error::Result;
 use serde_json::Value;
+use std::fmt::Write as _;
 
 /// Search issues across projects, within a project, or within a group.
 pub async fn search_issues(
@@ -43,10 +43,7 @@ pub async fn search_issues(
         params.push(("assignee_username", assignee));
     }
 
-    let issues: Vec<Value> = client
-        .get(&path, &params)
-        .await
-        ?;
+    let issues: Vec<Value> = client.get(&path, &params).await?;
 
     if issues.is_empty() {
         return Ok("No issues found.".to_string());
@@ -147,8 +144,7 @@ pub async fn get_issue(
         );
         let notes: Vec<Value> = client
             .get(&notes_path, &[("per_page", "50"), ("sort", "asc")])
-            .await
-            ?;
+            .await?;
 
         let user_notes: Vec<&Value> = notes
             .iter()
@@ -243,10 +239,7 @@ pub async fn update_issue(
         }
     }
 
-    let issue: Value = client
-        .put(&path, &body)
-        .await
-        ?;
+    let issue: Value = client.put(&path, &body).await?;
 
     let state = issue["state"].as_str().unwrap_or("?");
     let web_url = issue["web_url"].as_str().unwrap_or("");
@@ -277,8 +270,7 @@ pub async fn add_note(
 
     let note: Value = client
         .post(&path, &serde_json::json!({ "body": body }))
-        .await
-        ?;
+        .await?;
 
     let note_id = note["id"].as_u64().unwrap_or(0);
     let symbol = if note_type == "mr" { "!" } else { "#" };
@@ -288,18 +280,10 @@ pub async fn add_note(
 }
 
 /// List project labels.
-pub async fn list_labels(
-    client: &GitLabClient,
-    project_id: &str,
-) -> Result<String> {
-    let path = format!(
-        "/projects/{}/labels",
-        urlencoding::encode(project_id)
-    );
+pub async fn list_labels(client: &GitLabClient, project_id: &str) -> Result<String> {
+    let path = format!("/projects/{}/labels", urlencoding::encode(project_id));
 
-    let labels: Vec<Value> = client
-        .get(&path, &[("per_page", "100")])
-        .await?;
+    let labels: Vec<Value> = client.get(&path, &[("per_page", "100")]).await?;
 
     if labels.is_empty() {
         return Ok("No labels found.".to_string());
@@ -334,10 +318,7 @@ pub async fn create_label(
     color: &str,
     description: &str,
 ) -> Result<String> {
-    let path = format!(
-        "/projects/{}/labels",
-        urlencoding::encode(project_id)
-    );
+    let path = format!("/projects/{}/labels", urlencoding::encode(project_id));
 
     let mut body = serde_json::json!({
         "name": name,
@@ -365,21 +346,14 @@ pub async fn get_milestones(
     per_page: u32,
 ) -> Result<String> {
     let per_page_str = per_page.to_string();
-    let path = format!(
-        "/projects/{}/milestones",
-        urlencoding::encode(project_id)
-    );
+    let path = format!("/projects/{}/milestones", urlencoding::encode(project_id));
 
-    let mut params: Vec<(&str, &str)> = vec![
-        ("per_page", &per_page_str),
-    ];
+    let mut params: Vec<(&str, &str)> = vec![("per_page", &per_page_str)];
     if !state.is_empty() && state != "all" {
         params.push(("state", state));
     }
 
-    let milestones: Vec<Value> = client
-        .get(&path, &params)
-        .await?;
+    let milestones: Vec<Value> = client.get(&path, &params).await?;
 
     if milestones.is_empty() {
         return Ok("No milestones found.".to_string());
@@ -416,9 +390,7 @@ pub async fn get_milestones(
             format!(" ({})", extra.join(", "))
         };
 
-        lines.push(format!(
-            "- **{title}** [{state}]{extra_str}{desc_part}"
-        ));
+        lines.push(format!("- **{title}** [{state}]{extra_str}{desc_part}"));
     }
 
     Ok(lines.join("\n"))
