@@ -9,7 +9,7 @@
 _Reference bands (directional, not a cited statistic): Nascent <15% · Emerging 15–29% · Mainstream 30–49% · Advanced 50–74% · Leading ≥75% developer adoption. The grade is a floor — squash-hidden and local-only usage sit above it._
 
 **To advance:**
-1. 1 repo(s) have AI usage but no config — add a CLAUDE.md (or the org template). Cheapest tier win, and it makes the usage visible.
+1. 1 repo(s) have AI usage but no config — add a short CLAUDE.md: what the repo is for and its gotchas, not a generic template. Cheapest tier win, and it makes the usage visible.
 2. Attribution is lost at merge (squash-hidden usage) — disable trailer-stripping squash or standardize on MR-description attribution, so the dashboard stops under-reading real usage.
 3. Activate 1 more developer(s) with AI to reach the Leading band (75%).
 
@@ -29,8 +29,8 @@ _Benchmarks & practices: [Claude Code best practices](https://www.anthropic.com/
 | Repo | Level | Traj | Markers | AI commits | Flags |
 |------|-------|------|---------|-----------|-------|
 | core/api | L3 | ↑ | CLAUDE.md, agents(3), skills(2), commands, settings, hooks, .mcp.json, tasks, ADR active(2) | 40% (40/100) +4 MRs +5 task commits | – |
-| core/worker | L2 | ↓ | CLAUDE.md, agents(1) | 0% (0/20) | setup unused, stale config (30+ commits behind) |
-| web/site | L1 | → | AGENTS.md, cursor, tasks | 0% (0/15) +2 task commits | no attribution |
+| core/worker | L2 | ↓ | CLAUDE.md, agents(1) | 0% (0/20) | bloated CLAUDE.md, setup unused, stale config (30+ commits behind) |
+| web/site | L1 | → | AGENTS.md, .mcp.json, cursor, tasks | 0% (0/15) +2 task commits | secret in .mcp.json, no attribution |
 
 ### In-flight (branch signals only)
 
@@ -47,14 +47,17 @@ Devs adopted Claude on their own — the repo gives it no context. Cheapest win:
 | data/etl | 40% (12/30) | joe (12) · Copilot | squash-hidden (branches only) |
 
 ### Quality Flags
+- acme/core/worker: bloated CLAUDE.md (260 lines) — keep it under 200 lines: what the repo is and its gotchas; move procedures into skills
 - acme/core/worker: setup unused — .claude/agents present, 0 AI commits in 30d
 - acme/core/worker: stale config — CLAUDE.md last touched 2025-11-01 but 20+ commits since — refresh it
+- acme/web/site: credential committed in .mcp.json — reference an environment variable (`${VAR}`) instead; the file is shared and travels to cloud sessions
 - acme/web/site: no attribution — 2 .tasks / 0 .claude commits in 30d but 0 AI-trailed commits — enable Co-Authored-By attribution for measurable adoption
 - acme/web/app: in-flight (branch: feature/claude-setup) — AI work on feature branches, no config on default yet
 - acme/data/etl: usage w/o config — 40% AI commits (joe) but no CLAUDE.md (add one)
 - acme/data/etl: squash-hidden usage — 12 AI-trailed commits (joe) on feature branches, 0 on default — squash strips attribution at merge
 
 ### Recommendations
+- 1 repo(s) commit a credential in .mcp.json — rotate it and switch to an environment reference
 - data team: 0 adoption across 2 active repos — pilot candidate: acme/data/etl
 - 1 repos have AI commits but no CLAUDE.md — quick win: add one
 - 1 repos show agent activity without commit attribution — standardize Co-Authored-By trailers to measure adoption

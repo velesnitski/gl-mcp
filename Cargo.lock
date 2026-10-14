@@ -531,7 +531,7 @@ dependencies = [
 
 [[package]]
 name = "gl-mcp"
-version = "1.12.2"
+version = "1.12.3"
 dependencies = [
  "anyhow",
  "axum",

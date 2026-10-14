@@ -94,6 +94,11 @@ pub(crate) struct RepoMarkers {
     /// Distinct non-bot authors of ANY commit in the window (the denominator
     /// for the developer-adoption rate).
     pub all_author_set: Vec<String>,
+    /// Lines in the root CLAUDE.md; 0 when its content could not be read.
+    pub claude_md_lines: usize,
+    /// A committed `.mcp.json` holds a credential-shaped literal instead of an
+    /// environment reference.
+    pub mcp_json_inline_secret: bool,
 }
 
 impl RepoMarkers {
@@ -274,7 +279,7 @@ pub(crate) fn compute_benchmark(
         .count();
     if invisible > 0 {
         suggestions.push(format!(
-            "{invisible} repo(s) have AI usage but no config — add a CLAUDE.md (or the org template). Cheapest tier win, and it makes the usage visible."
+            "{invisible} repo(s) have AI usage but no config — add a short CLAUDE.md: what the repo is for and its gotchas, not a generic template. Cheapest tier win, and it makes the usage visible."
         ));
     }
     let squash_hidden = results.iter().any(|r| {
@@ -425,14 +430,62 @@ pub(crate) fn adoption_level(m: &RepoMarkers) -> u8 {
     0
 }
 
+/// "Keep it under 200 lines" — Anthropic's guidance on CLAUDE.md, which loads on
+/// every request.
+pub(crate) const CLAUDE_MD_MAX_LINES: usize = 200;
+
+/// True when a `.mcp.json` carries a literal credential in a server's `env` or
+/// `headers`, rather than a `${VAR}` reference.
+///
+/// The file is committed: it is shared with every clone and travels into cloud
+/// sessions, so a literal there is a published secret. Only presence is reported,
+/// never the value.
+pub(crate) fn mcp_json_inline_secret(text: &str) -> bool {
+    const SECRETISH: &[&str] = &[
+        "TOKEN", "KEY", "SECRET", "PASSWORD", "PASSWD", "AUTH", "CREDENTIAL", "COOKIE",
+    ];
+    let Ok(doc) = serde_json::from_str::<Value>(text) else {
+        return false;
+    };
+    let Some(servers) = doc["mcpServers"].as_object() else {
+        return false;
+    };
+    servers.values().any(|server| {
+        ["env", "headers"].iter().any(|section| {
+            server[*section].as_object().is_some_and(|vars| {
+                vars.iter().any(|(k, v)| {
+                    let Some(value) = v.as_str().map(str::trim) else {
+                        return false;
+                    };
+                    // `${VAR}`, `$VAR`, or a scheme followed by a reference.
+                    let referenced = value.is_empty()
+                        || value.split_whitespace().last().is_some_and(|t| t.starts_with('$'));
+                    let key = k.to_ascii_uppercase();
+                    !referenced && value.len() >= 8 && SECRETISH.iter().any(|m| key.contains(m))
+                })
+            })
+        })
+    })
+}
+
 /// Quality flags for a repo: anti-patterns and easy wins.
 pub(crate) fn quality_flags(m: &RepoMarkers) -> Vec<String> {
     let mut flags: Vec<String> = Vec::new();
     if m.claude_md && m.claude_md_size < 200 {
         flags.push("stub CLAUDE.md".into());
     }
-    if m.claude_md && m.claude_md_size > 15000 {
+    // Procedures belong in skills or nested CLAUDE.md files, loaded when needed.
+    // Bytes are the fallback when the content could not be read.
+    let too_long = if m.claude_md_lines > 0 {
+        m.claude_md_lines > CLAUDE_MD_MAX_LINES
+    } else {
+        m.claude_md_size > 15000
+    };
+    if m.claude_md && too_long {
         flags.push("bloated CLAUDE.md".into());
+    }
+    if m.mcp_json_inline_secret {
+        flags.push("secret in .mcp.json".into());
     }
     if m.agents_count > 0
         && m.ai_commits == 0
@@ -461,6 +514,15 @@ pub(crate) fn quality_flags(m: &RepoMarkers) -> Vec<String> {
         flags.push("stale config (30+ commits behind)".into());
     }
     flags
+}
+
+/// "240 lines" when the content was read, else the byte size.
+fn claude_md_extent(m: &RepoMarkers) -> String {
+    if m.claude_md_lines > 0 {
+        format!("{} lines", m.claude_md_lines)
+    } else {
+        format!("{}KB", m.claude_md_size / 1024)
+    }
 }
 
 /// True if `flags` contains `flag` (exact match).
@@ -736,6 +798,28 @@ async fn scan_repo(
             .await
             .ok();
         m.claude_md_size = file.as_ref().and_then(|f| f["size"].as_u64()).unwrap_or(0);
+        // The response already carries the content: count lines at no extra request.
+        m.claude_md_lines = file
+            .as_ref()
+            .and_then(|f| crate::tools::encoding::file_text(f).ok())
+            .map(|t| t.lines().count())
+            .unwrap_or(0);
+    }
+
+    // 4b. Committed MCP config: a literal credential there is a published secret.
+    if m.mcp_json {
+        let ref_name = if default_branch.is_empty() {
+            "HEAD"
+        } else {
+            default_branch
+        };
+        let raw = client
+            .get_text(
+                &format!("/projects/{project_id}/repository/files/.mcp.json/raw"),
+                &[("ref", ref_name)],
+            )
+            .await;
+        m.mcp_json_inline_secret = raw.is_ok_and(|text| mcp_json_inline_secret(&text));
     }
 
     // 5. AI commit usage across ALL branches (one page is enough). Feature branches
@@ -1636,9 +1720,13 @@ fn md_quality_flags(results: &[RepoResult], days: u32) -> Vec<String> {
         for flag in quality_flags(m) {
             match flag.as_str() {
                 "bloated CLAUDE.md" => flag_lines.push(format!(
-                    "- {}: bloated CLAUDE.md ({}KB) — trim to essentials",
+                    "- {}: bloated CLAUDE.md ({}) — keep it under {CLAUDE_MD_MAX_LINES} lines: what the repo is and its gotchas; move procedures into skills",
                     r.path,
-                    m.claude_md_size / 1024
+                    claude_md_extent(m)
+                )),
+                "secret in .mcp.json" => flag_lines.push(format!(
+                    "- {}: credential committed in .mcp.json — reference an environment variable (`${{VAR}}`) instead; the file is shared and travels to cloud sessions",
+                    r.path
                 )),
                 "stub CLAUDE.md" => flag_lines.push(format!(
                     "- {}: stub CLAUDE.md ({}B) — add real project context",
@@ -1695,6 +1783,13 @@ fn md_recommendations(
 ) -> Vec<String> {
     let mut out = Vec::new();
     let mut recs: Vec<String> = Vec::new();
+    // A committed credential outranks every adoption suggestion.
+    let secret_count = flag_count(results, "secret in .mcp.json");
+    if secret_count > 0 {
+        recs.push(format!(
+            "- {secret_count} repo(s) commit a credential in .mcp.json — rotate it and switch to an environment reference"
+        ));
+    }
     for (name, s) in teams {
         if s.adopting == 0 && s.repos > 0 {
             let pilot = pilot_candidate(results, name).map_or("?", |r| r.path.as_str());
@@ -2456,8 +2551,11 @@ fn html_quality_flags(results: &[RepoResult], days: u32) -> String {
                     m.claude_md_size,
                 )),
                 "bloated CLAUDE.md" => flag_boxes.push(format!(
-                    "<div class=\"issue warn\"><b>{repo} &mdash; bloated CLAUDE.md</b><div class=\"m\">{}KB &mdash; trim to essentials.</div></div>\n",
-                    m.claude_md_size / 1024,
+                    "<div class=\"issue warn\"><b>{repo} &mdash; bloated CLAUDE.md</b><div class=\"m\">{} &mdash; keep it under {CLAUDE_MD_MAX_LINES} lines: what the repo is and its gotchas; move procedures into skills.</div></div>\n",
+                    claude_md_extent(m),
+                )),
+                "secret in .mcp.json" => flag_boxes.push(format!(
+                    "<div class=\"issue risk\"><b>{repo} &mdash; credential committed in .mcp.json</b><div class=\"m\">Reference an environment variable (<code>${{VAR}}</code>) instead &mdash; the file is shared and travels to cloud sessions.</div></div>\n"
                 )),
                 "usage w/o config" => flag_boxes.push(format!(
                     "<div class=\"issue warn\"><b>{repo} &mdash; usage without config</b><div class=\"m\">{:.0}% AI commits{} but no CLAUDE.md &mdash; add one.</div></div>\n",
@@ -2486,6 +2584,13 @@ fn html_recommendations(
     in_flight: usize,
 ) -> String {
     let mut recs: Vec<String> = Vec::new();
+    // A committed credential outranks every adoption suggestion.
+    let secret_count = flag_count(results, "secret in .mcp.json");
+    if secret_count > 0 {
+        recs.push(format!(
+            "<div class=\"issue risk\"><b>{secret_count} repo(s) commit a credential in .mcp.json</b><div class=\"m\">Rotate it and switch to an environment reference.</div></div>\n"
+        ));
+    }
     for (name, s) in teams {
         if s.adopting == 0 && s.repos > 0 {
             let (pilot, pilot_url) = pilot_candidate(results, name)
@@ -2657,12 +2762,15 @@ mod tests {
         l2_unused.agents_count = 1;
         l2_unused.total_commits = 20;
         l2_unused.claude_md_stale = true;
+        l2_unused.claude_md_lines = 260;
         l2_unused.claude_md_last_touch = Some("2025-11-01T00:00:00Z".into());
         l2_unused.all_author_set = vec!["sam".into()];
 
         let mut l1 = RepoMarkers::default();
         l1.agents_md = true;
         l1.cursor = true;
+        l1.mcp_json = true;
+        l1.mcp_json_inline_secret = true;
         l1.tasks_dir = true;
         l1.tasks_recent_commits = 2;
         l1.total_commits = 15;
@@ -3150,6 +3258,43 @@ mod tests {
             ..empty()
         };
         assert_eq!(adoption_level(&m), 0);
+    }
+
+    /// A committed MCP config; the credential value is assembled at runtime.
+    fn mcp_config(section: &str, key: &str, value: &str) -> String {
+        serde_json::json!({"mcpServers": {"tracker": {"command": "x", section: {key: value}}}}).to_string()
+    }
+
+    #[test]
+    fn inline_mcp_credentials_are_flagged_and_references_are_not() {
+        let literal = ["fixture", "-credential-", "0042"].concat();
+        assert!(mcp_json_inline_secret(&mcp_config("env", "API_TOKEN", &literal)));
+        assert!(mcp_json_inline_secret(&mcp_config("headers", "Authorization", &format!("Bearer {literal}"))));
+        // References and harmless settings pass.
+        assert!(!mcp_json_inline_secret(&mcp_config("env", "API_TOKEN", "${API_TOKEN}")));
+        assert!(!mcp_json_inline_secret(&mcp_config("env", "API_TOKEN", "$API_TOKEN")));
+        assert!(!mcp_json_inline_secret(&mcp_config("headers", "Authorization", "Bearer ${TOKEN}")));
+        assert!(!mcp_json_inline_secret(&mcp_config("env", "BASE_URL", "https://tracker.example.com")));
+        assert!(!mcp_json_inline_secret(&mcp_config("env", "API_KEY", "short")), "too short to be a credential");
+        assert!(!mcp_json_inline_secret("not json"));
+        assert!(!mcp_json_inline_secret("{}"));
+    }
+
+    #[test]
+    fn claude_md_length_is_judged_in_lines_with_a_byte_fallback() {
+        let at = |lines: usize, size: u64| RepoMarkers {
+            claude_md: true,
+            claude_md_lines: lines,
+            claude_md_size: size,
+            ..empty()
+        };
+        assert!(!has_flag(&quality_flags(&at(200, 9000)), "bloated CLAUDE.md"), "200 lines is within guidance");
+        assert!(has_flag(&quality_flags(&at(201, 9000)), "bloated CLAUDE.md"));
+        assert!(!has_flag(&quality_flags(&at(150, 20_000)), "bloated CLAUDE.md"), "long lines, few of them: fine");
+        assert!(has_flag(&quality_flags(&at(0, 15_001)), "bloated CLAUDE.md"), "unread content falls back to bytes");
+        assert!(!has_flag(&quality_flags(&at(0, 15_000)), "bloated CLAUDE.md"));
+        assert_eq!(claude_md_extent(&at(240, 9000)), "240 lines");
+        assert_eq!(claude_md_extent(&at(0, 20_480)), "20KB");
     }
 
     #[test]

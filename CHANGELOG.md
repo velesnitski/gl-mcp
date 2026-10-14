@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.3] - 2026-10-14
+
+### Changed
+
+- **The AI-adoption report judges CLAUDE.md length in lines.** A file over 200 lines
+  is flagged, per Anthropic's guidance that CLAUDE.md loads on every request. The
+  previous 15 KB threshold let through files of roughly 300 or more lines. Bytes
+  remain the fallback when the content cannot be read (ADR 061).
+- **The no-config advice asks for a short CLAUDE.md** that says what the repo is and
+  lists its gotchas, not a generic org template.
+
+### Added
+
+- **The adoption report flags a credential committed in `.mcp.json`** when a server's
+  `env` or `headers` holds a literal instead of a `${VAR}` reference. It is reported
+  as a risk and leads the recommendations. Only presence is reported, never the value.
+
 ## [1.12.2] - 2026-10-14
 
 ### Fixed
