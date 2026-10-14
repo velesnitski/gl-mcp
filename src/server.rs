@@ -1744,6 +1744,33 @@ impl GlMcpServer {
     }
 
     #[tool(
+        description = "Who last changed each line of a file, and in which commit (date, author, subject) — over the API, no clone needed. Pass start_line/end_line for a window; output is capped at 300 lines."
+    )]
+    async fn get_blame(&self, Parameters(p): Parameters<GetBlameParams>) -> Result<CallToolResult, McpError> {
+        simple_tool!(self, p, "get_blame", &p.project_id, |client| {
+            tools::commits::get_blame(
+                client,
+                &p.project_id,
+                &p.file_path,
+                p.ref_name.as_deref().unwrap_or(""),
+                p.start_line,
+                p.end_line,
+            )
+            .await
+        })
+    }
+
+    #[tool(
+        description = "Common ancestor of two or more refs (branches, tags, SHAs) — where they diverged. Pair with compare_branches to see what changed on each side."
+    )]
+    async fn get_merge_base(&self, Parameters(p): Parameters<GetMergeBaseParams>) -> Result<CallToolResult, McpError> {
+        let refs: Vec<String> = p.refs.split(',').map(|r| r.trim().to_string()).filter(|r| !r.is_empty()).collect();
+        simple_tool!(self, p, "get_merge_base", &p.project_id, |client| {
+            tools::commits::get_merge_base(client, &p.project_id, &refs).await
+        })
+    }
+
+    #[tool(
         description = "List all branches and tags that contain a given commit SHA. Useful for tracing where a fix landed."
     )]
     async fn get_commit_refs(

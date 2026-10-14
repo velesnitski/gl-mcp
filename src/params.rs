@@ -1801,3 +1801,29 @@ pub struct DeletePipelineScheduleVariableParams {
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetBlameParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "File path within the repository")]
+    pub file_path: String,
+    #[schemars(description = "Branch, tag, or commit SHA (default: HEAD)")]
+    pub ref_name: Option<String>,
+    #[schemars(description = "First line (1-indexed). With no end_line, a 100-line window from here.")]
+    pub start_line: Option<u32>,
+    #[schemars(description = "Last line (inclusive)")]
+    pub end_line: Option<u32>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetMergeBaseParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Two or more branches, tags or SHAs, comma-separated")]
+    pub refs: String,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}

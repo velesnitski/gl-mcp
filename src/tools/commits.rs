@@ -1865,6 +1865,146 @@ pub async fn get_code_hotspots(
 }
 
 /// Get the branches and tags that contain a specific commit.
+/// Lines of blame shown at most; a window keeps the answer readable and cheap.
+const BLAME_MAX_LINES: usize = 300;
+/// Window used when only a start line is given.
+const BLAME_DEFAULT_WINDOW: u32 = 100;
+
+/// Who last changed each line of a file, and in which commit — over the API, so
+/// answering "why is this line like this" needs no local clone.
+pub async fn get_blame(
+    client: &GitLabClient,
+    project_id: &str,
+    file_path: &str,
+    ref_name: &str,
+    start_line: Option<u32>,
+    end_line: Option<u32>,
+) -> Result<String> {
+    let range = blame_range(start_line, end_line)?;
+    let ref_param = if ref_name.is_empty() { "HEAD" } else { ref_name };
+    let (start_s, end_s);
+    let mut params: Vec<(&str, &str)> = vec![("ref", ref_param)];
+    if let Some((start, end)) = range {
+        start_s = start.to_string();
+        end_s = end.to_string();
+        params.push(("range[start]", &start_s));
+        params.push(("range[end]", &end_s));
+    }
+    let chunks: Vec<Value> = client
+        .get(
+            &format!(
+                "/projects/{}/repository/files/{}/blame",
+                urlencoding::encode(project_id),
+                urlencoding::encode(file_path)
+            ),
+            &params,
+        )
+        .await?;
+    let first_line = range.map_or(1, |(start, _)| start as usize);
+    Ok(render_blame(file_path, ref_param, first_line, &chunks))
+}
+
+/// Validate the requested window. Only a start → a default-size window from it.
+pub(crate) fn blame_range(start: Option<u32>, end: Option<u32>) -> Result<Option<(u32, u32)>> {
+    match (start, end) {
+        (None, None) => Ok(None),
+        (Some(0), _) | (_, Some(0)) => Err(Error::user_input("line numbers start at 1.")),
+        (Some(s), None) => Ok(Some((s, s + BLAME_DEFAULT_WINDOW - 1))),
+        (None, Some(e)) => Ok(Some((1, e))),
+        (Some(s), Some(e)) if e < s => Err(Error::user_input(format!(
+            "end_line {e} is before start_line {s}."
+        ))),
+        (Some(s), Some(e)) => Ok(Some((s, e))),
+    }
+}
+
+/// Blame chunks as returned by GitLab, rendered with line numbers and an author roll-up.
+pub(crate) fn render_blame(file_path: &str, ref_name: &str, first_line: usize, chunks: &[Value]) -> String {
+    if chunks.is_empty() {
+        return format!("No blame for `{file_path}` at `{ref_name}` — empty file or a range past its end.");
+    }
+    let mut per_author: BTreeMap<String, usize> = BTreeMap::new();
+    let mut body: Vec<String> = Vec::new();
+    let mut line_no = first_line;
+    let mut shown = 0usize;
+    let mut total = 0usize;
+    for chunk in chunks {
+        let commit = &chunk["commit"];
+        let lines: Vec<&str> = chunk["lines"]
+            .as_array()
+            .map(|a| a.iter().map(|l| l.as_str().unwrap_or("")).collect())
+            .unwrap_or_default();
+        let author = commit["author_name"].as_str().unwrap_or("?");
+        *per_author.entry(author.to_string()).or_default() += lines.len();
+        total += lines.len();
+        if shown < BLAME_MAX_LINES {
+            let sha = commit["id"].as_str().unwrap_or("?");
+            let date = commit["authored_date"].as_str().and_then(|d| d.get(..10)).unwrap_or("?");
+            let subject = commit["message"].as_str().unwrap_or("").lines().next().unwrap_or("");
+            body.push(format!(
+                "`{}` {date} {author} — {subject}",
+                sha.get(..8).unwrap_or(sha)
+            ));
+            for l in &lines {
+                if shown < BLAME_MAX_LINES {
+                    body.push(format!("{line_no:>5} │ {l}"));
+                    shown += 1;
+                }
+                line_no += 1;
+            }
+        } else {
+            line_no += lines.len();
+        }
+    }
+    let last_line = line_no - 1;
+    let mut authors: Vec<(String, usize)> = per_author.into_iter().collect();
+    authors.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let roll_up = authors
+        .iter()
+        .map(|(a, n)| format!("{a} {n} ({:.0}%)", *n as f64 / total.max(1) as f64 * 100.0))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut out = vec![
+        format!("**Blame `{file_path}`** at `{ref_name}` — lines {first_line}–{last_line}"),
+        format!("Authors: {roll_up}"),
+        String::new(),
+    ];
+    out.extend(body);
+    if shown < total {
+        out.push(format!(
+            "\n_Showing {shown} of {total} lines — pass start_line/end_line for the rest._"
+        ));
+    }
+    out.join("\n")
+}
+
+/// The common ancestor of two or more refs — where they diverged.
+pub async fn get_merge_base(client: &GitLabClient, project_id: &str, refs: &[String]) -> Result<String> {
+    if refs.len() < 2 {
+        return Err(Error::user_input("a merge base needs at least two refs (comma-separated)."));
+    }
+    let params: Vec<(&str, &str)> = refs.iter().map(|r| ("refs[]", r.as_str())).collect();
+    let commit: Value = client
+        .get(
+            &format!("/projects/{}/repository/merge_base", urlencoding::encode(project_id)),
+            &params,
+        )
+        .await?;
+    Ok(render_merge_base(refs, &commit))
+}
+
+pub(crate) fn render_merge_base(refs: &[String], commit: &Value) -> String {
+    let sha = commit["id"].as_str().unwrap_or("?");
+    format!(
+        "**Merge base of {}:** `{}` ({}) by {} — {}\n\n_Changes since then: `compare_branches` from this commit to each ref._",
+        refs.iter().map(|r| format!("`{r}`")).collect::<Vec<_>>().join(", "),
+        sha.get(..8).unwrap_or(sha),
+        commit["committed_date"].as_str().and_then(|d| d.get(..10)).unwrap_or("?"),
+        commit["author_name"].as_str().unwrap_or("?"),
+        commit["title"].as_str().unwrap_or(""),
+    )
+}
+
 pub async fn get_commit_refs(client: &GitLabClient, project_id: &str, sha: &str) -> Result<String> {
     let path = format!(
         "/projects/{}/repository/commits/{}/refs",
@@ -2250,5 +2390,57 @@ mod file_window_tests {
             "end before start"
         );
         assert!(select_lines(SRC, Some(0), None).is_err(), "0 is not a line");
+    }
+
+    #[test]
+    fn blame_windows_are_validated_and_default_to_a_hundred_lines() {
+        assert_eq!(super::blame_range(None, None).unwrap(), None);
+        assert_eq!(super::blame_range(Some(10), None).unwrap(), Some((10, 109)));
+        assert_eq!(super::blame_range(None, Some(40)).unwrap(), Some((1, 40)));
+        assert_eq!(super::blame_range(Some(5), Some(5)).unwrap(), Some((5, 5)));
+        assert!(super::blame_range(Some(9), Some(3)).unwrap_err().is_user_error());
+        assert!(super::blame_range(Some(0), None).unwrap_err().is_user_error());
+    }
+
+    fn blame_chunk(sha: &str, author: &str, date: &str, msg: &str, lines: &[&str]) -> serde_json::Value {
+        serde_json::json!({
+            "commit": {"id": sha, "author_name": author, "authored_date": date, "message": msg},
+            "lines": lines,
+        })
+    }
+
+    #[test]
+    fn golden_blame_numbers_lines_across_chunks_and_rolls_up_authors() {
+        let chunks = vec![
+            blame_chunk("a1b2c3d4e5f6", "Ada", "2026-01-02T10:00:00Z", "feat: parser\n\nlong body", &["fn parse() {", "    todo!()"]),
+            blame_chunk("0011223344", "Lin", "2026-01-05T10:00:00Z", "fix: empty input", &["    if s.is_empty() { return None; }"]),
+            blame_chunk("a1b2c3d4e5f6", "Ada", "2026-01-02T10:00:00Z", "feat: parser", &["}"]),
+        ];
+        let out = super::render_blame("src/parser.rs", "main", 40, &chunks);
+        crate::golden::assert_golden("render/blame.md", &out);
+        assert!(out.contains("lines 40–43"));
+        assert!(out.contains("Authors: Ada 3 (75%), Lin 1 (25%)"));
+        assert!(out.contains("   42 │     if s.is_empty()"), "numbering continues across chunks");
+        assert!(!out.contains("long body"), "only the subject line");
+    }
+
+    #[test]
+    fn blame_output_is_capped_and_says_so() {
+        let many: Vec<String> = (0..350).map(|i| format!("line {i}")).collect();
+        let refs: Vec<&str> = many.iter().map(String::as_str).collect();
+        let out = super::render_blame("big.rs", "main", 1, &[blame_chunk("abc", "Ada", "2026-01-01", "x", &refs)]);
+        assert!(out.contains("lines 1–350"), "the header states the full range");
+        assert!(out.contains("Showing 300 of 350 lines"));
+        assert!(!out.contains("line 300"), "nothing past the cap is printed");
+        assert!(super::render_blame("x", "main", 1, &[]).starts_with("No blame"));
+    }
+
+    #[test]
+    fn merge_base_names_every_ref_and_the_commit() {
+        let refs = vec!["main".to_string(), "feature/x".to_string()];
+        let out = super::render_merge_base(&refs, &serde_json::json!({
+            "id": "a1b2c3d4e5f6", "committed_date": "2026-01-03T09:00:00Z", "author_name": "Ada", "title": "chore: bump"
+        }));
+        assert!(out.starts_with("**Merge base of `main`, `feature/x`:** `a1b2c3d4` (2026-01-03) by Ada — chore: bump"), "{out}");
     }
 }

@@ -1389,6 +1389,53 @@
     "name": "get_approval_rules"
   },
   {
+    "description": "Who last changed each line of a file, and in which commit (date, author, subject) — over the API, no clone needed. Pass start_line/end_line for a window; output is capped at 300 lines.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "end_line": {
+          "description": "Last line (inclusive)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "file_path": {
+          "description": "File path within the repository",
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "ref_name": {
+          "description": "Branch, tag, or commit SHA (default: HEAD)",
+          "nullable": true,
+          "type": "string"
+        },
+        "start_line": {
+          "description": "First line (1-indexed). With no end_line, a 100-line window from here.",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id",
+        "file_path"
+      ],
+      "title": "GetBlameParams",
+      "type": "object"
+    },
+    "name": "get_blame"
+  },
+  {
     "description": "Get CI/CD variable keys and metadata for a project. Never exposes values for security.",
     "input_schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1836,6 +1883,34 @@
       "type": "object"
     },
     "name": "get_languages"
+  },
+  {
+    "description": "Common ancestor of two or more refs (branches, tags, SHAs) — where they diverged. Pair with compare_branches to see what changed on each side.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "refs": {
+          "description": "Two or more branches, tags or SHAs, comma-separated",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "refs"
+      ],
+      "title": "GetMergeBaseParams",
+      "type": "object"
+    },
+    "name": "get_merge_base"
   },
   {
     "description": "Get full details of a merge request including pipeline status and comments",

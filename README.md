@@ -6,7 +6,7 @@
 [![MCP](https://img.shields.io/badge/MCP-compatible-purple)](https://modelcontextprotocol.io)
 [![Rust](https://img.shields.io/badge/Rust-1.80+-orange.svg)](https://www.rust-lang.org)
 
-**GitLab MCP server with 114 tools** for projects, issues, merge requests, CI/CD, code review, team analytics, and code quality analysis.
+**GitLab MCP server with 116 tools** for projects, issues, merge requests, CI/CD, code review, team analytics, and code quality analysis.
 
 Single Rust binary. Zero runtime dependencies. Works with Claude Code, GitHub Copilot, Cursor, Windsurf, n8n, and any MCP-compatible client.
 
@@ -14,7 +14,7 @@ Single Rust binary. Zero runtime dependencies. Works with Claude Code, GitHub Co
 
 ## Highlights
 
-- **114 tools** across 9 categories — from basic CRUD to advanced analytics
+- **116 tools** across 9 categories — from basic CRUD to advanced analytics
 - **Code quality analysis** — file-level scoring (A–F), project-wide reports, 81 lint rules for Swift/PHP/Go/Kotlin/TypeScript/Ansible
 - **Team performance reports** — developer comparison, review matrix, MR turnaround, auto-detected process issues
 - **HTML reports** — dark-theme reports with Export PDF button for dev activity, team performance, and project quality
@@ -119,7 +119,7 @@ For HTTP transport: `gl-mcp --transport http --port 8000`
 
 ---
 
-## Tools (114)
+## Tools (116)
 
 ### Projects & Users
 | Tool | Description |
@@ -215,6 +215,8 @@ For HTTP transport: `gl-mcp --transport http --port 8000`
 | `list_commits` | Commits by branch/author/date, grouped by author |
 | `get_commit_diff` | Commit diff with smart filtering and language grouping |
 | `get_commit_refs` | List branches/tags containing a commit |
+| `get_blame` | Who last changed each line and in which commit — a line window over the API, no clone |
+| `get_merge_base` | Common ancestor of two or more refs: where they diverged |
 | `revert_commit` | Create revert commit on target branch |
 | `get_mr_changes` | MR unified diff with smart filtering |
 | `get_file_content` | File content at any branch/tag/SHA |

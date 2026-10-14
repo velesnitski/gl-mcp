@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-10-14
+
+### Added
+
+- **`get_blame`**: who last changed each line of a file, with commit, date, author and
+  subject. It works over the API, so an agent can answer "why is this line like this"
+  without cloning. It reads a line window (start alone gives 100 lines), rolls up
+  lines per author, and caps output at 300 lines with a note (ADR 062).
+- **`get_merge_base`**: the common ancestor of two or more refs, as a starting point
+  for `compare_branches`. Fewer than two refs is a user error.
+
 ## [1.12.3] - 2026-10-14
 
 ### Changed

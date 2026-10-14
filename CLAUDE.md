@@ -1,6 +1,6 @@
 # gl-mcp
 
-GitLab MCP server. Rust, single binary, 114 tools.
+GitLab MCP server. Rust, single binary, 116 tools.
 
 ## Build & Test
 
