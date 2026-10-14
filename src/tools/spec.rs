@@ -21,7 +21,7 @@
 //! without re-deriving the heuristics here.
 
 use crate::client::GitLabClient;
-use crate::error::{Result, ResultExt};
+use crate::error::{Error, Result, ResultExt};
 use futures::future::join_all;
 use serde_json::Value;
 use std::fmt::Write as _;
@@ -1429,6 +1429,7 @@ pub async fn sweep_spec_audit(
     targets: &[SweepTarget],
     summary_only: bool,
 ) -> Result<String> {
+    require_targets(targets)?;
     let mut rows: Vec<SweepRow> = Vec::with_capacity(targets.len());
     for chunk in targets.chunks(SWEEP_CONCURRENCY) {
         let futs = chunk.iter().map(|t| {
@@ -1467,7 +1468,22 @@ pub async fn sweep_spec_audit(
             }
         }
     }
+    if rows.iter().all(|r| r.error.is_some()) {
+        return Err(Error::other(format!(
+            "all {} spec audits failed — first: {}",
+            rows.len(),
+            rows[0].error.as_deref().unwrap_or("?")
+        )));
+    }
     Ok(render_sweep(&rows, summary_only))
+}
+
+/// A sweep over nothing would render a confident report about nothing.
+fn require_targets(targets: &[SweepTarget]) -> Result<()> {
+    if targets.is_empty() {
+        return Err(Error::user_input("no sweep targets given — pass at least one platform."));
+    }
+    Ok(())
 }
 
 fn version_line(doc: Option<&str>, tag: Option<&str>, verdict: VersionVerdict) -> String {
@@ -2332,6 +2348,7 @@ pub async fn generate_sweep_report(
     client: &GitLabClient,
     targets: &[SweepTarget],
 ) -> Result<String> {
+    require_targets(targets)?;
     let mut teams: Vec<(String, Option<AuditOutcome>)> = Vec::with_capacity(targets.len());
     for chunk in targets.chunks(SWEEP_CONCURRENCY) {
         let futs = chunk.iter().map(|t| {
@@ -2352,12 +2369,24 @@ pub async fn generate_sweep_report(
         });
         teams.extend(join_all(futs).await);
     }
+    if teams.iter().all(|(_, outcome)| outcome.is_none()) {
+        return Err(Error::other(format!(
+            "all {} spec audits failed — no report rendered rather than an empty one.",
+            teams.len()
+        )));
+    }
     Ok(render_sweep_html(&teams))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sweep_needs_at_least_one_target() {
+        let err = require_targets(&[]).unwrap_err();
+        assert!(err.is_user_error());
+    }
 
     #[test]
     fn test_normalize_path_strips_template_and_query() {

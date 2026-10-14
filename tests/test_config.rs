@@ -5,10 +5,14 @@
 use std::env;
 
 macro_rules! set_env {
-    ($key:expr, $val:expr) => { unsafe { env::set_var($key, $val) } };
+    ($key:expr, $val:expr) => {
+        unsafe { env::set_var($key, $val) }
+    };
 }
 macro_rules! rm_env {
-    ($key:expr) => { unsafe { env::remove_var($key) } };
+    ($key:expr) => {
+        unsafe { env::remove_var($key) }
+    };
 }
 
 fn clean_env() {

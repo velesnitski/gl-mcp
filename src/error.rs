@@ -100,6 +100,63 @@ impl<T: Default> ResultExt<T> for Result<T> {
     }
 }
 
+/// Outcome tracker for a fan-out's primary lookups.
+///
+/// Fan-out tools (team activity, org dashboards, group sweeps) used to drop each
+/// failed lookup and report on what was left. With GitLab down nothing was left, and
+/// the tool answered with a clean empty result — "no users", a table of zeros, an
+/// all-clear audit — indistinguishable from a genuinely quiet team.
+///
+/// A lookup that fails with a caller-side error (404, 403, unknown user) is an honest
+/// "not there" and counts as answered. Anything else — connection refused, 5xx — is a
+/// failure: if every lookup failed, the tool fails; if some did, it says how many.
+#[derive(Default)]
+pub struct FanOut {
+    answered: usize,
+    failed: Vec<Error>,
+}
+
+impl FanOut {
+    /// Record one lookup; the value when it succeeded.
+    pub fn take<T>(&mut self, result: Result<T>) -> Option<T> {
+        match result {
+            Ok(v) => {
+                self.answered += 1;
+                Some(v)
+            }
+            Err(e) if e.is_user_error() => {
+                self.answered += 1;
+                None
+            }
+            Err(e) => {
+                self.failed.push(e);
+                None
+            }
+        }
+    }
+
+    /// Merge the outcomes of a fan-out run in another task.
+    pub fn absorb(&mut self, other: FanOut) {
+        self.answered += other.answered;
+        self.failed.extend(other.failed);
+    }
+
+    /// `Err` when every lookup failed; otherwise a warning line when some did.
+    pub fn finish(self, what: &str) -> Result<Option<String>> {
+        let failed = self.failed.len();
+        let total = failed + self.answered;
+        match self.failed.into_iter().next() {
+            None => Ok(None),
+            Some(first) if self.answered == 0 => Err(Error::other(format!(
+                "all {total} {what} failed — GitLab did not answer ({first}). No result is shown rather than an empty one."
+            ))),
+            Some(first) => Ok(Some(format!(
+                "⚠️ {failed} of {total} {what} failed ({first}) — the result below is partial.\n"
+            ))),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,6 +182,44 @@ mod tests {
         assert!(!gitlab(500).is_user_error());
         assert!(!Error::Other("boom".into()).is_user_error());
         assert!(!Error::Config("bad env".into()).is_user_error());
+    }
+
+    #[test]
+    fn fan_out_fails_only_when_nothing_answered() {
+        let refused = || Error::other("connection refused");
+        let mut all_down = FanOut::default();
+        assert!(all_down.take::<u8>(Err(refused())).is_none());
+        assert!(all_down.take::<u8>(Err(refused())).is_none());
+        let err = all_down.finish("user lookups").unwrap_err();
+        assert!(err.to_string().contains("all 2 user lookups failed"));
+        assert!(!err.is_user_error(), "an outage is a real error, not the caller's");
+
+        let mut partial = FanOut::default();
+        assert_eq!(partial.take(Ok(7)), Some(7));
+        partial.take::<u8>(Err(refused()));
+        let warning = partial.finish("group lookups").unwrap().unwrap();
+        assert!(warning.contains("1 of 2 group lookups failed"));
+
+        let mut merged = FanOut::default();
+        let mut other = FanOut::default();
+        other.take::<u8>(Err(refused()));
+        merged.absorb(other);
+        assert!(merged.finish("x").is_err(), "absorbed failures count");
+
+        let mut answered = FanOut::default();
+        let mut other = FanOut::default();
+        other.take(Ok::<u8, Error>(1));
+        other.take(Ok::<u8, Error>(2));
+        answered.absorb(other);
+        answered.take::<u8>(Err(refused()));
+        let w = answered.finish("x").unwrap().expect("partial");
+        assert!(w.contains("1 of 3 x failed"), "absorbed successes count too: {w}");
+
+        // "Not found" is an answer, not an outage.
+        let mut missing = FanOut::default();
+        missing.take::<u8>(Err(gitlab(404)));
+        assert_eq!(missing.finish("x").unwrap(), None);
+        assert_eq!(FanOut::default().finish("x").unwrap(), None, "no lookups, nothing to report");
     }
 
     #[test]

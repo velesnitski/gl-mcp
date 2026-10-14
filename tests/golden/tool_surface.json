@@ -1,0 +1,4284 @@
+[
+  {
+    "description": "Add a member to a GROUP (grants access to all projects in the group). `group_id` is a numeric id or full path (e.g. 'my-org/devops'); `user`/`access_level`/`expires_at` as in add_member.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "access_level": {
+          "description": "Role: guest, reporter, developer, maintainer, or owner (or the numeric level 10/20/30/40/50)",
+          "type": "string"
+        },
+        "expires_at": {
+          "description": "Optional membership expiry date, YYYY-MM-DD",
+          "nullable": true,
+          "type": "string"
+        },
+        "group_id": {
+          "description": "Group ID or full path (e.g. 'my-org/devops'). Grants access to all projects in the group.",
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "user": {
+          "description": "User to add: a username (leading '@' optional) or a numeric user id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "group_id",
+        "user",
+        "access_level"
+      ],
+      "title": "AddGroupMemberParams",
+      "type": "object"
+    },
+    "name": "add_group_member"
+  },
+  {
+    "description": "Add a member to a project. `user` is a username (leading '@' optional) or numeric id; `access_level` is a role name (guest/reporter/developer/maintainer/owner) or number. Optional expires_at (YYYY-MM-DD).",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "access_level": {
+          "description": "Role: guest, reporter, developer, maintainer, or owner (or the numeric level 10/20/30/40/50)",
+          "type": "string"
+        },
+        "expires_at": {
+          "description": "Optional membership expiry date, YYYY-MM-DD",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or URL-encoded path (e.g. 'group/project')",
+          "type": "string"
+        },
+        "user": {
+          "description": "User to add: a username (leading '@' optional) or a numeric user id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "user",
+        "access_level"
+      ],
+      "title": "AddMemberParams",
+      "type": "object"
+    },
+    "name": "add_member"
+  },
+  {
+    "description": "Add a comment (note) to an issue or merge request",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "body": {
+          "description": "Comment text (markdown)",
+          "type": "string"
+        },
+        "iid": {
+          "description": "Issue or MR IID",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "note_type": {
+          "description": "Note type: 'issue' or 'mr' (default: 'issue')",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "iid",
+        "body"
+      ],
+      "title": "AddNoteParams",
+      "type": "object"
+    },
+    "name": "add_note"
+  },
+  {
+    "description": "Analyze a file's code quality: line count, function count, nesting depth, complexity score, imports, lint violations. Returns metrics with A-F grade.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "file_path": {
+          "description": "File path in the repository (e.g., 'app/Services/UserService.php')",
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "ref_name": {
+          "description": "Branch, tag, or SHA (default: HEAD)",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "file_path"
+      ],
+      "title": "AnalyzeFileParams",
+      "type": "object"
+    },
+    "name": "analyze_file"
+  },
+  {
+    "description": "Analyze pipeline health for a project or whole group: separates automated/operator runs (trigger, api, schedule, web — the production signal) from development CI (push/MR noise), reports success rate and median duration, then clusters recent automated failures by root cause from their job logs and triages each as transient (safe to retry) or config/state (retrying will fail identically).",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "days": {
+          "default": null,
+          "description": "Days of pipeline history to analyze (default: 30)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "group_path": {
+          "description": "Group path — analyze every non-archived project in the group (incl. subgroups).",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "max_logs": {
+          "default": null,
+          "description": "Max failed pipelines whose job logs are fetched for root-cause clustering (default: 20)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "project_id": {
+          "default": null,
+          "description": "Project ID or path. Omit when using group_path.",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "title": "AnalyzePipelineFailuresParams",
+      "type": "object"
+    },
+    "name": "analyze_pipeline_failures"
+  },
+  {
+    "description": "Analyze code quality of all source files in a project. Returns per-file scores (A-F), aggregate summary, top issues, and recommendations. Fetches files concurrently.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "max_files": {
+          "default": null,
+          "description": "Max files to analyze (default: 50)",
+          "format": "uint",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "ref_name": {
+          "description": "Branch or tag (default: HEAD)",
+          "nullable": true,
+          "type": "string"
+        },
+        "summary_only": {
+          "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
+          "nullable": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "AnalyzeProjectParams",
+      "type": "object"
+    },
+    "name": "analyze_project"
+  },
+  {
+    "description": "Audit CI configuration for exposure across a project or group: secret-shaped CI variables GitLab would not redact from a job log, CI_DEBUG_TRACE left on, floating image tags that change the build environment with no diff, and unpinned remote downloads executed inside CI. Reports variable NAMES and locations only — values are never read or returned.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "group_path": {
+          "description": "Group path — audit every non-archived project in the group",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "max_projects": {
+          "default": null,
+          "description": "Max projects to audit in a group sweep (default: 60). A clean result over a subset is not a clean group, and the response says so.",
+          "format": "uint",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "project_id": {
+          "default": null,
+          "description": "Project ID or path. Omit when using group_path.",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "title": "AuditCiSecurityParams",
+      "type": "object"
+    },
+    "name": "audit_ci_security"
+  },
+  {
+    "description": "Audit README coverage/quality across a group (with subgroups): flags repos with a missing, small/stub, or Russian/Cyrillic README. Returns a compact table with counts — scanning happens server-side.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "cyrillic_pct": {
+          "description": "READMEs whose alphabetic characters are at least this % Cyrillic are flagged as Russian/non-English (default: 20)",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "group_path": {
+          "description": "Group path to scan, including subgroups (e.g. 'my-org' or 'my-org/backend')",
+          "type": "string"
+        },
+        "include_ok": {
+          "description": "Also list repos with an OK README (default: false — only problems are listed)",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "small_bytes": {
+          "description": "READMEs smaller than this many bytes are flagged as 'small' stubs (default: 300)",
+          "format": "uint",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "group_path"
+      ],
+      "title": "AuditReadmesParams",
+      "type": "object"
+    },
+    "name": "audit_readmes"
+  },
+  {
+    "description": "Audit a documented spec (e.g. a knowledge-base app-spec article, passed as markdown via `spec`) against a project's code. Reports route drift (cleanup-debt: flagged for removal but still in code; stale-doc: flagged and gone; drift: listed active but missing), reverse drift (undocumented endpoints in code — most precise with `routes_file`), version drift (spec vs latest git tag), and a security check (secrets in the spec, masked, cross-referenced against code). Persists a local map and shows changes since the last audit.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path to audit against the spec",
+          "type": "string"
+        },
+        "ref_name": {
+          "description": "Branch or tag to search in (default: default branch)",
+          "nullable": true,
+          "type": "string"
+        },
+        "routes_file": {
+          "description": "Optional path(s) to the route-defining source for precise reverse-drift: a file, a comma-separated list of files, or a directory (every code file under it, recursively — e.g. 'routes/api' for a Laravel app). Without it, reverse-drift is search-harvested within documented namespaces.",
+          "nullable": true,
+          "type": "string"
+        },
+        "spec": {
+          "description": "The spec document as markdown/text (e.g. a knowledge-base app-spec article). Documented routes and version are extracted from it and cross-referenced against the codebase.",
+          "type": "string"
+        },
+        "summary_only": {
+          "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
+          "nullable": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "project_id",
+        "spec"
+      ],
+      "title": "AuditSpecDriftParams",
+      "type": "object"
+    },
+    "name": "audit_spec_drift"
+  },
+  {
+    "description": "Cancel a running pipeline",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "pipeline_id": {
+          "description": "Pipeline ID",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "pipeline_id"
+      ],
+      "title": "CancelPipelineParams",
+      "type": "object"
+    },
+    "name": "cancel_pipeline"
+  },
+  {
+    "description": "Check protection status of a branch: push/merge access levels, force push, code owner approval requirements.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "branch": {
+          "description": "Branch name to check (e.g., 'main')",
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "branch"
+      ],
+      "title": "CheckBranchProtectionParams",
+      "type": "object"
+    },
+    "name": "check_branch_protection"
+  },
+  {
+    "description": "Close a merge request without merging",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "mr_iid": {
+          "description": "Merge request IID (the ! number)",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "mr_iid"
+      ],
+      "title": "CloseMrParams",
+      "type": "object"
+    },
+    "name": "close_mr"
+  },
+  {
+    "description": "Compare two branches/tags/SHAs. Shows commits and changed files between them.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "from": {
+          "description": "Base branch/tag/SHA",
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "to": {
+          "description": "Head branch/tag/SHA",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "from",
+        "to"
+      ],
+      "title": "CompareBranchesParams",
+      "type": "object"
+    },
+    "name": "compare_branches"
+  },
+  {
+    "description": "Compare developers side-by-side in a project: MRs opened/merged/reviewed, approvals, avg merge time, comments, commits.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "days": {
+          "default": null,
+          "description": "Number of days to analyze (default: 14)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Comma-separated project IDs or paths for cross-project comparison (e.g. 'group/project1,group/project2')",
+          "type": "string"
+        },
+        "summary_only": {
+          "description": "Return compact one-line-per-developer summary (~5x smaller). Use first to scan.",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "usernames": {
+          "description": "Comma-separated GitLab usernames to compare",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "usernames"
+      ],
+      "title": "CompareDevelopersParams",
+      "type": "object"
+    },
+    "name": "compare_developers"
+  },
+  {
+    "description": "Create a branch from a source ref (branch/tag/SHA; default: main)",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "branch": {
+          "description": "New branch name",
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "ref_name": {
+          "description": "Source ref (branch/tag/SHA) to branch from (default: main)",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "branch"
+      ],
+      "title": "CreateBranchParams",
+      "type": "object"
+    },
+    "name": "create_branch"
+  },
+  {
+    "description": "Create a deploy token for a project. Note deploy tokens have NO write_repository scope — use create_project_access_token when a push is needed. Same delivery contract: pass store_as_ci_variable to write the value into a masked CI/CD variable and get back only metadata, or reveal_token:true to receive it in the response (placing a live credential in this transcript). Scopes: read_repository, read_registry, write_registry, read_package_registry, write_package_registry.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "expires_at": {
+          "description": "Expiration as ISO date (e.g., '2026-12-31T23:59:59Z'). Optional, omit for no expiry.",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "name": {
+          "description": "Deploy token name",
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "reveal_token": {
+          "description": "Return the token value in the response. Defaults to false. This places a live credential in the conversation transcript and the model's context.",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "scopes": {
+          "description": "Comma-separated scopes: read_repository, read_registry, write_registry, read_package_registry, write_package_registry",
+          "type": "string"
+        },
+        "store_as_ci_variable": {
+          "description": "PREFERRED: CI/CD variable key to write the token into (masked). Only metadata is returned — the value is never surfaced. If the write fails the token is revoked rather than left orphaned.",
+          "nullable": true,
+          "type": "string"
+        },
+        "username": {
+          "description": "Custom username for the token (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "variable_protected": {
+          "description": "Mark the stored CI variable as protected (default: false)",
+          "nullable": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "project_id",
+        "name",
+        "scopes"
+      ],
+      "title": "CreateDeployTokenParams",
+      "type": "object"
+    },
+    "name": "create_deploy_token"
+  },
+  {
+    "description": "Create a new issue in a GitLab project",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "assignee": {
+          "description": "Assignee username",
+          "nullable": true,
+          "type": "string"
+        },
+        "description": {
+          "description": "Issue description (markdown)",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "labels": {
+          "description": "Comma-separated label names",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "title": {
+          "description": "Issue title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "title"
+      ],
+      "title": "CreateIssueParams",
+      "type": "object"
+    },
+    "name": "create_issue"
+  },
+  {
+    "description": "Create a new label in a project",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "color": {
+          "description": "Label color in hex format (e.g., '#FF0000')",
+          "type": "string"
+        },
+        "description": {
+          "description": "Label description (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "name": {
+          "description": "Label name",
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "name",
+        "color"
+      ],
+      "title": "CreateLabelParams",
+      "type": "object"
+    },
+    "name": "create_label"
+  },
+  {
+    "description": "Create a merge request with smart defaults. Auto-generates title from branch name (e.g., 'feature/PROJ-123-add-auth' → 'PROJ-123: Add auth'), auto-fills description from commit list, validates source branch exists, checks for duplicate MRs. Returns MR URL + diff stats.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "assignee": {
+          "description": "Assignee username",
+          "nullable": true,
+          "type": "string"
+        },
+        "description": {
+          "description": "MR description in markdown (default: auto-generated commit list)",
+          "nullable": true,
+          "type": "string"
+        },
+        "draft": {
+          "description": "Create as draft MR (default: false)",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "labels": {
+          "description": "Comma-separated labels",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "remove_source_branch": {
+          "description": "Delete source branch after merge (default: true)",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "reviewers": {
+          "description": "Comma-separated reviewer usernames",
+          "nullable": true,
+          "type": "string"
+        },
+        "source_branch": {
+          "description": "Source branch (your feature branch)",
+          "type": "string"
+        },
+        "squash": {
+          "description": "Squash commits on merge (default: true)",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "target_branch": {
+          "description": "Target branch (default: project default branch)",
+          "nullable": true,
+          "type": "string"
+        },
+        "title": {
+          "description": "MR title (default: auto-generated from branch name, e.g., 'feature/PROJ-123-add-auth' → 'PROJ-123: Add auth')",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "source_branch"
+      ],
+      "title": "CreateMergeRequestParams",
+      "type": "object"
+    },
+    "name": "create_merge_request"
+  },
+  {
+    "description": "Create a pipeline schedule. The ref is validated first: GitLab accepts a schedule pointing at a nonexistent branch or tag and then silently never fires it, so an unresolvable ref is refused instead of reported as success.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "active": {
+          "description": "Active on creation (default: true)",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "cron": {
+          "description": "5-field cron expression, e.g. `0 3 * * *`",
+          "type": "string"
+        },
+        "cron_timezone": {
+          "description": "Cron timezone (default: UTC)",
+          "nullable": true,
+          "type": "string"
+        },
+        "description": {
+          "description": "Human-readable description",
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "ref_name": {
+          "description": "Branch or tag the schedule runs on — validated to resolve before the schedule is created",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "description",
+        "ref_name",
+        "cron"
+      ],
+      "title": "CreatePipelineScheduleParams",
+      "type": "object"
+    },
+    "name": "create_pipeline_schedule"
+  },
+  {
+    "description": "Create a new GitLab project. Optionally place in a group via namespace_id. Returns project URL, ID, and default branch.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "default_branch": {
+          "description": "Default branch name (default: 'main')",
+          "nullable": true,
+          "type": "string"
+        },
+        "description": {
+          "description": "Project description",
+          "nullable": true,
+          "type": "string"
+        },
+        "initialize_with_readme": {
+          "description": "Initialize repository with a README (default: true)",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "name": {
+          "description": "Project name",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "Namespace as a full group path (e.g. 'my-org/devops') or numeric id — resolved and validated. Preferred over namespace_id; avoids having to look up the subgroup's numeric id.",
+          "nullable": true,
+          "type": "string"
+        },
+        "namespace_id": {
+          "default": null,
+          "description": "Namespace (group) ID for project placement (numeric)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "path": {
+          "description": "Project path/slug (default: derived from name)",
+          "nullable": true,
+          "type": "string"
+        },
+        "visibility": {
+          "description": "Visibility: 'private', 'internal', or 'public' (default: 'private')",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "CreateProjectParams",
+      "type": "object"
+    },
+    "name": "create_project"
+  },
+  {
+    "description": "Create a project access token — the only gl-mcp credential that can carry write_repository, which a push from CI requires (deploy tokens cannot). By default the value is NOT returned: pass store_as_ci_variable to have it written straight into a masked CI/CD variable with only metadata coming back, or reveal_token:true to receive it in the response (which places a live credential in this transcript). If the variable write fails the token is revoked rather than left orphaned.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "access_level": {
+          "default": null,
+          "description": "Access level: 10 guest, 20 reporter, 30 developer (default), 40 maintainer, 50 owner",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "expires_at": {
+          "description": "Expiry date YYYY-MM-DD (GitLab requires one; max 1 year)",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "name": {
+          "description": "Token name",
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "reveal_token": {
+          "description": "Return the token value in the response. Defaults to false. This puts a live credential into the conversation transcript and the model's context, so use it only when something outside CI must consume the value.",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "scopes": {
+          "description": "Comma-separated scopes: api, read_api, read_repository, write_repository, read_registry, write_registry, create_runner, manage_runner, k8s_proxy, ai_features, read_observability, write_observability, self_rotate. Unlike a deploy token, this can carry write_repository.",
+          "type": "string"
+        },
+        "store_as_ci_variable": {
+          "description": "PREFERRED: CI/CD variable key to write the token into (masked). Only metadata is returned — the value is never surfaced to the model or the transcript. If the write fails the token is revoked rather than left orphaned.",
+          "nullable": true,
+          "type": "string"
+        },
+        "variable_protected": {
+          "description": "Mark the stored CI variable as protected (default: false)",
+          "nullable": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "project_id",
+        "name",
+        "scopes"
+      ],
+      "title": "CreateProjectAccessTokenParams",
+      "type": "object"
+    },
+    "name": "create_project_access_token"
+  },
+  {
+    "description": "Delete a branch from a project",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "branch": {
+          "description": "Branch name to delete",
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "branch"
+      ],
+      "title": "DeleteBranchParams",
+      "type": "object"
+    },
+    "name": "delete_branch"
+  },
+  {
+    "description": "Delete a CI/CD variable from a project.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "key": {
+          "description": "Variable key to delete",
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "key"
+      ],
+      "title": "DeleteCiVariableParams",
+      "type": "object"
+    },
+    "name": "delete_ci_variable"
+  },
+  {
+    "description": "Delete a pipeline schedule.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "schedule_id": {
+          "description": "Schedule ID",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id",
+        "schedule_id"
+      ],
+      "title": "PlayPipelineScheduleParams",
+      "type": "object"
+    },
+    "name": "delete_pipeline_schedule"
+  },
+  {
+    "description": "Delete a variable from a pipeline schedule.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "key": {
+          "description": "Variable key",
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "schedule_id": {
+          "description": "Schedule ID",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id",
+        "schedule_id",
+        "key"
+      ],
+      "title": "DeletePipelineScheduleVariableParams",
+      "type": "object"
+    },
+    "name": "delete_pipeline_schedule_variable"
+  },
+  {
+    "description": "Delete a project (IRREVERSIBLE). Requires confirm_full_path to exactly match the project's path_with_namespace as a safety check against deleting the wrong project.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "confirm_full_path": {
+          "description": "Safety confirmation: must EXACTLY equal the project's full path (path_with_namespace), e.g. 'my-org/my-project'. Deletion is refused if it does not match.",
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or URL-encoded path (e.g. 'group/project')",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "confirm_full_path"
+      ],
+      "title": "DeleteProjectParams",
+      "type": "object"
+    },
+    "name": "delete_project"
+  },
+  {
+    "description": "Generate an HTML AI adoption report for a GitLab group (or a single project): industry benchmark, level funnel, per-team scorecard, trajectories, in-flight pipeline, quality flags, recommendations. Dark theme with Export PDF. Save to file and open in browser.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "days": {
+          "default": null,
+          "description": "Days of commit history to scan for AI co-authorship (default: 30)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "dormant_days": {
+          "default": null,
+          "description": "Days of inactivity before a repo is skipped as dormant (default: 180)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "group_path": {
+          "description": "Group path (e.g., 'my-org') — scans all projects including subgroups. A single project path also works, to report on just that repo.",
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": [
+        "group_path"
+      ],
+      "title": "GenerateAiAdoptionReportParams",
+      "type": "object"
+    },
+    "name": "generate_ai_adoption_report"
+  },
+  {
+    "description": "Generate a complete HTML daily report for a developer. Returns full HTML with dark theme, commits, diffs, open MRs, and quality notes. Save to file and open in browser. Queries all configured instances when no instance specified.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "period": {
+          "description": "Period: 'today', 'yesterday', 'week', '3d', or hours (default: today)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project": {
+          "description": "Filter to specific project path substring (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "username": {
+          "description": "GitLab username",
+          "type": "string"
+        }
+      },
+      "required": [
+        "username"
+      ],
+      "title": "GenerateDevReportParams",
+      "type": "object"
+    },
+    "name": "generate_dev_report"
+  },
+  {
+    "description": "Generate a complete HTML project quality report with file scores, grade distribution, language breakdown, commit quality, binary detection, and recommendations. Save to file and open in browser.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "max_files": {
+          "default": null,
+          "description": "Max files to analyze (default: 50)",
+          "format": "uint",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "ref_name": {
+          "description": "Branch or tag (default: default branch)",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "GenerateProjectReportParams",
+      "type": "object"
+    },
+    "name": "generate_project_report"
+  },
+  {
+    "description": "Generate a clickable HTML spec-drift report for a project: version banner, route-drift sections (cleanup-debt/drift/stale-doc), undocumented endpoints, security findings (masked), and changes since the last audit. Dark theme with Export PDF and GitLab file links. Save to file and open in browser.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path to audit against the spec",
+          "type": "string"
+        },
+        "ref_name": {
+          "description": "Branch or tag to search in (default: default branch)",
+          "nullable": true,
+          "type": "string"
+        },
+        "routes_file": {
+          "description": "Optional route-defining source for precise reverse-drift: a file, comma-separated files, or a directory (recursive).",
+          "nullable": true,
+          "type": "string"
+        },
+        "spec": {
+          "description": "The spec document as markdown/text (e.g. a knowledge-base app-spec article). Documented routes and version are extracted from it and cross-referenced against the codebase.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "spec"
+      ],
+      "title": "GenerateSpecAuditReportParams",
+      "type": "object"
+    },
+    "name": "generate_spec_audit_report"
+  },
+  {
+    "description": "Generate a clickable HTML cross-team spec-drift report: summary cards (teams, stale versions, drift, undocumented, secrets), a By-Team table linking to per-team detail, a needs-attention list, and collapsible per-team sections (version, drift, stale-doc, undocumented endpoints with GitLab links, masked secrets). Audits all targets concurrently. Save to file and open in browser.",
+    "input_schema": {
+      "$defs": {
+        "SpecAuditTarget": {
+          "properties": {
+            "label": {
+              "description": "Display label for the rollup (e.g. 'iOS'). Defaults to the project path.",
+              "nullable": true,
+              "type": "string"
+            },
+            "project_id": {
+              "description": "Project ID or path for this platform",
+              "type": "string"
+            },
+            "ref_name": {
+              "description": "Branch or tag to search in (default: default branch)",
+              "nullable": true,
+              "type": "string"
+            },
+            "routes_file": {
+              "description": "Optional route-defining source for precise reverse-drift: a file, comma-separated files, or a directory (recursive)",
+              "nullable": true,
+              "type": "string"
+            },
+            "spec": {
+              "description": "The spec document for this platform, as markdown/text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "project_id",
+            "spec"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "targets": {
+          "description": "Teams/platforms to audit. Each is audited independently (and concurrently); results roll up into one clickable cross-team HTML report.",
+          "items": {
+            "$ref": "#/$defs/SpecAuditTarget"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "targets"
+      ],
+      "title": "GenerateSweepReportParams",
+      "type": "object"
+    },
+    "name": "generate_sweep_report"
+  },
+  {
+    "description": "Generate a complete HTML team performance report with developer comparison, review matrix, MR sizes, turnaround stats, and auto-detected process issues. Save to file and open in browser.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "days": {
+          "default": null,
+          "description": "Number of days to analyze (default: 14)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "usernames": {
+          "description": "Comma-separated GitLab usernames",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "usernames"
+      ],
+      "title": "GenerateTeamReportParams",
+      "type": "object"
+    },
+    "name": "generate_team_report"
+  },
+  {
+    "description": "Scan a GitLab group — or a single project — for AI-assisted development adoption: CLAUDE.md, .claude/agents, skills, MCP configs, other assistants (Copilot/Cursor/Aider/Junie/Gemini/Cline), agent-memory, ADR practice, and Co-Authored-By AI commits. Returns an industry benchmark (maturity tier, config coverage, suggestions) plus per-team scorecard with adoption levels (L0-L3) and quality flags.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "days": {
+          "default": null,
+          "description": "Days of commit history to scan for AI co-authorship (default: 30)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "dormant_days": {
+          "default": null,
+          "description": "Days of inactivity before a repo is skipped as dormant (default: 180)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "group_path": {
+          "description": "Group path (e.g., 'my-org') — scans all projects including subgroups. A single project path also works, to scan just that repo.",
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "summary_only": {
+          "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
+          "nullable": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "group_path"
+      ],
+      "title": "GetAiAdoptionParams",
+      "type": "object"
+    },
+    "name": "get_ai_adoption"
+  },
+  {
+    "description": "Get project-level MR approval rules: who must approve, required count.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "GetApprovalRulesParams",
+      "type": "object"
+    },
+    "name": "get_approval_rules"
+  },
+  {
+    "description": "Get CI/CD variable keys and metadata for a project. Never exposes values for security.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "GetCiVariablesParams",
+      "type": "object"
+    },
+    "name": "get_ci_variables"
+  },
+  {
+    "description": "Identify code hotspots: top 20 most frequently changed files in recent commits. Helps find unstable/risky code areas.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "branch": {
+          "description": "Branch name (default: default branch)",
+          "nullable": true,
+          "type": "string"
+        },
+        "days": {
+          "default": null,
+          "description": "Number of days to analyze (default: 30)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "summary_only": {
+          "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
+          "nullable": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "GetCodeHotspotsParams",
+      "type": "object"
+    },
+    "name": "get_code_hotspots"
+  },
+  {
+    "description": "Get commit diff with smart filtering. Use summary_only=true first, then file= to drill in.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "compact": {
+          "description": "Strip markdown formatting for smaller responses",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "file": {
+          "description": "Only show diff for files matching this path substring",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "max_lines_per_file": {
+          "default": null,
+          "description": "Max diff lines per file (default: 200)",
+          "format": "uint",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "sha": {
+          "description": "Commit SHA (full or short)",
+          "type": "string"
+        },
+        "skip_generated": {
+          "description": "Skip lockfiles and generated code (default: true)",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "summary_only": {
+          "description": "Return only file list + stats, no diff content. ~10x smaller response.",
+          "nullable": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "project_id",
+        "sha"
+      ],
+      "title": "GetCommitDiffParams",
+      "type": "object"
+    },
+    "name": "get_commit_diff"
+  },
+  {
+    "description": "List all branches and tags that contain a given commit SHA. Useful for tracing where a fix landed.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "sha": {
+          "description": "Commit SHA (full or short)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "sha"
+      ],
+      "title": "GetCommitRefsParams",
+      "type": "object"
+    },
+    "name": "get_commit_refs"
+  },
+  {
+    "description": "Get all-time contributor stats: commits, additions, deletions per person.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "GetContributorsParams",
+      "type": "object"
+    },
+    "name": "get_contributors"
+  },
+  {
+    "description": "Cross-instance MR dashboard: aggregate MR stats across multiple GitLab instances and groups.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "Default instance if not specified per-group",
+          "nullable": true,
+          "type": "string"
+        },
+        "targets": {
+          "description": "Comma-separated 'instance:group' pairs (e.g., 'staging:my-org/backend,production:my-org/frontend'). Groups within same instance are batched.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "targets"
+      ],
+      "title": "GetCrossInstanceDashboardParams",
+      "type": "object"
+    },
+    "name": "get_cross_instance_dashboard"
+  },
+  {
+    "description": "Get deployment frequency (DORA metric): deploys per day, by environment and deployer.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "days": {
+          "default": null,
+          "description": "Number of days to analyze (default: 30)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "environment": {
+          "description": "Filter by environment name (e.g., 'production')",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "GetDeployFrequencyParams",
+      "type": "object"
+    },
+    "name": "get_deploy_frequency"
+  },
+  {
+    "description": "Get file content at a specific branch, tag, or commit SHA",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "end_line": {
+          "default": null,
+          "description": "Last line to return (1-indexed, inclusive). Defaults to end of file.",
+          "format": "uint",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "file_path": {
+          "description": "File path within the repository",
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "pattern": {
+          "description": "Case-insensitive regex; when set, returns only matching lines (numbered) from the whole file, with the match count. Takes precedence over start_line/end_line. Use to locate something in a large file without pulling all of it.",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "ref_name": {
+          "description": "Branch, tag, or commit SHA (default: default branch)",
+          "nullable": true,
+          "type": "string"
+        },
+        "start_line": {
+          "default": null,
+          "description": "First line to return (1-indexed, inclusive). Pair with end_line to read one window of a large file instead of all of it — the response always states the file's true line count, so a window is never mistaken for the whole file.",
+          "format": "uint",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id",
+        "file_path"
+      ],
+      "title": "GetFileContentParams",
+      "type": "object"
+    },
+    "name": "get_file_content"
+  },
+  {
+    "description": "Get activity for all members of a GitLab group. Auto-discovers members, no config needed.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "group_path": {
+          "description": "Group path (e.g., 'my-org/backend')",
+          "type": "string"
+        },
+        "include_commit_messages": {
+          "description": "Include head-commit titles per push under each member (from push events; enables text correlation, e.g. issue IDs). Default: false",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "period": {
+          "description": "Period: 'today', 'yesterday', 'week', '3d', or hours (default: 24)",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": [
+        "group_path"
+      ],
+      "title": "GetGroupActivityParams",
+      "type": "object"
+    },
+    "name": "get_group_activity"
+  },
+  {
+    "description": "Get all members of a GitLab group (including inherited members)",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "group_id": {
+          "description": "Group ID or path (e.g., 'my-org/backend')",
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "per_page": {
+          "default": null,
+          "description": "Max results (default: 100)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "group_id"
+      ],
+      "title": "GetGroupMembersParams",
+      "type": "object"
+    },
+    "name": "get_group_members"
+  },
+  {
+    "description": "Get full details of a GitLab issue including description and comments",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "include_notes": {
+          "description": "Include comments (default: true)",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "issue_iid": {
+          "description": "Issue IID (the # number)",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "issue_iid"
+      ],
+      "title": "GetIssueParams",
+      "type": "object"
+    },
+    "name": "get_issue"
+  },
+  {
+    "description": "Get CI job log output. Returns the last N lines (tail), or — with `pattern` — only the lines matching a regex, searched across the whole log. Credential material (PEM blocks, secret-ish assignments, long base64 bodies) is redacted, since CI scripts under `set -x` echo secrets into the trace. Critical for debugging failed jobs.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "job_id": {
+          "description": "Job ID",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pattern": {
+          "description": "Case-insensitive regex; when set, searches the WHOLE log and returns only matching lines (numbered), capped at `tail` matches. Far cheaper than pulling a large log to find one error.",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "tail": {
+          "default": null,
+          "description": "Max lines from end of log (default: 100)",
+          "format": "uint",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id",
+        "job_id"
+      ],
+      "title": "GetJobLogParams",
+      "type": "object"
+    },
+    "name": "get_job_log"
+  },
+  {
+    "description": "Get project language breakdown (e.g., PHP 80%, Go 15%).",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "GetLanguagesParams",
+      "type": "object"
+    },
+    "name": "get_languages"
+  },
+  {
+    "description": "Get full details of a merge request including pipeline status and comments",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "include_notes": {
+          "description": "Include comments (default: true)",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "mr_iid": {
+          "description": "Merge request IID (the ! number)",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "mr_iid"
+      ],
+      "title": "GetMergeRequestParams",
+      "type": "object"
+    },
+    "name": "get_merge_request"
+  },
+  {
+    "description": "Get project milestones with due dates and state",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "per_page": {
+          "default": null,
+          "description": "Max results (default: 20)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "state": {
+          "description": "Filter by state: active, closed, all (default: all)",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "GetMilestonesParams",
+      "type": "object"
+    },
+    "name": "get_milestones"
+  },
+  {
+    "description": "Get merge request approval status: who approved, how many remaining.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "mr_iid": {
+          "description": "Merge request IID",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "mr_iid"
+      ],
+      "title": "GetMrApprovalsParams",
+      "type": "object"
+    },
+    "name": "get_mr_approvals"
+  },
+  {
+    "description": "Classify MRs by category (feature, hotfix, bugfix, chore) based on branch naming conventions.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "days": {
+          "default": null,
+          "description": "Number of days to analyze (default: 7)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "group_id": {
+          "description": "Group path for cross-project stats",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path (optional if group_id set)",
+          "nullable": true,
+          "type": "string"
+        },
+        "state": {
+          "description": "Filter by state: opened, merged, closed, all (default: all)",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "title": "GetMrCategoriesParams",
+      "type": "object"
+    },
+    "name": "get_mr_categories"
+  },
+  {
+    "description": "Get all MR changes as unified diff. Use summary_only=true first, then file= for specific files.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "compact": {
+          "description": "Strip markdown formatting for smaller responses",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "file": {
+          "description": "Only show diff for files matching this path substring",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "max_lines_per_file": {
+          "default": null,
+          "description": "Max diff lines per file (default: 200)",
+          "format": "uint",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "mr_iid": {
+          "description": "Merge request IID",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "skip_generated": {
+          "description": "Skip lockfiles and generated code (default: true)",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "summary_only": {
+          "description": "Return only file list + stats, no diff content",
+          "nullable": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "project_id",
+        "mr_iid"
+      ],
+      "title": "GetMrChangesParams",
+      "type": "object"
+    },
+    "name": "get_mr_changes"
+  },
+  {
+    "description": "Compact MR dashboard for a group: open count, avg age, reviewer bottlenecks, stale MRs.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "group_id": {
+          "description": "Group path (e.g., 'my-org/backend')",
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "summary_only": {
+          "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
+          "nullable": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "group_id"
+      ],
+      "title": "GetMrDashboardParams",
+      "type": "object"
+    },
+    "name": "get_mr_dashboard"
+  },
+  {
+    "description": "Get MR discussions: threaded review comments with resolved/unresolved status",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "mr_iid": {
+          "description": "Merge request IID (the ! number)",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "summary_only": {
+          "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
+          "nullable": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "project_id",
+        "mr_iid"
+      ],
+      "title": "GetMrDiscussionsParams",
+      "type": "object"
+    },
+    "name": "get_mr_discussions"
+  },
+  {
+    "description": "List pipelines for a merge request, showing status, ref, SHA, and creation time",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "mr_iid": {
+          "description": "Merge request IID (the ! number)",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "mr_iid"
+      ],
+      "title": "GetMrPipelinesParams",
+      "type": "object"
+    },
+    "name": "get_mr_pipelines"
+  },
+  {
+    "description": "Get MR review depth: how many comments/discussions per MR before merge. Shows zero-review MRs.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "days": {
+          "default": null,
+          "description": "Number of days to analyze (default: 7)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "group_id": {
+          "description": "Group path for cross-project stats",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path (optional if group_id set)",
+          "nullable": true,
+          "type": "string"
+        },
+        "summary_only": {
+          "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
+          "nullable": true,
+          "type": "boolean"
+        }
+      },
+      "title": "GetMrReviewDepthParams",
+      "type": "object"
+    },
+    "name": "get_mr_review_depth"
+  },
+  {
+    "description": "MR size trend: weekly buckets of avg files-changed and avg LOC, with arrow trend (↑↓→) and verdict.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "days": {
+          "default": null,
+          "description": "Number of days to analyze (default: 30)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "group_id": {
+          "description": "Group path for cross-project stats (e.g., 'my-org/backend')",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path (optional if group_id set)",
+          "nullable": true,
+          "type": "string"
+        },
+        "summary_only": {
+          "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
+          "nullable": true,
+          "type": "boolean"
+        }
+      },
+      "title": "GetMrSizeTrendParams",
+      "type": "object"
+    },
+    "name": "get_mr_size_trend"
+  },
+  {
+    "description": "Decompose MR merge time into queue time (waiting for review) and review time. Shows which MRs sat longest.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "days": {
+          "default": null,
+          "description": "Number of days to analyze (default: 7)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "group_id": {
+          "description": "Group path for cross-project stats",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path (optional if group_id set)",
+          "nullable": true,
+          "type": "string"
+        },
+        "summary_only": {
+          "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
+          "nullable": true,
+          "type": "boolean"
+        }
+      },
+      "title": "GetMrTimelineParams",
+      "type": "object"
+    },
+    "name": "get_mr_timeline"
+  },
+  {
+    "description": "Get MR review turnaround stats: avg/median time to merge, slowest MRs, per-author breakdown.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "days": {
+          "default": null,
+          "description": "Number of days to analyze (default: 7)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "group_id": {
+          "description": "Group path for cross-project stats (e.g., 'my-org/backend')",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path (optional if group_id set)",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "title": "GetMrTurnaroundParams",
+      "type": "object"
+    },
+    "name": "get_mr_turnaround"
+  },
+  {
+    "description": "Cross-group MR dashboard: aggregate open MRs, reviewer load, stale counts across multiple groups.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "groups": {
+          "description": "Comma-separated group paths (e.g., 'my-org/backend,my-org/frontend,my-org/infrastructure')",
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": [
+        "groups"
+      ],
+      "title": "GetOrgMrDashboardParams",
+      "type": "object"
+    },
+    "name": "get_org_mr_dashboard"
+  },
+  {
+    "description": "Get pipeline details including all jobs grouped by stage; when a job is pending, says whether any runner can take it (queued vs never-starting), plus trigger variables (secret-ish values redacted) — for trigger/API pipelines these link a CI run to the business object it was acting on.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "pipeline_id": {
+          "description": "Pipeline ID",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "pipeline_id"
+      ],
+      "title": "GetPipelineParams",
+      "type": "object"
+    },
+    "name": "get_pipeline"
+  },
+  {
+    "description": "Get detailed info about a GitLab project",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or URL-encoded path (e.g., 'my-group/my-project')",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "GetProjectParams",
+      "type": "object"
+    },
+    "name": "get_project"
+  },
+  {
+    "description": "Get recent project events (activity feed): pushes, merges, comments, etc.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "action": {
+          "description": "Filter by action: pushed, merged, commented, joined, left, etc. (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "per_page": {
+          "default": null,
+          "description": "Max results (default: 20)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "summary_only": {
+          "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
+          "nullable": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "GetProjectEventsParams",
+      "type": "object"
+    },
+    "name": "get_project_events"
+  },
+  {
+    "description": "Get project statistics: repo size, file counts by type, language breakdown, binary files list.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "GetProjectStatsParams",
+      "type": "object"
+    },
+    "name": "get_project_stats"
+  },
+  {
+    "description": "Code review load distribution: who reviews most/least, % share, bus factor, imbalance recommendations.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "days": {
+          "default": null,
+          "description": "Number of days to analyze (default: 14)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "group_id": {
+          "description": "Group path for cross-project stats (e.g., 'my-org/backend')",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path (optional if group_id set)",
+          "nullable": true,
+          "type": "string"
+        },
+        "summary_only": {
+          "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
+          "nullable": true,
+          "type": "boolean"
+        }
+      },
+      "title": "GetReviewLoadParams",
+      "type": "object"
+    },
+    "name": "get_review_load"
+  },
+  {
+    "description": "Reviewer velocity: avg/median time from MR opened to first reviewer activity (notes), per reviewer. Sort by fastest first.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "days": {
+          "default": null,
+          "description": "Number of days to analyze (default: 14)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "group_id": {
+          "description": "Group path for cross-project stats (e.g., 'my-org/backend')",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path (optional if group_id set)",
+          "nullable": true,
+          "type": "string"
+        },
+        "summary_only": {
+          "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
+          "nullable": true,
+          "type": "boolean"
+        }
+      },
+      "title": "GetReviewerVelocityParams",
+      "type": "object"
+    },
+    "name": "get_reviewer_velocity"
+  },
+  {
+    "description": "Find stale branches: merged but not deleted, or inactive for N days. Helps with repo hygiene.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "inactive_days": {
+          "default": null,
+          "description": "Days of inactivity to consider stale (default: 30)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "GetStaleBranchesParams",
+      "type": "object"
+    },
+    "name": "get_stale_branches"
+  },
+  {
+    "description": "Get team activity. Pass team key from teams.json (e.g., 'devops') or comma-separated usernames.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "period": {
+          "description": "Period: 'today', 'yesterday', 'week', '3d', or hours (default: 24)",
+          "nullable": true,
+          "type": "string"
+        },
+        "team": {
+          "description": "Team key from teams.json (e.g., 'devops', 'backend') OR comma-separated usernames",
+          "type": "string"
+        }
+      },
+      "required": [
+        "team"
+      ],
+      "title": "GetTeamActivityParams",
+      "type": "object"
+    },
+    "name": "get_team_activity"
+  },
+  {
+    "description": "Analyze team timezone distribution: peak working hours (UTC), likely timezone, weekend work percentage per developer.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "days": {
+          "default": null,
+          "description": "Number of days to analyze (default: 14)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "summary_only": {
+          "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "usernames": {
+          "description": "Comma-separated GitLab usernames",
+          "type": "string"
+        }
+      },
+      "required": [
+        "usernames"
+      ],
+      "title": "GetTeamTimezoneParams",
+      "type": "object"
+    },
+    "name": "get_team_timezone"
+  },
+  {
+    "description": "Get repository directory listing. Use recursive=true for full tree.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "path": {
+          "description": "Directory path (empty = root)",
+          "nullable": true,
+          "type": "string"
+        },
+        "per_page": {
+          "default": null,
+          "description": "Max results (default: 100)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "recursive": {
+          "description": "Include subdirectories recursively (default: false)",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "ref_name": {
+          "description": "Branch/tag/SHA (optional)",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "GetTreeParams",
+      "type": "object"
+    },
+    "name": "get_tree"
+  },
+  {
+    "description": "Look up a GitLab user by username or numeric ID. Returns profile info, state, and admin status.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "user_id": {
+          "default": null,
+          "description": "GitLab user ID (numeric)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "username": {
+          "description": "GitLab username (e.g., 'john.doe')",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "title": "GetUserParams",
+      "type": "object"
+    },
+    "name": "get_user"
+  },
+  {
+    "description": "Get developer daily activity across all projects: commits, MRs, grouped by day and project. Use period='today', 'yesterday', 'week', '3d', or hours. Queries all configured instances when no instance specified.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "period": {
+          "description": "Period: 'today', 'yesterday', 'week' (since Monday), '3d', or hours as number (default: 24)",
+          "nullable": true,
+          "type": "string"
+        },
+        "username": {
+          "description": "GitLab username",
+          "type": "string"
+        }
+      },
+      "required": [
+        "username"
+      ],
+      "title": "GetUserActivityParams",
+      "type": "object"
+    },
+    "name": "get_user_activity"
+  },
+  {
+    "description": "List branches for a project, optionally filtered by name",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "per_page": {
+          "default": null,
+          "description": "Max results (default: 20)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "search": {
+          "description": "Search branch name",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "ListBranchesParams",
+      "type": "object"
+    },
+    "name": "list_branches"
+  },
+  {
+    "description": "List commits for a project, optionally filtered by branch, author, and date range. Use all_branches=true to scan feature branches (useful for catching WIP that hasn't merged to default).",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "all_branches": {
+          "description": "When true, returns commits from all branches, not just the default. Useful for catching work-in-progress on feature branches. Mutually exclusive with branch.",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "author": {
+          "description": "Filter by author name or email",
+          "nullable": true,
+          "type": "string"
+        },
+        "branch": {
+          "description": "Branch or tag name (empty = default branch). Mutually exclusive with all_branches. Accepts `ref_name` as an alias — the name sibling tools (search_code, list_pipelines) and the GitLab API itself use — so a caller who passes `ref_name` is honoured rather than silently dropped.",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "per_page": {
+          "default": null,
+          "description": "Max results (default: 20)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "since": {
+          "description": "ISO date: commits after this date (e.g., '2026-03-24T00:00:00Z')",
+          "nullable": true,
+          "type": "string"
+        },
+        "summary_only": {
+          "description": "Return compact one-line-per-commit summary (~3x smaller). Use first to scan, then get_commit_diff to drill in.",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "until": {
+          "description": "ISO date: commits before this date",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "ListCommitsParams",
+      "type": "object"
+    },
+    "name": "list_commits"
+  },
+  {
+    "description": "List deploy tokens for a project. Token values are never returned by GitLab — only metadata (name, username, scopes, expiration, revoked status).",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "ListDeployTokensParams",
+      "type": "object"
+    },
+    "name": "list_deploy_tokens"
+  },
+  {
+    "description": "List project environments with last deployment info (SHA, branch, status, deployer).",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "per_page": {
+          "default": null,
+          "description": "Max results (default: 20)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "ListEnvironmentsParams",
+      "type": "object"
+    },
+    "name": "list_environments"
+  },
+  {
+    "description": "List all projects in a GitLab group (including subgroups)",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "group_path": {
+          "description": "Group path (e.g., 'example-org/software')",
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "per_page": {
+          "default": null,
+          "description": "Max results to return — paginated across pages (default: 200, hard ceiling 2000)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "group_path"
+      ],
+      "title": "ListGroupProjectsParams",
+      "type": "object"
+    },
+    "name": "list_group_projects"
+  },
+  {
+    "description": "List project labels with color, description, and open issue count",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "ListLabelsParams",
+      "type": "object"
+    },
+    "name": "list_labels"
+  },
+  {
+    "description": "List members of a GitLab project",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "ListMembersParams",
+      "type": "object"
+    },
+    "name": "list_members"
+  },
+  {
+    "description": "List merge requests. Filter by project, group, state, author, scope, created_after, opened_before.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "author": {
+          "description": "Filter by author username",
+          "nullable": true,
+          "type": "string"
+        },
+        "created_after": {
+          "description": "Only MRs created after this date (ISO, e.g., '2026-03-01')",
+          "nullable": true,
+          "type": "string"
+        },
+        "group_id": {
+          "description": "Group path to list MRs across all group projects (e.g., 'my-org/backend')",
+          "nullable": true,
+          "type": "string"
+        },
+        "include_descriptions": {
+          "description": "Include MR descriptions in output (useful for parsing ticket IDs or context). Adds ~1KB per MR.",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "opened_before": {
+          "description": "Only MRs created before this date (ISO). Use to find stale/old MRs.",
+          "nullable": true,
+          "type": "string"
+        },
+        "per_page": {
+          "default": null,
+          "description": "Max results (default: 20)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path (empty = all projects)",
+          "nullable": true,
+          "type": "string"
+        },
+        "scope": {
+          "description": "Scope: assigned_to_me, created_by_me, all (default: all)",
+          "nullable": true,
+          "type": "string"
+        },
+        "state": {
+          "description": "Filter by state: opened, closed, merged, all (default: opened)",
+          "nullable": true,
+          "type": "string"
+        },
+        "summary_only": {
+          "description": "Return compact one-line-per-MR summary (~5x smaller). Use first to scan, then get_merge_request to drill in.",
+          "nullable": true,
+          "type": "boolean"
+        }
+      },
+      "title": "ListMergeRequestsParams",
+      "type": "object"
+    },
+    "name": "list_merge_requests"
+  },
+  {
+    "description": "List a project's pipeline schedules with ref, cron, next run and owner. Flags schedules that will not run despite showing a next-run time: a schedule runs as its owner, so a blocked/deactivated or missing owner silently stops it.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "ProjectOnlyParams",
+      "type": "object"
+    },
+    "name": "list_pipeline_schedules"
+  },
+  {
+    "description": "List CI/CD pipelines for a project, optionally filtered by status, ref, or trigger source (source=pipeline excludes/selects child pipelines, which otherwise inflate counts).",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "per_page": {
+          "default": null,
+          "description": "Max results (default: 20)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "ref_name": {
+          "description": "Filter by git ref (branch/tag)",
+          "nullable": true,
+          "type": "string"
+        },
+        "source": {
+          "description": "Filter by trigger source: trigger, api, schedule, web, external (production runs) or push, merge_request_event (development CI), or pipeline/parent_pipeline (child pipelines). Use this to exclude child pipelines, which otherwise inflate counts.",
+          "nullable": true,
+          "type": "string"
+        },
+        "status": {
+          "description": "Filter by status: running, pending, success, failed, canceled",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "ListPipelinesParams",
+      "type": "object"
+    },
+    "name": "list_pipelines"
+  },
+  {
+    "description": "List a project's access tokens: name, role, scopes, expiry (tokens expiring within 7 days flagged), last use, state. Metadata only — GitLab never returns a token value after creation.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "ProjectOnlyParams",
+      "type": "object"
+    },
+    "name": "list_project_access_tokens"
+  },
+  {
+    "description": "List the runners that can take a project's jobs, and say whether anything can actually run a given job. A job no runner can accept sits `pending (0s)` — output identical to a job in a busy queue — so the verdict distinguishes: no runners attached, all offline, no tag match, or genuinely queued.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "job_tags": {
+          "description": "Comma-separated job tags to test eligibility against. Omit for an untagged job. The verdict distinguishes no runners, all offline, and no tag match — three different fixes that GitLab renders identically as a pending job.",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "ListProjectRunnersParams",
+      "type": "object"
+    },
+    "name": "list_project_runners"
+  },
+  {
+    "description": "List GitLab projects accessible to the authenticated user",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "per_page": {
+          "default": null,
+          "description": "Max results (default: 20)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "search": {
+          "description": "Search query to filter projects",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "title": "ListProjectsParams",
+      "type": "object"
+    },
+    "name": "list_projects"
+  },
+  {
+    "description": "List available coding rules, optionally filtered by language.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "language": {
+          "description": "Language filter: PHP, Kotlin, TypeScript, Ansible (empty = all)",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "title": "ListRulesParams",
+      "type": "object"
+    },
+    "name": "list_rules"
+  },
+  {
+    "description": "List tags (releases) for a project.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "per_page": {
+          "default": null,
+          "description": "Max results (default: 20)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "search": {
+          "description": "Search tag name",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "ListTagsParams",
+      "type": "object"
+    },
+    "name": "list_tags"
+  },
+  {
+    "description": "List configured teams from ~/.gl-mcp/teams.json",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "ListTeamsParams",
+      "type": "object"
+    },
+    "name": "list_teams"
+  },
+  {
+    "description": "Merge a merge request. Optionally squash commits, remove source branch, set custom merge commit message.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "merge_commit_message": {
+          "description": "Custom merge commit message (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "mr_iid": {
+          "description": "Merge request IID (the ! number)",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "should_remove_source_branch": {
+          "description": "Delete source branch after merge (optional)",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "squash": {
+          "description": "Squash commits on merge (optional)",
+          "nullable": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "project_id",
+        "mr_iid"
+      ],
+      "title": "MergeMrParams",
+      "type": "object"
+    },
+    "name": "merge_mr"
+  },
+  {
+    "description": "Run a pipeline schedule immediately, so a new schedule can be proven once instead of waiting an interval to find out it was misconfigured.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "schedule_id": {
+          "description": "Schedule ID",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id",
+        "schedule_id"
+      ],
+      "title": "PlayPipelineScheduleParams",
+      "type": "object"
+    },
+    "name": "play_pipeline_schedule"
+  },
+  {
+    "description": "Rebase a merge request onto the target branch",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "mr_iid": {
+          "description": "Merge request IID (the ! number)",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "mr_iid"
+      ],
+      "title": "RebaseMrParams",
+      "type": "object"
+    },
+    "name": "rebase_mr"
+  },
+  {
+    "description": "Retry a failed pipeline",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "pipeline_id": {
+          "description": "Pipeline ID",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "pipeline_id"
+      ],
+      "title": "RetryPipelineParams",
+      "type": "object"
+    },
+    "name": "retry_pipeline"
+  },
+  {
+    "description": "Revert a commit by creating a new revert commit on the target branch.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "branch": {
+          "description": "Target branch where the revert commit should be created",
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "sha": {
+          "description": "Commit SHA to revert (full or short)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "sha",
+        "branch"
+      ],
+      "title": "RevertCommitParams",
+      "type": "object"
+    },
+    "name": "revert_commit"
+  },
+  {
+    "description": "Revoke a project access token. Irreversible, so confirm_name must exactly equal the token's name; an id typo cannot revoke a neighbouring token.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "confirm_name": {
+          "description": "Safety confirmation: must EXACTLY equal the token's name. Revocation is refused if it does not match.",
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "token_id": {
+          "description": "Token ID (from list_project_access_tokens)",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id",
+        "token_id",
+        "confirm_name"
+      ],
+      "title": "RevokeProjectAccessTokenParams",
+      "type": "object"
+    },
+    "name": "revoke_project_access_token"
+  },
+  {
+    "description": "Save a team to ~/.gl-mcp/teams.json (not committed to repo)",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instances": {
+          "description": "Comma-separated instance names per user (optional, matches usernames order)",
+          "nullable": true,
+          "type": "string"
+        },
+        "key": {
+          "description": "Team key (e.g., 'devops')",
+          "type": "string"
+        },
+        "name": {
+          "description": "Team display name",
+          "type": "string"
+        },
+        "projects": {
+          "description": "Comma-separated project paths (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "usernames": {
+          "description": "Comma-separated GitLab usernames",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "name",
+        "usernames"
+      ],
+      "title": "SaveTeamParams",
+      "type": "object"
+    },
+    "name": "save_team"
+  },
+  {
+    "description": "Search code in one project, or across every non-archived project in a group via group_path — for org-wide sweeps (renames, leaked strings). Returns matching file paths, line numbers, and code snippets.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "full_sweep": {
+          "description": "Group sweeps only: cover every repo in one call instead of the default window. Costs one API call per repo — use when an empty result must actually mean absence.",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "group_path": {
+          "description": "Group path — search every (non-archived) project in the group instead of one repo. Use for org-wide sweeps (renames, leaked strings).",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "offset": {
+          "default": null,
+          "description": "Group sweeps only: skip this many repos (ordered by last activity) to continue a partial sweep. When repos remain, the response prints the exact offset to use next.",
+          "format": "uint",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "per_page": {
+          "default": null,
+          "description": "Max results (default: 20)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "project_id": {
+          "default": null,
+          "description": "Project ID or path. Omit when using group_path.",
+          "nullable": true,
+          "type": "string"
+        },
+        "query": {
+          "description": "Search terms. NOT a regex — GitLab matches substrings/terms, so `foo|bar` is searched literally. If an alternation query returns nothing, the tool re-runs each alternative separately and says so, because an empty result must never be mistaken for proof of absence.",
+          "type": "string"
+        },
+        "ref_name": {
+          "description": "Branch/tag to search in (optional)",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "title": "SearchCodeParams",
+      "type": "object"
+    },
+    "name": "search_code"
+  },
+  {
+    "description": "Search GitLab issues across all projects, within a specific project, or within a group",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "assignee": {
+          "description": "Filter by assignee username",
+          "nullable": true,
+          "type": "string"
+        },
+        "group_id": {
+          "description": "Group ID or path to search issues within a group (e.g., 'my-org/backend')",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "labels": {
+          "description": "Comma-separated label names",
+          "nullable": true,
+          "type": "string"
+        },
+        "per_page": {
+          "default": null,
+          "description": "Max results (default: 20)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path (empty = search all projects)",
+          "nullable": true,
+          "type": "string"
+        },
+        "search": {
+          "description": "Search text in title/description",
+          "nullable": true,
+          "type": "string"
+        },
+        "state": {
+          "description": "Filter by state: opened, closed, all (default: opened)",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "title": "SearchIssuesParams",
+      "type": "object"
+    },
+    "name": "search_issues"
+  },
+  {
+    "description": "Search GitLab users by name, username, or email",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "per_page": {
+          "default": null,
+          "description": "Max results (default: 20)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "query": {
+          "description": "Search query (name, username, or email)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "title": "SearchUsersParams",
+      "type": "object"
+    },
+    "name": "search_users"
+  },
+  {
+    "description": "Create a CI/CD variable for a project. Confirmation never includes the value. Mark sensitive values masked=true and protected=true.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "environment_scope": {
+          "description": "Environment scope (default: '*' for all environments)",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "key": {
+          "description": "Variable key (uppercase letters, digits, underscores)",
+          "type": "string"
+        },
+        "masked": {
+          "description": "Masked variable: hidden in job logs (default: false)",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "protected": {
+          "description": "Protected variable: only exposed to protected branches/tags (default: false)",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "value": {
+          "description": "Variable value",
+          "type": "string"
+        },
+        "variable_type": {
+          "description": "Variable type: 'env_var' or 'file' (default: 'env_var')",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "key",
+        "value"
+      ],
+      "title": "SetCiVariableParams",
+      "type": "object"
+    },
+    "name": "set_ci_variable"
+  },
+  {
+    "description": "Create or update a variable on a pipeline schedule (upsert by key). The value is never echoed back.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "key": {
+          "description": "Variable key",
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "schedule_id": {
+          "description": "Schedule ID",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "value": {
+          "description": "Variable value (never echoed back)",
+          "type": "string"
+        },
+        "variable_type": {
+          "description": "env_var (default) or file",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "schedule_id",
+        "key",
+        "value"
+      ],
+      "title": "SetPipelineScheduleVariableParams",
+      "type": "object"
+    },
+    "name": "set_pipeline_schedule_variable"
+  },
+  {
+    "description": "Audit several specs against their repos concurrently (e.g. iOS/Android/Windows/Mac app-spec articles) and roll up into one cross-platform table: per-platform version/cleanup-debt/drift/stale-doc/undocumented/secrets, a needs-attention list, and totals. Each platform audits independently; one failure doesn't sink the rest.",
+    "input_schema": {
+      "$defs": {
+        "SpecAuditTarget": {
+          "properties": {
+            "label": {
+              "description": "Display label for the rollup (e.g. 'iOS'). Defaults to the project path.",
+              "nullable": true,
+              "type": "string"
+            },
+            "project_id": {
+              "description": "Project ID or path for this platform",
+              "type": "string"
+            },
+            "ref_name": {
+              "description": "Branch or tag to search in (default: default branch)",
+              "nullable": true,
+              "type": "string"
+            },
+            "routes_file": {
+              "description": "Optional route-defining source for precise reverse-drift: a file, comma-separated files, or a directory (recursive)",
+              "nullable": true,
+              "type": "string"
+            },
+            "spec": {
+              "description": "The spec document for this platform, as markdown/text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "project_id",
+            "spec"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "summary_only": {
+          "description": "Return only the rollup table (no needs-attention / totals detail).",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "targets": {
+          "description": "Platforms to audit. Each is audited independently (and concurrently); results roll up into one cross-platform table.",
+          "items": {
+            "$ref": "#/$defs/SpecAuditTarget"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "targets"
+      ],
+      "title": "SweepSpecAuditParams",
+      "type": "object"
+    },
+    "name": "sweep_spec_audit"
+  },
+  {
+    "description": "Transfer a project to a different namespace/group. `namespace` accepts a full group path like 'my-org/devops' or a numeric group id (resolved & validated). Non-destructive move — no data loss.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "namespace": {
+          "description": "Target namespace: a full group path like 'my-org/devops' or a numeric group id. Resolved and validated before the move.",
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or URL-encoded path (e.g. 'group/project')",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "namespace"
+      ],
+      "title": "TransferProjectParams",
+      "type": "object"
+    },
+    "name": "transfer_project"
+  },
+  {
+    "description": "Update branch protection settings (delete + recreate). Access levels: 0=None, 30=Developer, 40=Maintainer, 60=Admin.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "allow_force_push": {
+          "description": "Allow force push (default: false)",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "branch": {
+          "description": "Branch name to protect (e.g., 'main')",
+          "type": "string"
+        },
+        "code_owner_approval_required": {
+          "description": "Require code owner approval (default: false)",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "merge_access_level": {
+          "default": null,
+          "description": "Merge access level: 0=No access, 30=Developer, 40=Maintainer, 60=Admin",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "push_access_level": {
+          "default": null,
+          "description": "Push access level: 0=No access, 30=Developer, 40=Maintainer, 60=Admin",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id",
+        "branch"
+      ],
+      "title": "UpdateBranchProtectionParams",
+      "type": "object"
+    },
+    "name": "update_branch_protection"
+  },
+  {
+    "description": "Update an existing CI/CD variable's value and flags. Confirmation never includes the value.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "environment_scope": {
+          "description": "Environment scope (e.g., '*', 'production')",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "key": {
+          "description": "Variable key to update",
+          "type": "string"
+        },
+        "masked": {
+          "description": "Masked variable: hidden in job logs",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "protected": {
+          "description": "Protected variable: only exposed to protected branches/tags",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "value": {
+          "description": "New variable value",
+          "type": "string"
+        },
+        "variable_type": {
+          "description": "Variable type: 'env_var' or 'file'",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "key",
+        "value"
+      ],
+      "title": "UpdateCiVariableParams",
+      "type": "object"
+    },
+    "name": "update_ci_variable"
+  },
+  {
+    "description": "Create or update a file in a GitLab repo. Always commits to a new branch (never main), optionally creates MR. Use for README fixes, translations, config updates.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "branch": {
+          "description": "Branch name to commit to (must NOT be main/master/develop)",
+          "type": "string"
+        },
+        "commit_message": {
+          "description": "Commit message",
+          "type": "string"
+        },
+        "content": {
+          "description": "File content",
+          "type": "string"
+        },
+        "create_mr": {
+          "description": "Create a merge request after commit (default: true)",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "file_path": {
+          "description": "File path in the repository (e.g., 'README.md')",
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "source_branch": {
+          "description": "Source branch to create from (default: main)",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "file_path",
+        "content",
+        "branch",
+        "commit_message"
+      ],
+      "title": "UpdateFileParams",
+      "type": "object"
+    },
+    "name": "update_file"
+  },
+  {
+    "description": "Update a GitLab issue: title, description, state, labels, assignee",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "assignee": {
+          "description": "Assignee username (empty = unassign)",
+          "nullable": true,
+          "type": "string"
+        },
+        "description": {
+          "description": "New description (empty = keep)",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "issue_iid": {
+          "description": "Issue IID",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "labels": {
+          "description": "New labels (comma-separated, replaces existing)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "state_event": {
+          "description": "New state: close or reopen",
+          "nullable": true,
+          "type": "string"
+        },
+        "title": {
+          "description": "New title (empty = keep)",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "issue_iid"
+      ],
+      "title": "UpdateIssueParams",
+      "type": "object"
+    },
+    "name": "update_issue"
+  },
+  {
+    "description": "Update a merge request's title, description, labels, target branch, or assignee. Only the fields you pass are changed. Assignee takes a username or id (or 'none' to unassign) and errors on an unknown username.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "assignee": {
+          "description": "Assignee: username (leading @ optional) or numeric user id. Use 'none' to unassign. Unknown username errors (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "description": {
+          "description": "New description / body in markdown (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "labels": {
+          "description": "Comma-separated labels to set, replacing existing (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "mr_iid": {
+          "description": "Merge request IID (the ! number)",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "target_branch": {
+          "description": "New target branch (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "title": {
+          "description": "New title (optional)",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "mr_iid"
+      ],
+      "title": "UpdateMergeRequestParams",
+      "type": "object"
+    },
+    "name": "update_merge_request"
+  },
+  {
+    "description": "Update a pipeline schedule (description, ref, cron, timezone, active). A new ref or cron is validated exactly as on creation — an unresolvable ref is refused instead of saved to never fire.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "active": {
+          "description": "Activate or deactivate",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "cron": {
+          "description": "New 5-field cron expression",
+          "nullable": true,
+          "type": "string"
+        },
+        "cron_timezone": {
+          "description": "New cron timezone",
+          "nullable": true,
+          "type": "string"
+        },
+        "description": {
+          "description": "New description",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "ref_name": {
+          "description": "New branch or tag — validated to resolve before the update",
+          "nullable": true,
+          "type": "string"
+        },
+        "schedule_id": {
+          "description": "Schedule ID",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id",
+        "schedule_id"
+      ],
+      "title": "UpdatePipelineScheduleParams",
+      "type": "object"
+    },
+    "name": "update_pipeline_schedule"
+  },
+  {
+    "description": "Update project settings — CI runner toggles (shared_runners_enabled, group_runners_enabled), default branch, visibility, merge method, description. Without this a project created through this server cannot be made able to run a pipeline.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "default_branch": {
+          "description": "Default branch name",
+          "nullable": true,
+          "type": "string"
+        },
+        "description": {
+          "description": "Project description",
+          "nullable": true,
+          "type": "string"
+        },
+        "group_runners_enabled": {
+          "description": "Enable group runners for this project",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "merge_method": {
+          "description": "Merge method: merge, rebase_merge or ff",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "shared_runners_enabled": {
+          "description": "Enable instance-wide shared runners for this project",
+          "nullable": true,
+          "type": "boolean"
+        },
+        "visibility": {
+          "description": "Visibility: private, internal or public",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "UpdateProjectParams",
+      "type": "object"
+    },
+    "name": "update_project"
+  },
+  {
+    "description": "Validate a commit against coding rules (regex-based, zero LLM tokens). Returns only violations grouped by severity.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "sha": {
+          "description": "Commit SHA",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "sha"
+      ],
+      "title": "ValidateCommitParams",
+      "type": "object"
+    },
+    "name": "validate_commit"
+  },
+  {
+    "description": "Validate all commits in a merge request against coding rules. Returns only violations.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "mr_iid": {
+          "description": "Merge request IID",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "mr_iid"
+      ],
+      "title": "ValidateMrParams",
+      "type": "object"
+    },
+    "name": "validate_mr"
+  },
+  {
+    "description": "Validate MR using the full unified diff (not individual commits). Catches issues in squashed MRs where commit diffs are minimal. Checks all added lines against Swift, PHP, Kotlin, Go, TypeScript, and global rules.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "mr_iid": {
+          "description": "Merge request IID",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "mr_iid"
+      ],
+      "title": "ValidateMrChangesParams",
+      "type": "object"
+    },
+    "name": "validate_mr_changes"
+  },
+  {
+    "description": "Validate recent commits against message conventions (conventional commits, ticket refs, length) and code rules. Skips merge commits.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "branch": {
+          "description": "Branch name (default: default branch)",
+          "nullable": true,
+          "type": "string"
+        },
+        "days": {
+          "default": null,
+          "description": "Number of days to look back (default: 14)",
+          "format": "uint32",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "ValidateProjectCommitsParams",
+      "type": "object"
+    },
+    "name": "validate_project_commits"
+  }
+]

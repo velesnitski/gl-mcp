@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.2] - 2026-10-14
+
+### Fixed
+
+- **An unreachable GitLab is an error, not an empty result.** `get_team_activity`,
+  `get_team_timezone`, `compare_developers`, `get_org_mr_dashboard`,
+  `get_cross_instance_dashboard`, `generate_team_report`, `audit_ci_security`,
+  `sweep_spec_audit` and `generate_sweep_report` used to answer an outage with "no
+  users", tables of zeros, or an all-clear audit. They now fail when every lookup
+  fails, and say how many failed when only some did. "Not found" answers are still
+  treated as empty (ADR 060).
+- **`audit_ci_security` names the projects whose CI variables could not be read**
+  (listing them needs Maintainer), instead of counting them as clean.
+- **Token redaction in job logs works again.** A stray control character in the token
+  pattern meant it matched nothing.
+- **`sweep_spec_audit` and `generate_sweep_report` reject an empty target list** as a
+  user error, instead of reporting on nothing.
+- **The HTML escaper also escapes `'`.** This is hardening; no current template quotes
+  attributes with `'`.
+
+### Internal
+
+- End-to-end tests over the MCP protocol with GitLab unreachable: every tool must
+  answer, without panicking or hanging, and without reporting success.
+- A contract snapshot of the tool surface: names, descriptions and input schemas.
+- Property-based tests (proptest) for escaping, truncation, base64, redaction,
+  scoring and file analysis.
+- Golden snapshots for the renderers of 28 read tools, now split from their fetches.
+- A source-hygiene test that rejects control characters.
+- Line coverage rose from 39% to above 60%.
+
 ## [1.12.1] - 2026-10-02
 
 ### Fixed

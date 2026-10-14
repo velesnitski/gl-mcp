@@ -327,6 +327,13 @@ pub async fn list_commits(
 
     let all_commits: Vec<Value> = client.get(&path, &params).await?;
 
+    Ok(render_list_commits(author, summary_only, all_commits))
+}
+
+/// Rendering half of [`list_commits`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_list_commits(author: &str, summary_only: bool, all_commits: Vec<Value>) -> String {
+
     // Client-side author filter: case-insensitive contains on name AND email
     let commits: Vec<&Value> = if author.is_empty() {
         all_commits.iter().collect()
@@ -343,7 +350,7 @@ pub async fn list_commits(
     };
 
     if commits.is_empty() {
-        return Ok("No commits found.".to_string());
+        return "No commits found.".to_string();
     }
 
     if summary_only {
@@ -361,7 +368,7 @@ pub async fn list_commits(
                 .unwrap_or("?");
             lines.push(format!("{sha}|{date}|{author}|{title}"));
         }
-        return Ok(lines.join("\n"));
+        return lines.join("\n");
     }
 
     let mut by_author: BTreeMap<String, Vec<&&Value>> = BTreeMap::new();
@@ -389,7 +396,7 @@ pub async fn list_commits(
         let date_short = date.get(..16).unwrap_or(date);
         lines.push(format!("- `{sha}` {title} — @{author} ({date_short})"));
     }
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 /// Get commit diff with smart filtering.
@@ -998,29 +1005,29 @@ pub async fn get_team_activity(
             let client = client.clone();
             async move {
                 let cache_key = format!("user:{username}");
-                let users: Vec<serde_json::Value> = match client
+                let users: Vec<serde_json::Value> = client
                     .get_cached(&cache_key, "/users", &[("username", username)], 60)
-                    .await
-                {
-                    Ok(u) => u,
-                    Err(_) => return None,
-                };
+                    .await?;
 
-                let user = users.first()?;
-                let user_id = user["id"].as_u64()?;
+                let Some(user) = users.first() else { return Ok(None) };
+                let Some(user_id) = user["id"].as_u64() else { return Ok(None) };
                 let display_name = user["name"].as_str().unwrap_or(username).to_string();
 
-                let events = fetch_user_events(&client, user_id, since_ts).await.ok()?;
+                let events = fetch_user_events(&client, user_id, since_ts).await?;
 
-                Some((username.to_string(), display_name, events))
+                Ok(Some((username.to_string(), display_name, events)))
             }
         })
         .collect();
 
     let results = futures::future::join_all(user_futures).await;
 
+    let mut fan = crate::error::FanOut::default();
+    let found: Vec<_> = results.into_iter().filter_map(|r: Result<Option<_>>| fan.take(r).flatten()).collect();
+    let warning = fan.finish("user lookups")?;
+
     let mut user_summaries: Vec<(String, UserSummary)> = Vec::new();
-    for result in results.into_iter().flatten() {
+    for result in found {
         let (username, display_name, events) = result;
         let mut summary = UserSummary {
             display_name,
@@ -1136,6 +1143,9 @@ pub async fn get_team_activity(
         lines.push(format!("**Inactive:** {}", inactive.join(", ")));
     }
 
+    if let Some(w) = warning {
+        lines.insert(0, w);
+    }
     Ok(lines.join("\n"))
 }
 
@@ -1368,6 +1378,7 @@ pub async fn compare_developers(
         let since = since.clone();
         let projects = projects.clone();
         async move {
+            let mut fan = crate::error::FanOut::default();
             let mut total_opened: u64 = 0;
             let mut total_merged_count: u64 = 0;
             let mut total_reviewed_count: u64 = 0;
@@ -1388,30 +1399,33 @@ pub async fn compare_developers(
                 let mr_path = format!("/projects/{encoded_project}/merge_requests");
 
                 // 1) Fetch opened MRs by this author
-                let opened_mrs: Vec<Value> = client.get(&mr_path, &[
+                let opened_mrs = client.get::<Vec<Value>>(&mr_path, &[
                     ("author_username", username),
                     ("state", "opened"),
                     ("created_after", &since),
                     ("per_page", "100"),
-                ]).await.or_default_logged();
+                ]).await;
+                let opened_mrs: Vec<Value> = fan.take(opened_mrs).unwrap_or_default();
                 total_opened += opened_mrs.len() as u64;
 
                 // 2) Fetch merged MRs by this author
-                let merged_mrs: Vec<Value> = client.get(&mr_path, &[
+                let merged_mrs = client.get::<Vec<Value>>(&mr_path, &[
                     ("author_username", username),
                     ("state", "merged"),
                     ("created_after", &since),
                     ("per_page", "100"),
-                ]).await.or_default_logged();
+                ]).await;
+                let merged_mrs: Vec<Value> = fan.take(merged_mrs).unwrap_or_default();
                 total_merged_count += merged_mrs.len() as u64;
 
                 // 3) Fetch MRs where this user is reviewer (merged)
-                let reviewed_mrs: Vec<Value> = client.get(&mr_path, &[
+                let reviewed_mrs = client.get::<Vec<Value>>(&mr_path, &[
                     ("reviewer_username", username),
                     ("state", "merged"),
                     ("created_after", &since),
                     ("per_page", "100"),
-                ]).await.or_default_logged();
+                ]).await;
+                let reviewed_mrs: Vec<Value> = fan.take(reviewed_mrs).unwrap_or_default();
                 total_reviewed_count += reviewed_mrs.len() as u64;
 
                 // 4) Calculate avg merge time + LOC/files from merged MRs
@@ -1530,7 +1544,7 @@ pub async fn compare_developers(
                 all_merge_hours.iter().sum::<f64>() / all_merge_hours.len() as f64
             };
 
-            DevStats {
+            (fan, DevStats {
                 username: username.to_string(),
                 mrs_opened: total_opened,
                 mrs_merged: total_merged_count,
@@ -1544,11 +1558,20 @@ pub async fn compare_developers(
                 deletions: total_deletions,
                 files_changed: total_files,
                 mr_sizes: (mr_small, mr_medium, mr_large),
-            }
+            })
         }
     }).collect();
 
-    let results = join_all(futures).await;
+    let mut fan = crate::error::FanOut::default();
+    let results: Vec<DevStats> = join_all(futures)
+        .await
+        .into_iter()
+        .map(|(f, stats)| {
+            fan.absorb(f);
+            stats
+        })
+        .collect();
+    let warning = fan.finish("merge-request lookups")?.unwrap_or_default();
 
     if summary_only {
         let mut lines: Vec<String> = Vec::new();
@@ -1569,7 +1592,7 @@ pub async fn compare_developers(
                 merge_str
             ));
         }
-        return Ok(lines.join("\n"));
+        return Ok(format!("{warning}{}", lines.join("\n")));
     }
 
     // Resolve project display name(s)
@@ -1707,7 +1730,7 @@ pub async fn compare_developers(
         }
     }
 
-    Ok(lines.join("\n"))
+    Ok(format!("{warning}{}", lines.join("\n")))
 }
 
 /// Identify code hotspots: files that change most frequently in recent history.
@@ -1971,18 +1994,20 @@ pub async fn get_team_timezone(
                 let users: Result<Vec<Value>> = client
                     .get_cached(&cache_key, "/users", &[("username", &username)], 60)
                     .await;
-                match users {
-                    Ok(list) => list.into_iter().next().map(|u| (username, u)),
-                    Err(_) => None,
-                }
+                users.map(|list| list.into_iter().next().map(|u| (username, u)))
             }
         })
         .collect();
 
-    let resolved: Vec<(String, Value)> =
-        join_all(user_lookups).await.into_iter().flatten().collect();
+    let mut fan = crate::error::FanOut::default();
+    let resolved: Vec<(String, Value)> = join_all(user_lookups)
+        .await
+        .into_iter()
+        .filter_map(|r| fan.take(r).flatten())
+        .collect();
 
     if resolved.is_empty() {
+        fan.finish("user lookups")?;
         return Ok("No users found.".to_string());
     }
 
@@ -2004,9 +2029,8 @@ pub async fn get_team_timezone(
         };
         let display_name = user["name"].as_str().unwrap_or(username).to_string();
 
-        let events = match fetch_user_events(client, user_id, since_ts).await {
-            Ok(e) => e,
-            Err(_) => continue,
+        let Some(events) = fan.take(fetch_user_events(client, user_id, since_ts).await) else {
+            continue;
         };
 
         let mut hour_buckets = [0u32; 24];
@@ -2046,11 +2070,13 @@ pub async fn get_team_timezone(
         });
     }
 
+    let warning = fan.finish("user lookups")?.unwrap_or_default();
+
     if results.iter().all(|r| r.total_events == 0) {
-        return Ok(format!(
+        return Ok(format!("{warning}{}", format!(
             "No activity for any of the {} users in the last {days} days.",
             usernames.len()
-        ));
+        )));
     }
 
     // Find peak window per user: 10-hour rolling window with max activity
@@ -2125,7 +2151,7 @@ pub async fn get_team_timezone(
             weekend_pcts.iter().sum::<f64>() / weekend_pcts.len() as f64
         };
         return Ok(format!(
-            "{active_devs} developers analyzed. Common TZ: {common_tz}. Weekend work: avg {:.0}%",
+            "{warning}{active_devs} developers analyzed. Common TZ: {common_tz}. Weekend work: avg {:.0}%",
             avg_weekend
         ));
     }
@@ -2169,7 +2195,7 @@ pub async fn get_team_timezone(
         results.first().map(|r| r.weekday_total),
     );
 
-    Ok(lines.join("\n"))
+    Ok(format!("{warning}{}", lines.join("\n")))
 }
 
 #[cfg(test)]

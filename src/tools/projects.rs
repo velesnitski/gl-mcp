@@ -21,8 +21,15 @@ pub async fn list_projects(client: &GitLabClient, search: &str, per_page: u32) -
 
     let projects: Vec<Value> = client.get("/projects", &params).await?;
 
+    Ok(render_list_projects(per_page, projects))
+}
+
+/// Rendering half of [`list_projects`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_list_projects(per_page: u32, projects: Vec<Value>) -> String {
+
     if projects.is_empty() {
-        return Ok("No projects found.".to_string());
+        return "No projects found.".to_string();
     }
 
     // A page exactly as long as the cap is a cut, not a count: say so, or a
@@ -59,13 +66,20 @@ pub async fn list_projects(client: &GitLabClient, search: &str, per_page: u32) -
         ));
     }
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 /// Get detailed info about a single project.
 pub async fn get_project(client: &GitLabClient, project_id: &str) -> Result<String> {
     let path = format!("/projects/{}", urlencoding::encode(project_id));
     let p: Value = client.get(&path, &[]).await?;
+
+    Ok(render_get_project(p))
+}
+
+/// Rendering half of [`get_project`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_get_project(p: Value) -> String {
 
     let name = p["path_with_namespace"].as_str().unwrap_or("?");
     let id = p["id"].as_u64().unwrap_or(0);
@@ -116,7 +130,7 @@ pub async fn get_project(client: &GitLabClient, project_id: &str) -> Result<Stri
         parts.push(format!("## Description\n{desc}"));
     }
 
-    Ok(parts.join("\n"))
+    parts.join("\n")
 }
 
 /// List project members.
@@ -124,8 +138,15 @@ pub async fn list_members(client: &GitLabClient, project_id: &str) -> Result<Str
     let path = format!("/projects/{}/members/all", urlencoding::encode(project_id));
     let members: Vec<Value> = client.get(&path, &[("per_page", "100")]).await?;
 
+    Ok(render_list_members(members))
+}
+
+/// Rendering half of [`list_members`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_list_members(members: Vec<Value>) -> String {
+
     if members.is_empty() {
-        return Ok("No members found.".to_string());
+        return "No members found.".to_string();
     }
 
     let mut lines = vec![format!("**Members: {}**\n", members.len())];
@@ -143,7 +164,7 @@ pub async fn list_members(client: &GitLabClient, project_id: &str) -> Result<Str
         lines.push(format!("- **{name}** (@{username}) — {access}"));
     }
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 /// List branches for a project.
@@ -168,8 +189,15 @@ pub async fn list_branches(
 
     let branches: Vec<Value> = client.get(&path, &params).await?;
 
+    Ok(render_list_branches(branches))
+}
+
+/// Rendering half of [`list_branches`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_list_branches(branches: Vec<Value>) -> String {
+
     if branches.is_empty() {
-        return Ok("No branches found.".to_string());
+        return "No branches found.".to_string();
     }
 
     let mut lines = vec![format!("**Branches: {}**\n", branches.len())];
@@ -200,7 +228,7 @@ pub async fn list_branches(
         ));
     }
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 /// Delete a branch from a project.
@@ -302,8 +330,15 @@ pub async fn search_users(client: &GitLabClient, query: &str, per_page: u32) -> 
 
     let users: Vec<Value> = client.get("/users", &params).await?;
 
+    Ok(render_search_users(users))
+}
+
+/// Rendering half of [`search_users`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_search_users(users: Vec<Value>) -> String {
+
     if users.is_empty() {
-        return Ok("No users found.".to_string());
+        return "No users found.".to_string();
     }
 
     let mut lines = vec![format!("**Found: {} users**\n", users.len())];
@@ -323,7 +358,7 @@ pub async fn search_users(client: &GitLabClient, query: &str, per_page: u32) -> 
         ));
     }
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 /// Get all members of a group (including inherited members).
@@ -339,8 +374,15 @@ pub async fn get_group_members(
         .get(&path, &[("per_page", per_page_str.as_str())])
         .await?;
 
+    Ok(render_get_group_members(members))
+}
+
+/// Rendering half of [`get_group_members`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_get_group_members(members: Vec<Value>) -> String {
+
     if members.is_empty() {
-        return Ok("No members found.".to_string());
+        return "No members found.".to_string();
     }
 
     let mut lines = vec![format!("**Members: {}**\n", members.len())];
@@ -364,7 +406,7 @@ pub async fn get_group_members(
         lines.push(format!("- **{name}** (@{username}) — {access}{state_str}"));
     }
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 /// Get recent project events (activity feed).
@@ -385,8 +427,15 @@ pub async fn get_project_events(
 
     let events: Vec<Value> = client.get(&path, &params).await?;
 
+    Ok(render_get_project_events(project_id, summary_only, events))
+}
+
+/// Rendering half of [`get_project_events`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_get_project_events(project_id: &str, summary_only: bool, events: Vec<Value>) -> String {
+
     if events.is_empty() {
-        return Ok("No events found.".to_string());
+        return "No events found.".to_string();
     }
 
     if summary_only {
@@ -414,10 +463,10 @@ pub async fn get_project_events(
                 authors.insert(a.to_string());
             }
         }
-        return Ok(format!(
+        return format!(
             "{project_id}: {total} events ({pushes} pushes, {mrs} MRs, {comments} comments) by {} authors",
             authors.len()
-        ));
+        );
     }
 
     let mut lines = vec![format!("**Events: {}**\n", events.len())];
@@ -451,7 +500,7 @@ pub async fn get_project_events(
         ));
     }
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 /// Check protection status for a single branch.
@@ -1188,8 +1237,15 @@ pub async fn list_deploy_tokens(client: &GitLabClient, project_id: &str) -> Resu
 
     let tokens: Vec<Value> = client.get(&path, &[("per_page", "100")]).await?;
 
+    Ok(render_list_deploy_tokens(tokens))
+}
+
+/// Rendering half of [`list_deploy_tokens`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_list_deploy_tokens(tokens: Vec<Value>) -> String {
+
     if tokens.is_empty() {
-        return Ok("No deploy tokens found.".to_string());
+        return "No deploy tokens found.".to_string();
     }
 
     let mut lines = vec![format!("**Deploy Tokens: {}**\n", tokens.len())];
@@ -1216,7 +1272,7 @@ pub async fn list_deploy_tokens(client: &GitLabClient, project_id: &str) -> Resu
         ));
     }
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 /// Find stale branches: merged but not deleted, or inactive for N days.
@@ -1858,6 +1914,7 @@ mod pat_tests {
             "expiry within 7 days flagged"
         );
         assert!(!out.contains("2026-06-01 ⚠️"));
+        assert!(!out.contains("2026-01-05 ⚠️"), "an inactive token is not flagged as expiring");
         assert!(out.contains("| revoked |") && out.contains("| expired |"));
         assert!(out.contains("Maintainer") && out.contains("| 2026-01-09 |"));
         assert_eq!(

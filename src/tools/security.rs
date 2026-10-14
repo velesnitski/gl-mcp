@@ -8,7 +8,8 @@
 //! credentials it finds into a logged transcript has reproduced the bug it hunts.
 
 use crate::client::GitLabClient;
-use crate::error::{Result, ResultExt};
+use crate::error::Result;
+use std::fmt::Write as _;
 use serde_json::Value;
 
 /// Key substrings that mark a variable as holding a secret.
@@ -201,31 +202,46 @@ pub(crate) fn audit_ci_file(project: &str, path: &str, content: &str) -> Vec<Fin
     out
 }
 
+/// One project's audit: its findings, and whether its CI variables could be read.
+struct ProjectAudit {
+    findings: Vec<Finding>,
+    variables_readable: bool,
+}
+
 /// Run the configuration audit over one project.
-async fn audit_project(client: &GitLabClient, path: &str) -> Vec<Finding> {
+///
+/// A transport failure is an error, never an empty finding list: an audit that could
+/// not look must not read as an audit that found nothing. Listing variables needs
+/// Maintainer; a refusal there is recorded so the report can say what went unchecked.
+async fn audit_project(client: &GitLabClient, path: &str) -> Result<ProjectAudit> {
     let enc = urlencoding::encode(path);
     let mut findings = Vec::new();
 
-    let vars: Vec<Value> = client
-        .get(
-            &format!("/projects/{enc}/variables"),
-            &[("per_page", "100")],
-        )
+    let vars: Option<Vec<Value>> = match client
+        .get(&format!("/projects/{enc}/variables"), &[("per_page", "100")])
         .await
-        .or_default_logged();
-    findings.extend(audit_variables(path, &vars));
+    {
+        Ok(v) => Some(v),
+        Err(e) if e.is_user_error() => None,
+        Err(e) => return Err(e),
+    };
+    if let Some(vars) = &vars {
+        findings.extend(audit_variables(path, vars));
+    }
 
     // The CI definition is read raw; a missing file simply means nothing to check.
-    if let Ok(text) = client
+    match client
         .get_text(
             &format!("/projects/{enc}/repository/files/.gitlab-ci.yml/raw"),
             &[("ref", "HEAD")],
         )
         .await
     {
-        findings.extend(audit_ci_file(path, ".gitlab-ci.yml", &text));
+        Ok(text) => findings.extend(audit_ci_file(path, ".gitlab-ci.yml", &text)),
+        Err(e) if e.is_user_error() => {}
+        Err(e) => return Err(e),
     }
-    findings
+    Ok(ProjectAudit { findings, variables_readable: vars.is_some() })
 }
 
 /// Audit CI configuration for exposure, across one project or a whole group.
@@ -266,19 +282,30 @@ pub async fn audit_ci_security(
     }
 
     let mut all: Vec<Finding> = Vec::new();
+    let mut unreadable_vars: Vec<&str> = Vec::new();
+    let mut fan = crate::error::FanOut::default();
     for chunk in targets.chunks(8) {
-        let futs = chunk.iter().map(|p| audit_project(client, p));
-        for f in futures::future::join_all(futs).await {
-            all.extend(f);
+        let futs = chunk.iter().map(|p| async move { (p.as_str(), audit_project(client, p).await) });
+        for (path, result) in futures::future::join_all(futs).await {
+            if let Some(audit) = fan.take(result) {
+                if !audit.variables_readable {
+                    unreadable_vars.push(path);
+                }
+                all.extend(audit.findings);
+            }
         }
     }
+    let warning = fan.finish("project audits")?.unwrap_or_default();
 
-    Ok(render_audit_report(
-        &scope_label,
-        targets.len(),
-        total_repos,
-        all,
-    ))
+    let mut report = render_audit_report(&scope_label, targets.len(), total_repos, all);
+    if !unreadable_vars.is_empty() {
+        let _ = write!(
+            report,
+            "\n\n⚠️ CI variables not readable (needs Maintainer), so not audited: {}",
+            unreadable_vars.join(", ")
+        );
+    }
+    Ok(format!("{warning}{report}"))
 }
 
 /// Render the audit report from gathered findings.

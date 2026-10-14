@@ -12,3 +12,7 @@ pub mod tools;
 
 #[cfg(test)]
 mod golden;
+#[cfg(test)]
+mod proptests;
+#[cfg(test)]
+mod render_goldens;

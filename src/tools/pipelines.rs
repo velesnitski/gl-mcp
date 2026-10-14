@@ -34,8 +34,15 @@ pub async fn list_pipelines(
 
     let pipelines: Vec<Value> = client.get(&path, &params).await?;
 
+    Ok(render_list_pipelines(source, pipelines))
+}
+
+/// Rendering half of [`list_pipelines`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_list_pipelines(source: &str, pipelines: Vec<Value>) -> String {
+
     if pipelines.is_empty() {
-        return Ok("No pipelines found.".to_string());
+        return "No pipelines found.".to_string();
     }
 
     let filter_note = if source.is_empty() {
@@ -70,7 +77,7 @@ pub async fn list_pipelines(
         ));
     }
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 /// Get pipeline details with jobs.
@@ -684,9 +691,12 @@ static SECRET_ASSIGN_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock
     .expect("SECRET_ASSIGN_RE is a valid regex")
 });
 
+/// Provider token prefixes, matched anywhere: redaction is default-deny, so a token
+/// glued to a word is still masked. Only the short `sk-` needs a word boundary, or
+/// ordinary words like "task-…" would be mangled.
 static TOKENISH_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
     regex::Regex::new(
-        r"(?i)(?:glpat-[A-Za-z0-9_-]{15,}|xox[baprs]-[A-Za-z0-9-]{8,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9]{20,})",
+        r"(?i)(?:glpat-[A-Za-z0-9_-]{15,}|xox[baprs]-[A-Za-z0-9-]{8,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|\bsk-[A-Za-z0-9]{20,})",
     )
     .expect("TOKENISH_RE is a valid regex")
 });
@@ -712,7 +722,7 @@ static LONG_B64_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new
 /// long, and redacting them would erase the evidence for the single most common CI
 /// fault of all — the variable was never set. A blanked-out empty token looks
 /// exactly like a present one.
-fn redact_log(log: &str) -> String {
+pub(crate) fn redact_log(log: &str) -> String {
     let out = PEM_RE.replace_all(log, "<redacted PEM block>");
     let out = SECRET_ASSIGN_RE.replace_all(&out, |c: &regex::Captures| {
         let val = c[2].trim_matches(|ch| ch == '"' || ch == '\'');
@@ -737,7 +747,7 @@ fn redact_log(log: &str) -> String {
 /// like a plain identifier, and the value itself is short and boring. Everything
 /// else shows the key with `<redacted>` — the key name alone is useful for
 /// debugging and low-risk, the value is not.
-fn render_variable(key: &str, value: &str) -> String {
+pub(crate) fn render_variable(key: &str, value: &str) -> String {
     let k = key.to_ascii_uppercase();
     let secretish = SECRETISH.iter().any(|m| k.contains(m));
     let identifier_shaped = k.ends_with("_UUID")
@@ -997,7 +1007,7 @@ pub(crate) fn render_runner_check(
 /// Remove ANSI escape sequences and carriage returns that GitLab embeds in CI
 /// job traces, so the log is readable (no `\x1b[0K`/`\x1b[32;1m` noise) and
 /// fewer tokens are spent on control codes.
-fn strip_ansi(s: &str) -> String {
+pub(crate) fn strip_ansi(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
@@ -1443,8 +1453,15 @@ pub async fn get_mr_pipelines(
 
     let pipelines: Vec<Value> = client.get(&path, &[]).await?;
 
+    Ok(render_get_mr_pipelines(mr_iid, pipelines))
+}
+
+/// Rendering half of [`get_mr_pipelines`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_get_mr_pipelines(mr_iid: u64, pipelines: Vec<Value>) -> String {
+
     if pipelines.is_empty() {
-        return Ok(format!("No pipelines found for MR !{mr_iid}."));
+        return format!("No pipelines found for MR !{mr_iid}.");
     }
 
     let mut lines = vec![format!(
@@ -1474,7 +1491,7 @@ pub async fn get_mr_pipelines(
         ));
     }
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 /// Retry a pipeline.
@@ -1628,8 +1645,15 @@ pub async fn get_ci_variables(client: &GitLabClient, project_id: &str) -> Result
 
     let variables: Vec<Value> = client.get(&path, &[("per_page", "100")]).await?;
 
+    Ok(render_get_ci_variables(variables))
+}
+
+/// Rendering half of [`get_ci_variables`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_get_ci_variables(variables: Vec<Value>) -> String {
+
     if variables.is_empty() {
-        return Ok("No CI/CD variables found.".to_string());
+        return "No CI/CD variables found.".to_string();
     }
 
     let mut lines = vec![format!("**CI/CD Variables: {}**\n", variables.len())];
@@ -1653,7 +1677,7 @@ pub async fn get_ci_variables(client: &GitLabClient, project_id: &str) -> Result
         lines.push(format!("| {key} | {masked} | {protected} | {env_scope} |"));
     }
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 #[cfg(test)]
@@ -2136,5 +2160,23 @@ U1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==
         );
         let unknown = render_runner_check(&pending, None).join("\n");
         assert!(unknown.contains("unavailable") && !unknown.contains("no runner is attached"));
+    }
+
+    #[test]
+    fn assignment_redaction_measures_the_unquoted_value_and_starts_at_eight() {
+        // Seven characters stay visible, eight are redacted — quotes do not count.
+        let seven = ["PASSWORD=\"", "abcdefg", "\""].concat();
+        assert_eq!(redact_log(&seven), seven, "quoted seven-character value stays visible");
+        let eight = ["PASSWORD=", "abcdefgh"].concat();
+        assert!(!redact_log(&eight).contains("abcdefgh"));
+        let single = ["TOKEN='", "abcdefg", "'"].concat();
+        assert_eq!(redact_log(&single), single);
+    }
+
+    #[test]
+    fn region_and_tier_values_are_shown_as_identifiers() {
+        assert_eq!(render_variable("AWS_REGION", "eu-west-1"), "- `AWS_REGION` = `eu-west-1`");
+        assert_eq!(render_variable("TIER", "gold"), "- `TIER` = `gold`");
+        assert_eq!(render_variable("DEPLOY_ID", "42"), "- `DEPLOY_ID` = `42`");
     }
 }

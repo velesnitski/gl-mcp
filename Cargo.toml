@@ -1,6 +1,6 @@
 [package]
 name = "gl-mcp"
-version = "1.12.1"
+version = "1.12.2"
 edition = "2024"
 description = "GitLab MCP server for Claude Code — 100 tools for projects, issues, MRs, CI/CD, code review, team analytics, and spec-drift auditing"
 license = "MIT"
@@ -50,6 +50,11 @@ base64 = "0.22"
 strip = true
 lto = "thin"        # thin LTO: ~full-LTO size, much faster link than lto=true
 codegen-units = 1
+
+[dev-dependencies]
+# The client half of the protocol, for the in-process end-to-end test only.
+rmcp = { version = "0.11", features = ["client", "transport-io"] }
+proptest = "1"
 
 # Trim debug info from dev/test builds: keeps file:line in backtraces (so test
 # failures stay readable) but drops local-variable info — cuts the `target/debug`

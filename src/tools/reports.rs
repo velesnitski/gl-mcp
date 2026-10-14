@@ -802,8 +802,9 @@ pub async fn generate_team_report(
             let mr_path = mr_path.clone();
             let encoded_project = encoded_project.clone();
             async move {
+                let mut fan = crate::error::FanOut::default();
                 // Merged MRs by this author
-                let merged_mrs: Vec<Value> = client
+                let merged_mrs = client
                     .get(
                         &mr_path,
                         &[
@@ -813,11 +814,11 @@ pub async fn generate_team_report(
                             ("per_page", "100"),
                         ],
                     )
-                    .await
-                    .or_default_logged();
+                    .await;
+                let merged_mrs: Vec<Value> = fan.take(merged_mrs).unwrap_or_default();
 
                 // MRs where this user is reviewer (merged)
-                let reviewed_mrs: Vec<Value> = client
+                let reviewed_mrs = client
                     .get(
                         &mr_path,
                         &[
@@ -827,8 +828,8 @@ pub async fn generate_team_report(
                             ("per_page", "100"),
                         ],
                     )
-                    .await
-                    .or_default_logged();
+                    .await;
+                let reviewed_mrs: Vec<Value> = fan.take(reviewed_mrs).unwrap_or_default();
 
                 // Calc merge time + LOC/files from merged MRs
                 let mut merge_hours: Vec<f64> = Vec::new();
@@ -947,7 +948,7 @@ pub async fn generate_team_report(
                     }
                 }
 
-                DevStats {
+                (fan, DevStats {
                     username: username.to_string(),
                     mrs_merged: merged_mrs.len() as u64,
                     mrs_reviewed: reviewed_mrs.len() as u64,
@@ -960,12 +961,21 @@ pub async fn generate_team_report(
                     deletions: total_deletions,
                     files_changed: total_files,
                     mr_sizes: (mr_small, mr_medium, mr_large),
-                }
+                })
             }
         })
         .collect();
 
-    let dev_results = join_all(dev_futures).await;
+    let mut fan = crate::error::FanOut::default();
+    let dev_results: Vec<DevStats> = join_all(dev_futures)
+        .await
+        .into_iter()
+        .map(|(f, stats)| {
+            fan.absorb(f);
+            stats
+        })
+        .collect();
+    let warning = fan.finish("merge-request lookups")?;
 
     // ── MR turnaround data ──
 
@@ -1340,6 +1350,10 @@ footer{{margin-top:48px;padding-top:16px;border-top:1px solid #21262d;color:#484
 </html>"#
     );
 
+    if let Some(w) = warning {
+        let banner = format!("<div class=\"issue warn\"><b>Partial data</b><div class=\"m\">{}</div></div>\n", htmlescape(w.trim()));
+        html = html.replacen("<body>\n", &format!("<body>\n{banner}"), 1);
+    }
     Ok(html)
 }
 
@@ -2207,6 +2221,9 @@ pub(crate) fn htmlescape(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+        // Not needed by any current template (none quotes attributes with '), but
+        // the escaper should not depend on how a future template is written.
+        .replace('\'', "&#39;")
 }
 
 #[cfg(test)]

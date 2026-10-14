@@ -33,9 +33,18 @@ fn test_language_detection() {
     assert_eq!(detect_language("template.html"), "HTML");
     assert_eq!(detect_language("random.xyz"), "Other");
     // Infrastructure
-    assert_eq!(detect_language("roles/nginx/templates/docker-compose.j2"), "Jinja2/Ansible");
-    assert_eq!(detect_language("ansible/inventory/myapp/node-01"), "Ansible/Inventory");
-    assert_eq!(detect_language("ansible/scripts/myapp/node-02"), "Ansible/Inventory");
+    assert_eq!(
+        detect_language("roles/nginx/templates/docker-compose.j2"),
+        "Jinja2/Ansible"
+    );
+    assert_eq!(
+        detect_language("ansible/inventory/myapp/node-01"),
+        "Ansible/Inventory"
+    );
+    assert_eq!(
+        detect_language("ansible/scripts/myapp/node-02"),
+        "Ansible/Inventory"
+    );
     assert_eq!(detect_language("main.tf"), "Terraform");
 }
 

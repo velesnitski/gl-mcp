@@ -1,0 +1,3 @@
+2 commits (sha|date|author|title)
+a1b2c3d4|2026-01-15|Ada|feat: parser
+e5f6a7b8|2026-01-14|Lin|fix: crash

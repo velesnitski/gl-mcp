@@ -112,8 +112,15 @@ pub async fn list_merge_requests(
 
     let mrs: Vec<Value> = client.get(&path, &params).await?;
 
+    Ok(render_list_merge_requests(summary_only, include_descriptions, mrs))
+}
+
+/// Rendering half of [`list_merge_requests`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_list_merge_requests(summary_only: bool, include_descriptions: bool, mrs: Vec<Value>) -> String {
+
     if mrs.is_empty() {
-        return Ok("No merge requests found.".to_string());
+        return "No merge requests found.".to_string();
     }
 
     if summary_only {
@@ -144,7 +151,7 @@ pub async fn list_merge_requests(
                 }
             }
         }
-        return Ok(lines.join("\n"));
+        return lines.join("\n");
     }
 
     let mut lines = vec![format!("**Found: {} merge requests**\n", mrs.len())];
@@ -201,7 +208,7 @@ pub async fn list_merge_requests(
         ));
     }
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 /// Smart MR title from branch name: "feature/PROJ-123-add-oauth" → "PROJ-123: Add OAuth"
@@ -605,8 +612,15 @@ pub async fn get_mr_turnaround(
         )
         .await?;
 
+    Ok(render_get_mr_turnaround(project_id, group_id, days, mrs))
+}
+
+/// Rendering half of [`get_mr_turnaround`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_get_mr_turnaround(project_id: &str, group_id: &str, days: u32, mrs: Vec<Value>) -> String {
+
     if mrs.is_empty() {
-        return Ok("No merged MRs found in this period.".to_string());
+        return "No merged MRs found in this period.".to_string();
     }
 
     struct MrStats {
@@ -652,7 +666,7 @@ pub async fn get_mr_turnaround(
     }
 
     if stats.is_empty() {
-        return Ok("No MRs with valid timestamps found.".to_string());
+        return "No MRs with valid timestamps found.".to_string();
     }
 
     let total: f64 = stats.iter().map(|s| s.hours_to_merge).sum();
@@ -739,7 +753,7 @@ pub async fn get_mr_turnaround(
         ));
     }
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 /// Compact MR dashboard for a group: open count, avg age, reviewer bottlenecks.
@@ -762,11 +776,16 @@ pub async fn get_mr_dashboard(
         )
         .await?;
 
-    if mrs.is_empty() {
-        return Ok(format!("No open MRs in group {group_id}."));
-    }
+    Ok(render_get_mr_dashboard(group_id, summary_only, mrs, chrono::Utc::now()))
+}
 
-    let now = chrono::Utc::now();
+/// Rendering half of [`get_mr_dashboard`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_get_mr_dashboard(group_id: &str, summary_only: bool, mrs: Vec<Value>, now: chrono::DateTime<chrono::Utc>) -> String {
+
+    if mrs.is_empty() {
+        return format!("No open MRs in group {group_id}.");
+    }
 
     struct MrInfo {
         iid: u64,
@@ -781,7 +800,6 @@ pub async fn get_mr_dashboard(
 
     let mut infos: Vec<MrInfo> = Vec::new();
     let mut reviewer_counts: BTreeMap<String, u32> = BTreeMap::new();
-    let mut _author_counts: BTreeMap<String, u32> = BTreeMap::new();
     let mut project_counts: BTreeMap<String, u32> = BTreeMap::new();
 
     for mr in &mrs {
@@ -808,7 +826,6 @@ pub async fn get_mr_dashboard(
             })
             .unwrap_or_default();
 
-        *_author_counts.entry(author.clone()).or_default() += 1;
         *project_counts.entry(project.clone()).or_default() += 1;
         for r in &reviewers {
             *reviewer_counts.entry(r.clone()).or_default() += 1;
@@ -837,10 +854,10 @@ pub async fn get_mr_dashboard(
             .max_by_key(|(_, c)| *c)
             .map(|(name, count)| format!("top reviewer: @{name} ({count})"))
             .unwrap_or_else(|| "no reviewers".to_string());
-        return Ok(format!(
+        return format!(
             "{group_id}: {total} open MRs, avg age {:.1}d, {stale_count} stale (>7d), {top_reviewer}",
             avg_age / 24.0
-        ));
+        );
     }
 
     let mut lines = vec![
@@ -893,7 +910,7 @@ pub async fn get_mr_dashboard(
         }
     }
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 /// Get MR review depth: comments/discussions per MR before merge.
@@ -1384,13 +1401,13 @@ pub async fn get_org_mr_dashboard(client: &GitLabClient, group_ids: &[&str]) -> 
     }
 
     let mut all_stats: Vec<GroupStats> = Vec::new();
+    let mut fan = crate::error::FanOut::default();
 
     for &group_id in group_ids {
         let path = format!("/groups/{}/merge_requests", urlencoding::encode(group_id));
-        let mrs: Vec<Value> = client
-            .get(&path, &[("state", "opened"), ("per_page", "100")])
-            .await
-            .or_default_logged();
+        let mrs: Vec<Value> = fan
+            .take(client.get(&path, &[("state", "opened"), ("per_page", "100")]).await)
+            .unwrap_or_default();
 
         let mut gs = GroupStats {
             name: group_id.to_string(),
@@ -1443,6 +1460,8 @@ pub async fn get_org_mr_dashboard(client: &GitLabClient, group_ids: &[&str]) -> 
     let total_stale: u32 = all_stats.iter().map(|s| s.stale).sum();
     let total_no_rev: u32 = all_stats.iter().map(|s| s.no_reviewer).sum();
 
+    let warning = fan.finish("group lookups")?.unwrap_or_default();
+
     let mut lines = vec![
         format!(
             "**Org MR Dashboard** ({} groups, {total_open} open)\n",
@@ -1486,7 +1505,7 @@ pub async fn get_org_mr_dashboard(client: &GitLabClient, group_ids: &[&str]) -> 
         }
     }
 
-    Ok(lines.join("\n"))
+    Ok(format!("{warning}{}", lines.join("\n")))
 }
 
 /// Merge a merge request.
@@ -1700,8 +1719,15 @@ pub async fn get_mr_discussions(
 
     let discussions: Vec<Value> = client.get(&path, &[("per_page", "100")]).await?;
 
+    Ok(render_get_mr_discussions(project_id, mr_iid, summary_only, discussions))
+}
+
+/// Rendering half of [`get_mr_discussions`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_get_mr_discussions(project_id: &str, mr_iid: u64, summary_only: bool, discussions: Vec<Value>) -> String {
+
     if discussions.is_empty() {
-        return Ok(format!("No discussions on !{mr_iid}."));
+        return format!("No discussions on !{mr_iid}.");
     }
 
     // Filter to only non-system discussions with notes
@@ -1782,7 +1808,7 @@ pub async fn get_mr_discussions(
     }
 
     if discussion_count == 0 {
-        return Ok(format!("No user discussions on !{mr_iid}."));
+        return format!("No user discussions on !{mr_iid}.");
     }
 
     if summary_only {
@@ -1794,13 +1820,13 @@ pub async fn get_mr_discussions(
             .map(|(name, _)| format!("@{name}"))
             .collect::<Vec<_>>()
             .join(", ");
-        return Ok(format!(
+        return format!(
             "{project_id}!{mr_iid}: {discussion_count} discussions, {resolved_count} resolved, {unresolved_count} unresolved ({authors_str})"
-        ));
+        );
     }
 
     let header = format!("**Discussions: {discussion_count}** on !{mr_iid}\n");
-    Ok(format!("{header}\n{}", lines.join("\n")))
+    format!("{header}\n{}", lines.join("\n"))
 }
 
 /// Reviewer velocity: how quickly each reviewer responds to MRs.
@@ -2028,8 +2054,15 @@ pub async fn get_review_load(
         )
         .await?;
 
+    Ok(render_get_review_load(project_id, group_id, days, summary_only, mrs))
+}
+
+/// Rendering half of [`get_review_load`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_get_review_load(project_id: &str, group_id: &str, days: u32, summary_only: bool, mrs: Vec<Value>) -> String {
+
     if mrs.is_empty() {
-        return Ok("No merged MRs in this period.".to_string());
+        return "No merged MRs in this period.".to_string();
     }
 
     let mut reviewer_counts: BTreeMap<String, u32> = BTreeMap::new();
@@ -2049,10 +2082,10 @@ pub async fn get_review_load(
     }
 
     if reviewer_counts.is_empty() {
-        return Ok(format!(
+        return format!(
             "No reviewers assigned across {} merged MRs in the last {days} days.",
             mrs.len()
-        ));
+        );
     }
 
     let total: u32 = reviewer_counts.values().sum();
@@ -2095,9 +2128,9 @@ pub async fn get_review_load(
         } else {
             ""
         };
-        return Ok(format!(
+        return format!(
             "{scope}: {reviewers_count} reviewers, {mr_with_reviewer} MRs. {top_str}. Bus factor: {bus_factor}{bus_note}"
-        ));
+        );
     }
 
     let mut lines = vec![
@@ -2137,7 +2170,7 @@ pub async fn get_review_load(
         lines.push("**Recommendation:** Review load is reasonably distributed.".to_string());
     }
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 /// Weekly trend of MR sizes (files changed, LOC).
@@ -2433,6 +2466,148 @@ fn format_week_range(
 
 #[cfg(test)]
 mod tests {
+    use crate::golden::assert_golden;
+
+    /// Fixed clock so ages and staleness are reproducible.
+    fn now() -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339("2026-01-20T12:00:00Z").unwrap().with_timezone(&chrono::Utc)
+    }
+
+    /// Synthetic merge requests covering every branch the renderers take: drafts,
+    /// stale and fresh, reviewed and unreviewed, merged by self and by others,
+    /// pipelines present and absent, nested project paths.
+    fn mr_fixtures() -> Vec<serde_json::Value> {
+        vec![
+            json!({"iid": 1, "title": "feat: add parser", "state": "merged", "draft": false,
+                   "author": {"username": "ada"}, "merged_by": {"username": "lin"},
+                   "created_at": "2026-01-01T09:00:00Z", "merged_at": "2026-01-02T15:30:00Z",
+                   "reviewers": [{"username": "lin"}, {"username": "sam"}],
+                   "source_branch": "feature/parser", "target_branch": "main",
+                   "references": {"full": "acme/core/api!1"}, "description": "Adds the parser.",
+                   "head_pipeline": {"status": "success"},
+                   "web_url": "https://git.example.com/acme/core/api/-/merge_requests/1"}),
+            json!({"iid": 2, "title": "fix: crash on empty input", "state": "merged", "draft": false,
+                   "author": {"username": "sam"}, "merged_by": {"username": "sam"},
+                   "created_at": "2026-01-10T08:00:00Z", "merged_at": "2026-01-10T09:00:00Z",
+                   "reviewers": [], "source_branch": "hotfix/empty", "target_branch": "main",
+                   "references": {"full": "acme/web/site!2"}, "description": "",
+                   "pipeline": {"status": "failed"},
+                   "web_url": "https://git.example.com/acme/web/site/-/merge_requests/2"}),
+            json!({"iid": 3, "title": "Draft: rework layout", "state": "opened", "draft": true,
+                   "author": {"username": "ada"},
+                   "created_at": "2026-01-02T10:00:00Z",
+                   "reviewers": [{"username": "lin"}], "source_branch": "chore/layout", "target_branch": "develop",
+                   "references": {"full": "acme/core/api!3"},
+                   "web_url": "https://git.example.com/acme/core/api/-/merge_requests/3"}),
+            json!({"iid": 4, "title": "docs: readme", "state": "opened", "draft": false,
+                   "author": {"username": "kim"},
+                   "created_at": "2026-01-19T12:00:00Z",
+                   "reviewers": [], "source_branch": "docs/readme", "target_branch": "main",
+                   "references": {"full": "acme/core/worker!4"},
+                   "web_url": "https://git.example.com/acme/core/worker/-/merge_requests/4"}),
+        ]
+    }
+
+    #[test]
+    fn golden_mr_renderers() {
+        let mrs = mr_fixtures();
+        assert_golden("mrs/list.md", &render_list_merge_requests(false, true, mrs.clone()));
+        assert_golden("mrs/list_summary.txt", &render_list_merge_requests(true, false, mrs.clone()));
+        assert_golden("mrs/turnaround.md", &render_get_mr_turnaround("", "acme", 30, mrs.clone()));
+        assert_golden("mrs/dashboard.md", &render_get_mr_dashboard("acme", false, mrs.clone(), now()));
+        assert_golden("mrs/dashboard_summary.txt", &render_get_mr_dashboard("acme", true, mrs.clone(), now()));
+        assert_golden("mrs/review_load.md", &render_get_review_load("", "acme", 30, false, mrs.clone()));
+        assert_golden("mrs/review_load_summary.txt", &render_get_review_load("", "acme", 30, true, mrs));
+    }
+
+    #[test]
+    fn golden_mr_discussions() {
+        let discussions = vec![
+            json!({"notes": [
+                {"author": {"username": "lin"}, "body": "Please add a test for the empty case.", "created_at": "2026-01-01T10:00:00Z",
+                 "resolvable": true, "resolved": true, "system": false},
+                {"author": {"username": "ada"}, "body": "Added.", "created_at": "2026-01-01T11:00:00Z",
+                 "resolvable": true, "resolved": true, "system": false}]}),
+            json!({"notes": [
+                {"author": {"username": "sam"}, "body": "Naming nit: `x` is unclear.", "created_at": "2026-01-02T09:00:00Z",
+                 "resolvable": true, "resolved": false, "system": false}]}),
+            json!({"notes": [
+                {"author": {"username": "bot"}, "body": "added 1 commit", "created_at": "2026-01-02T09:05:00Z",
+                 "resolvable": false, "system": true}]}),
+        ];
+        assert_golden("mrs/discussions.md", &render_get_mr_discussions("acme/core/api", 1, false, discussions.clone()));
+        assert_golden("mrs/discussions_summary.txt", &render_get_mr_discussions("acme/core/api", 1, true, discussions));
+    }
+
+    fn merged(iid: u64, author: &str, merger: &str, created: &str, merged_at: &str) -> serde_json::Value {
+        json!({"iid": iid, "title": format!("change {iid}"), "author": {"username": author},
+               "merged_by": {"username": merger}, "created_at": created, "merged_at": merged_at,
+               "web_url": format!("https://git.example.com/acme/api/-/merge_requests/{iid}")})
+    }
+
+    #[test]
+    fn turnaround_averages_over_several_mrs_and_keeps_a_full_day_in_hours() {
+        let out = render_get_mr_turnaround("", "acme", 30, vec![
+            merged(1, "ada", "lin", "2026-01-01T00:00:00Z", "2026-01-01T02:00:00Z"), // 2h
+            merged(2, "ada", "lin", "2026-01-02T00:00:00Z", "2026-01-02T06:00:00Z"), // 6h
+            merged(3, "sam", "sam", "2026-01-03T00:00:00Z", "2026-01-04T00:00:00Z"), // exactly 24h
+        ]);
+        assert!(out.contains("- @ada: 2 MRs, avg 4.0h"), "{out}");
+        assert!(out.contains("- @lin: 2 MRs merged, avg 4.0h"), "{out}");
+        assert!(out.contains("— 24.0h"), "exactly a day is still shown in hours: {out}");
+    }
+
+    fn opened(iid: u64, created: &str) -> serde_json::Value {
+        json!({"iid": iid, "title": "t", "author": {"username": "ada"}, "created_at": created, "reviewers": [],
+               "web_url": format!("https://git.example.com/acme/api/-/merge_requests/{iid}")})
+    }
+
+    #[test]
+    fn an_mr_exactly_a_week_old_is_not_stale() {
+        let at_limit = render_get_mr_dashboard("acme", false, vec![opened(1, "2026-01-13T12:00:00Z")], now());
+        assert!(at_limit.contains("| Stale (>7d) | 0 |"), "{at_limit}");
+        assert!(!at_limit.contains("Stale MRs"), "no stale section without stale MRs");
+        let over = render_get_mr_dashboard("acme", false, vec![opened(1, "2026-01-13T11:00:00Z")], now());
+        assert!(over.contains("| Stale (>7d) | 1 |") && over.contains("Stale MRs"), "{over}");
+        // With a stale MR present, the one exactly a week old is still not listed.
+        let both = render_get_mr_dashboard(
+            "acme", false,
+            vec![opened(1, "2026-01-13T11:00:00Z"), opened(2, "2026-01-13T12:00:00Z")],
+            now(),
+        );
+        assert!(both.contains("acme/api!1 ") && !both.contains("acme/api!2 "), "{both}");
+    }
+
+    fn reviewed(reviewers: &[&str]) -> serde_json::Value {
+        json!({"reviewers": reviewers.iter().map(|r| json!({"username": r})).collect::<Vec<_>>()})
+    }
+
+    #[test]
+    fn review_load_counts_bus_factor_scope_and_the_seventy_percent_line() {
+        // 4 + 1 + 1 reviews: the top two reach 80% (5/6), so the bus factor is 2.
+        let mrs = vec![
+            reviewed(&["ada", "lin"]), reviewed(&["ada", "sam"]), reviewed(&["ada"]), reviewed(&["ada"]), reviewed(&[]),
+        ];
+        let out = render_get_review_load("acme/api", "", 30, false, mrs.clone());
+        assert!(out.contains("## Code Review Load: acme/api"), "project scope when no group: {out}");
+        assert!(out.contains("**Bus factor:** 2"), "{out}");
+        assert!(out.contains("across 4 MRs"), "the MR without reviewers is not counted: {out}");
+        // Exactly 70% is not flagged; above it is.
+        let seventy: Vec<_> = (0..7).map(|_| reviewed(&["ada"])).chain((0..3).map(|_| reviewed(&["lin"]))).collect();
+        assert!(render_get_review_load("", "g", 30, false, seventy.clone()).contains("reasonably distributed"));
+        assert!(!render_get_review_load("", "g", 30, true, seventy).contains(">70%"));
+        let heavy: Vec<_> = (0..8).map(|_| reviewed(&["ada"])).chain((0..2).map(|_| reviewed(&["lin"]))).collect();
+        assert!(render_get_review_load("", "g", 30, false, heavy.clone()).contains("Distribute reviews more evenly"));
+        assert!(render_get_review_load("", "g", 30, true, heavy).contains("(top reviewer >70%)"));
+    }
+
+    #[test]
+    fn empty_inputs_say_so_rather_than_rendering_empty_tables() {
+        assert!(!render_get_mr_dashboard("acme", false, vec![], now()).contains('|'));
+        assert!(!render_get_review_load("", "acme", 30, false, vec![]).is_empty());
+        assert!(!render_get_mr_turnaround("", "acme", 30, vec![]).is_empty());
+    }
+
     use super::*;
     use serde_json::json;
 

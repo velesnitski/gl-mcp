@@ -1170,6 +1170,7 @@ impl GlMcpServer {
         }
 
         let mut all_output: Vec<String> = Vec::new();
+        let mut failed_instances = 0usize;
 
         for (inst, groups) in &by_instance {
             let inst_opt = if inst.is_empty() {
@@ -1196,12 +1197,18 @@ impl GlMcpServer {
                     all_output.push(format!("{header}{text}"));
                 }
                 Err(e) => {
+                    failed_instances += 1;
                     all_output.push(format!(
                         "**Error on instance {inst}:** {}",
                         e.short_message()
                     ));
                 }
             }
+        }
+
+        // Every instance failing is an error, not a dashboard made of error lines.
+        if failed_instances > 0 && failed_instances == by_instance.len() {
+            return Ok(CallToolResult::error(vec![Content::text(all_output.join("\n\n"))]));
         }
 
         let output = all_output.join("\n\n---\n\n");

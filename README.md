@@ -392,6 +392,15 @@ cargo clippy --all-targets
   instead of shipping dead.
 - **Errors are typed.** Caller mistakes return `Error::UserInput` and surface as MCP
   tool errors (`isError`), never as success text, and stay out of Sentry.
+- **Tested against an outage.** `tests/e2e_protocol.rs` runs the real server
+  in-process behind a real MCP client. GitLab points at a closed local port, and
+  every tool is called with arguments derived from its own schema. Each must answer
+  without panicking or hanging, and none may report success. The same run snapshots
+  the public tool surface (`tests/golden/tool_surface.json`).
+- **Properties, not just examples.** `src/proptests.rs` checks invariants over
+  generated input: escaping, truncation, redaction, scoring.
+- **Mutation testing.** `cargo mutants -j 1 --re '<fn names>' -- --lib -- --test-threads=1`
+  grades tests on a chosen area. Keep it narrow and single-job: a full run is CPU-heavy.
 
 ## Versioning
 

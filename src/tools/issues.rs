@@ -45,8 +45,15 @@ pub async fn search_issues(
 
     let issues: Vec<Value> = client.get(&path, &params).await?;
 
+    Ok(render_search_issues(per_page, issues))
+}
+
+/// Rendering half of [`search_issues`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_search_issues(per_page: u32, issues: Vec<Value>) -> String {
+
     if issues.is_empty() {
-        return Ok("No issues found.".to_string());
+        return "No issues found.".to_string();
     }
 
     let count = issues.len();
@@ -80,7 +87,7 @@ pub async fn search_issues(
         ));
     }
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 /// Get a single issue with full details.
@@ -285,8 +292,15 @@ pub async fn list_labels(client: &GitLabClient, project_id: &str) -> Result<Stri
 
     let labels: Vec<Value> = client.get(&path, &[("per_page", "100")]).await?;
 
+    Ok(render_list_labels(labels))
+}
+
+/// Rendering half of [`list_labels`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_list_labels(labels: Vec<Value>) -> String {
+
     if labels.is_empty() {
-        return Ok("No labels found.".to_string());
+        return "No labels found.".to_string();
     }
 
     let mut lines = vec![format!("**Labels: {}**\n", labels.len())];
@@ -307,7 +321,7 @@ pub async fn list_labels(client: &GitLabClient, project_id: &str) -> Result<Stri
         ));
     }
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 /// Create a project label.
@@ -355,8 +369,15 @@ pub async fn get_milestones(
 
     let milestones: Vec<Value> = client.get(&path, &params).await?;
 
+    Ok(render_get_milestones(milestones))
+}
+
+/// Rendering half of [`get_milestones`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_get_milestones(milestones: Vec<Value>) -> String {
+
     if milestones.is_empty() {
-        return Ok("No milestones found.".to_string());
+        return "No milestones found.".to_string();
     }
 
     let mut lines = vec![format!("**Milestones: {}**\n", milestones.len())];
@@ -393,5 +414,5 @@ pub async fn get_milestones(
         lines.push(format!("- **{title}** [{state}]{extra_str}{desc_part}"));
     }
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }

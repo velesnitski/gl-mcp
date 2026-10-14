@@ -438,9 +438,16 @@ pub async fn get_tree(
         .get(&format!("/projects/{encoded}/repository/tree"), &params)
         .await?;
 
+    Ok(render_get_tree(project_id, path, recursive, per_page, entries))
+}
+
+/// Rendering half of [`get_tree`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_get_tree(project_id: &str, path: &str, recursive: bool, per_page: u32, entries: Vec<Value>) -> String {
+
     if entries.is_empty() {
         let path_str = if path.is_empty() { "root" } else { path };
-        return Ok(format!("No entries at '{path_str}' in {project_id}."));
+        return format!("No entries at '{path_str}' in {project_id}.");
     }
 
     let path_label = if path.is_empty() { "/" } else { path };
@@ -470,7 +477,7 @@ pub async fn get_tree(
         lines.push(format!("{icon} {display}"));
     }
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 /// Compare two branches/tags/commits.
@@ -488,6 +495,13 @@ pub async fn compare_branches(
             &[("from", from), ("to", to)],
         )
         .await?;
+
+    Ok(render_compare_branches(project_id, from, to, data))
+}
+
+/// Rendering half of [`compare_branches`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_compare_branches(project_id: &str, from: &str, to: &str, data: Value) -> String {
 
     let commits = data["commits"].as_array().map(|a| a.len()).unwrap_or(0);
     let diffs = data["diffs"].as_array().map(|a| a.len()).unwrap_or(0);
@@ -559,7 +573,7 @@ pub async fn compare_branches(
         }
     }
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 /// List tags for a project.
@@ -585,8 +599,15 @@ pub async fn list_tags(
         .get(&format!("/projects/{encoded}/repository/tags"), &params)
         .await?;
 
+    Ok(render_list_tags(tags))
+}
+
+/// Rendering half of [`list_tags`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_list_tags(tags: Vec<Value>) -> String {
+
     if tags.is_empty() {
-        return Ok("No tags found.".to_string());
+        return "No tags found.".to_string();
     }
 
     let mut lines = vec![format!("**Tags: {}**\n", tags.len())];
@@ -605,7 +626,7 @@ pub async fn list_tags(
         lines.push(format!("- **{name}** `{sha}` ({date_short}){msg_str}"));
     }
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 /// Get MR approvals info.
@@ -622,6 +643,13 @@ pub async fn get_mr_approvals(
             &[],
         )
         .await?;
+
+    Ok(render_get_mr_approvals(mr_iid, data))
+}
+
+/// Rendering half of [`get_mr_approvals`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_get_mr_approvals(mr_iid: u64, data: Value) -> String {
 
     let approved = data["approved"].as_bool().unwrap_or(false);
     let approvals_required = data["approvals_required"].as_u64().unwrap_or(0);
@@ -650,7 +678,7 @@ pub async fn get_mr_approvals(
         lines.push(format!("**Approved by:** {}", approved_by.join(", ")));
     }
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 /// Split a git-style commit message into an MR title and description.
@@ -962,8 +990,15 @@ pub async fn get_contributors(client: &GitLabClient, project_id: &str) -> Result
         )
         .await?;
 
+    Ok(render_get_contributors(project_id, contributors))
+}
+
+/// Rendering half of [`get_contributors`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_get_contributors(project_id: &str, contributors: Vec<Value>) -> String {
+
     if contributors.is_empty() {
-        return Ok(format!("No contributor data for {project_id}."));
+        return format!("No contributor data for {project_id}.");
     }
 
     let total_commits: u64 = contributors
@@ -1007,7 +1042,7 @@ pub async fn get_contributors(client: &GitLabClient, project_id: &str) -> Result
          additions/deletions as 0 for every entry._",
     ));
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 /// Get project-level MR approval rules.
@@ -1018,8 +1053,15 @@ pub async fn get_approval_rules(client: &GitLabClient, project_id: &str) -> Resu
         .get(&format!("/projects/{encoded}/approval_rules"), &[])
         .await?;
 
+    Ok(render_get_approval_rules(project_id, rules))
+}
+
+/// Rendering half of [`get_approval_rules`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_get_approval_rules(project_id: &str, rules: Vec<Value>) -> String {
+
     if rules.is_empty() {
-        return Ok(format!("No approval rules configured for {project_id}."));
+        return format!("No approval rules configured for {project_id}.");
     }
 
     let mut lines = vec![format!(
@@ -1060,7 +1102,7 @@ pub async fn get_approval_rules(client: &GitLabClient, project_id: &str) -> Resu
         }
     }
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 /// Human-readable byte size in binary units (1 KB = 1024 B), one decimal place.
@@ -1306,10 +1348,17 @@ pub async fn get_deploy_frequency(
         .get(&format!("/projects/{encoded}/deployments"), &params)
         .await?;
 
+    Ok(render_get_deploy_frequency(project_id, days, deployments))
+}
+
+/// Rendering half of [`get_deploy_frequency`]: data in, text out — testable without GitLab.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_get_deploy_frequency(project_id: &str, days: u32, deployments: Vec<Value>) -> String {
+
     if deployments.is_empty() {
-        return Ok(format!(
+        return format!(
             "No successful deployments in the last {days} days for {project_id}."
-        ));
+        );
     }
 
     // Group by day and environment
@@ -1376,7 +1425,7 @@ pub async fn get_deploy_frequency(
         }
     }
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 #[cfg(test)]
@@ -1496,5 +1545,42 @@ mod tests {
         assert!(super::is_binary_hit("a/b", "\u{0}\u{0}\u{0}x"));
         assert!(!super::is_binary_hit("a/b.txt", ""));
         assert!(super::is_lockfile("web/package-lock.json") && !super::is_lockfile("src/lock.rs"));
+    }
+
+    #[test]
+    fn binary_threshold_is_more_than_a_tenth_and_short_text_is_text() {
+        assert!(!super::is_binary_hit("a.txt", "ab"), "short plain text is text");
+        let one_in_ten = format!("{}{}", "\u{1}", "a".repeat(9));
+        assert!(!super::is_binary_hit("a.txt", &one_in_ten), "exactly 10% junk is not binary");
+        let two_in_ten = format!("{}{}", "\u{1}\u{2}", "a".repeat(8));
+        assert!(super::is_binary_hit("a.txt", &two_in_ten));
+    }
+
+    #[test]
+    fn previews_are_cut_only_beyond_two_hundred_characters() {
+        let hit = |data: &str| super::render_search_hits("q", "p", &[serde_json::json!({"path": "a.rs", "startline": 1, "data": data})]);
+        assert!(hit("short").contains("```\nshort\n```"));
+        let exact = "x".repeat(200);
+        assert!(hit(&exact).contains(&format!("```\n{exact}\n```")), "200 characters are shown whole");
+        assert!(hit(&"x".repeat(201)).contains(&format!("{}...", "x".repeat(200))));
+    }
+
+    #[test]
+    fn compare_lists_cap_at_twenty_commits_and_fifty_files() {
+        use serde_json::json;
+        let commits = |n: usize| (0..n).map(|i| json!({"short_id": format!("c{i}"), "title": "t", "author_name": "a"})).collect::<Vec<_>>();
+        let files = |n: usize| (0..n).map(|i| json!({"new_path": format!("f{i}.rs"), "diff": "+x\n"})).collect::<Vec<_>>();
+        let render = |c, f| super::render_compare_branches("p", "a", "b", json!({"commits": commits(c), "diffs": files(f)}));
+        assert!(!render(20, 50).contains("more"), "at the caps nothing is elided");
+        let over = render(21, 51);
+        assert!(over.contains("...and 1 more") && over.contains("...and 1 more files"), "{over}");
+    }
+
+    #[test]
+    fn deploy_timeline_needs_more_than_one_day() {
+        use serde_json::json;
+        let d = |day: &str| json!({"created_at": format!("{day}T10:00:00Z"), "environment": {"name": "prod"}, "user": {"username": "ada"}});
+        assert!(!super::render_get_deploy_frequency("p", 30, vec![d("2026-01-01"), d("2026-01-01")]).contains("**Daily:**"));
+        assert!(super::render_get_deploy_frequency("p", 30, vec![d("2026-01-01"), d("2026-01-02")]).contains("**Daily:**"));
     }
 }
