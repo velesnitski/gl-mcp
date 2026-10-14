@@ -99,6 +99,16 @@ window.addEventListener('hashchange',openTarget);openTarget();
   <div class="bench-note">Reference bands (directional, not a cited statistic): Nascent &lt;15% · Emerging 15–29% · Mainstream 30–49% · Advanced 50–74% · Leading ≥75% developer adoption. The grade is a floor — squash-hidden and local-only usage sit above it.</div>
   <div class="bench-note">Benchmarks &amp; practices: <a href="https://www.anthropic.com/engineering/claude-code-best-practices">Claude Code best practices</a> &middot; <a href="https://agents.md/">AGENTS.md</a> &middot; <a href="https://github.com/humanlayer/12-factor-agents">12-Factor Agents</a> &middot; <a href="https://newsletter.pragmaticengineer.com/p/ai-tooling-2026">Pragmatic Engineer: AI tooling survey</a> &middot; <a href="https://dora.dev/dora-report-2025/">DORA 2025: State of AI-assisted development</a></div>
 </div>
+<h2 id="practices">Practice checks</h2>
+<table>
+<tr><th>Practice</th><th>Following</th><th>Repos to fix</th><th>Why</th></tr>
+<tr><td><b>CLAUDE.md within 200 lines</b></td><td class="y">0/1</td><td>core/worker</td><td>It loads on every request; procedures belong in skills.</td></tr>
+<tr><td><b>CLAUDE.md says what the repo is</b></td><td class="g">2/2</td><td>&ndash;</td><td>A stub gives no context; the useful part is purpose and gotchas.</td></tr>
+<tr><td><b>Procedures in skills</b></td><td class="y">1/2</td><td>core/worker</td><td>Skills load only when needed instead of on every request.</td></tr>
+<tr><td><b>Team setup committed to the repo</b></td><td class="g">2/2</td><td>&ndash;</td><td>Personal ~/.claude config reaches neither teammates nor cloud sessions.</td></tr>
+<tr><td><b>No credential in committed .mcp.json</b></td><td class="y">1/2</td><td>web/site</td><td>The file is shared with every clone and travels to cloud sessions.</td></tr>
+</table>
+<p class="sub">Source: Anthropic&#39;s Claude Code guidance (claude.dev, 2026: context engineering for Claude 5 models, what a task costs, Claude Code in the cloud).</p>
 <h2>Adoption Levels</h2>
 <div style="margin:6px 0;display:flex;align-items:center;gap:10px"><span style="width:110px;font-weight:700;color:#3fb950">L3 Scaling</span><span class="bar" style="width:150px;background:#3fb950"></span><span style="color:#8b949e;font-size:13px"><a href="#adopting">1 (17%)</a></span></div>
 <div style="margin:6px 0;display:flex;align-items:center;gap:10px"><span style="width:110px;font-weight:700;color:#58a6ff">L2 Practicing</span><span class="bar" style="width:150px;background:#58a6ff"></span><span style="color:#8b949e;font-size:13px"><a href="#adopting">1 (17%)</a></span></div>

@@ -346,6 +346,142 @@ fn tier_css_class(tier: &str) -> &'static str {
     }
 }
 
+/// One org-level practice check: how many applicable repos follow it, and which don't.
+pub(crate) struct PracticeCheck {
+    pub practice: &'static str,
+    pub why: &'static str,
+    pub passing: usize,
+    pub applicable: usize,
+    /// Repos that miss it, most recently active first (results keep API order).
+    pub failing: Vec<String>,
+}
+
+/// Where the practice checks come from — stated in both renderings.
+const PRACTICE_SOURCE: &str = "Anthropic's Claude Code guidance (claude.dev, 2026: context engineering for Claude 5 models, what a task costs, Claude Code in the cloud).";
+
+/// Score the configured repos against published Claude Code practices.
+///
+/// Only practices a repository scan can verify are listed; a check with no applicable
+/// repo is left out rather than shown as a perfect score.
+pub(crate) fn practice_checks(results: &[RepoResult]) -> Vec<PracticeCheck> {
+    let check = |practice, why, applies: &dyn Fn(&RepoMarkers) -> bool, passes: &dyn Fn(&RepoMarkers) -> bool| {
+        let applicable: Vec<&RepoResult> = results.iter().filter(|r| applies(&r.markers)).collect();
+        let failing: Vec<String> = applicable
+            .iter()
+            .filter(|r| !passes(&r.markers))
+            .map(|r| r.path.clone())
+            .collect();
+        PracticeCheck {
+            practice,
+            why,
+            passing: applicable.len() - failing.len(),
+            applicable: applicable.len(),
+            failing,
+        }
+    };
+    let has_claude_md = |m: &RepoMarkers| m.claude_md;
+    vec![
+        check(
+            "CLAUDE.md within 200 lines",
+            "It loads on every request; procedures belong in skills.",
+            &|m| m.claude_md && m.claude_md_lines > 0,
+            &|m| m.claude_md_lines <= CLAUDE_MD_MAX_LINES,
+        ),
+        check(
+            "CLAUDE.md says what the repo is",
+            "A stub gives no context; the useful part is purpose and gotchas.",
+            &has_claude_md,
+            &|m| m.claude_md_size >= 200,
+        ),
+        check(
+            "Procedures in skills",
+            "Skills load only when needed instead of on every request.",
+            &has_claude_md,
+            &|m| m.skills_count > 0,
+        ),
+        check(
+            "Team setup committed to the repo",
+            "Personal ~/.claude config reaches neither teammates nor cloud sessions.",
+            &has_claude_md,
+            &|m| m.skills_count > 0 || m.commands || m.agents_count > 0 || m.mcp_json,
+        ),
+        check(
+            "No credential in committed .mcp.json",
+            "The file is shared with every clone and travels to cloud sessions.",
+            &|m| m.mcp_json,
+            &|m| !m.mcp_json_inline_secret,
+        ),
+    ]
+    .into_iter()
+    .filter(|c| c.applicable > 0)
+    .collect()
+}
+
+/// Up to five repo paths, then "+N more".
+fn some_repos(paths: &[String], group_path: &str) -> String {
+    let mut shown: Vec<&str> = paths
+        .iter()
+        .take(5)
+        .map(|p| p.strip_prefix(group_path).and_then(|s| s.strip_prefix('/')).unwrap_or(p))
+        .collect();
+    let more = paths.len().saturating_sub(5);
+    let more_text = format!("+{more} more");
+    if more > 0 {
+        shown.push(&more_text);
+    }
+    shown.join(", ")
+}
+
+pub(crate) fn render_practice_checks_md(checks: &[PracticeCheck], group_path: &str) -> Vec<String> {
+    if checks.is_empty() {
+        return Vec::new();
+    }
+    let mut out = vec![
+        "### Practice checks".to_string(),
+        String::new(),
+        "| Practice | Repos following it | Repos to fix | Why |".to_string(),
+        "|----------|--------------------|--------------|-----|".to_string(),
+    ];
+    for c in checks {
+        let fix = if c.failing.is_empty() { "–".to_string() } else { some_repos(&c.failing, group_path) };
+        out.push(format!(
+            "| {} | {}/{} | {fix} | {} |",
+            c.practice, c.passing, c.applicable, c.why
+        ));
+    }
+    out.push(String::new());
+    out.push(format!("_Source: {PRACTICE_SOURCE}_"));
+    out.push(String::new());
+    out
+}
+
+pub(crate) fn render_practice_checks_html(
+    checks: &[PracticeCheck],
+    group_path: &str,
+    esc: impl Fn(&str) -> String,
+) -> String {
+    if checks.is_empty() {
+        return String::new();
+    }
+    let mut s = String::from(
+        "<h2 id=\"practices\">Practice checks</h2>\n<table>\n<tr><th>Practice</th><th>Following</th><th>Repos to fix</th><th>Why</th></tr>\n",
+    );
+    for c in checks {
+        let class = if c.passing == c.applicable { "g" } else { "y" };
+        let fix = if c.failing.is_empty() { "&ndash;".to_string() } else { esc(&some_repos(&c.failing, group_path)) };
+        let _ = writeln!(
+            s,
+            "<tr><td><b>{}</b></td><td class=\"{class}\">{}/{}</td><td>{fix}</td><td>{}</td></tr>",
+            esc(c.practice),
+            c.passing,
+            c.applicable,
+            esc(c.why)
+        );
+    }
+    let _ = writeln!(s, "</table>\n<p class=\"sub\">Source: {}</p>", esc(PRACTICE_SOURCE));
+    s
+}
+
 /// Render the benchmark as markdown lines (for `get_ai_adoption`).
 pub(crate) fn render_benchmark_md(b: &Benchmark) -> Vec<String> {
     let mut out = vec![
@@ -1528,6 +1664,7 @@ pub(crate) fn render_ai_adoption(summary_only: bool, scan: AdoptionScan) -> Stri
         org_ai_devs,
         org_all_devs,
     )));
+    out.extend(render_practice_checks_md(&practice_checks(&results), group_path));
 
     out.extend(md_team_table(&teams));
     out.extend(md_adopting(&results, group_path));
@@ -2170,6 +2307,7 @@ window.addEventListener('hashchange',openTarget);openTarget();
         &compute_benchmark(results, org_dev_pct, org_ai_devs, org_all_devs),
         esc,
     ));
+    html.push_str(&render_practice_checks_html(&practice_checks(results), group_path, esc));
 
     html.push_str(&html_funnel(level_counts, in_flight.len(), active_count));
     html.push_str(&html_team_table(
@@ -3278,6 +3416,30 @@ mod tests {
         assert!(!mcp_json_inline_secret(&mcp_config("env", "API_KEY", "short")), "too short to be a credential");
         assert!(!mcp_json_inline_secret("not json"));
         assert!(!mcp_json_inline_secret("{}"));
+    }
+
+    #[test]
+    fn practice_checks_score_applicable_repos_only() {
+        let scan = rich_scan();
+        let checks = practice_checks(&scan.active);
+        let get = |name: &str| checks.iter().find(|c| c.practice == name).unwrap_or_else(|| panic!("{name} missing"));
+        // Only core/worker has a known line count, and it is 260 lines.
+        let length = get("CLAUDE.md within 200 lines");
+        assert_eq!((length.passing, length.applicable), (0, 1));
+        assert_eq!(length.failing, vec!["acme/core/worker".to_string()]);
+        // Two repos have a CLAUDE.md; only core/api has skills.
+        let skills = get("Procedures in skills");
+        assert_eq!((skills.passing, skills.applicable), (1, 2));
+        // core/api commits commands/agents; core/worker has agents too.
+        let shared = get("Team setup committed to the repo");
+        assert_eq!((shared.passing, shared.applicable), (2, 2));
+        // core/api and web/site have .mcp.json; only web/site carries a credential.
+        let secret = get("No credential in committed .mcp.json");
+        assert_eq!((secret.passing, secret.applicable), (1, 2));
+        assert_eq!(secret.failing, vec!["acme/web/site".to_string()]);
+        // With no CLAUDE.md anywhere, the CLAUDE.md checks are left out, not scored 0/0.
+        let bare: Vec<RepoResult> = scan.active.into_iter().filter(|r| !r.markers.claude_md).collect();
+        assert!(practice_checks(&bare).iter().all(|c| !c.practice.starts_with("CLAUDE.md")));
     }
 
     #[test]

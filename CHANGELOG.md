@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.1] - 2026-10-14
+
+### Added
+
+- **The AI-adoption report has a Practice checks section.** It appears in both the
+  markdown and the HTML report, and scores the scanned repos against five published
+  Claude Code practices that a scan can verify:
+  - CLAUDE.md within 200 lines;
+  - CLAUDE.md more than a stub;
+  - procedures in skills;
+  - team setup committed to the repo;
+  - no credential in a committed `.mcp.json`.
+
+  Each row shows how many applicable repos follow the practice and names up to five
+  that don't. The section cites its source and adds no requests (ADR 063).
+
 ## [1.13.0] - 2026-10-14
 
 ### Added

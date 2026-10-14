@@ -15,6 +15,18 @@ _Reference bands (directional, not a cited statistic): Nascent <15% · Emerging 
 
 _Benchmarks & practices: [Claude Code best practices](https://www.anthropic.com/engineering/claude-code-best-practices) · [AGENTS.md](https://agents.md/) · [12-Factor Agents](https://github.com/humanlayer/12-factor-agents) · [Pragmatic Engineer: AI tooling survey](https://newsletter.pragmaticengineer.com/p/ai-tooling-2026) · [DORA 2025: State of AI-assisted development](https://dora.dev/dora-report-2025/)._
 
+### Practice checks
+
+| Practice | Repos following it | Repos to fix | Why |
+|----------|--------------------|--------------|-----|
+| CLAUDE.md within 200 lines | 0/1 | core/worker | It loads on every request; procedures belong in skills. |
+| CLAUDE.md says what the repo is | 2/2 | – | A stub gives no context; the useful part is purpose and gotchas. |
+| Procedures in skills | 1/2 | core/worker | Skills load only when needed instead of on every request. |
+| Team setup committed to the repo | 2/2 | – | Personal ~/.claude config reaches neither teammates nor cloud sessions. |
+| No credential in committed .mcp.json | 1/2 | web/site | The file is shared with every clone and travels to cloud sessions. |
+
+_Source: Anthropic's Claude Code guidance (claude.dev, 2026: context engineering for Claude 5 models, what a task costs, Claude Code in the cloud)._
+
 ### By Team
 
 | Team | Repos | Active | Configured | Best level | Devs (AI/all) | AI commits % (avg of configured) | Dormant |
