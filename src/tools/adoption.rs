@@ -94,6 +94,10 @@ pub(crate) struct RepoMarkers {
     /// Distinct non-bot authors of ANY commit in the window (the denominator
     /// for the developer-adoption rate).
     pub all_author_set: Vec<String>,
+    /// AI-marked MRs merged in the window.
+    pub ai_mr_merged: usize,
+    /// Of those, merged with no reviewer or by their own author.
+    pub ai_mr_unreviewed: usize,
     /// Lines in the root CLAUDE.md; 0 when its content could not be read.
     pub claude_md_lines: usize,
     /// A committed `.mcp.json` holds a credential-shaped literal instead of an
@@ -394,6 +398,12 @@ pub(crate) fn practice_checks(results: &[RepoResult]) -> Vec<PracticeCheck> {
             &|m| m.claude_md_size >= 200,
         ),
         check(
+            "AI changes reviewed by someone else",
+            "Reviewing the intent of an AI change is the human check that remains.",
+            &|m| m.ai_mr_merged > 0,
+            &|m| m.ai_mr_unreviewed == 0,
+        ),
+        check(
             "Procedures in skills",
             "Skills load only when needed instead of on every request.",
             &has_claude_md,
@@ -619,6 +629,9 @@ pub(crate) fn quality_flags(m: &RepoMarkers) -> Vec<String> {
     };
     if m.claude_md && too_long {
         flags.push("bloated CLAUDE.md".into());
+    }
+    if m.ai_mr_unreviewed > 0 {
+        flags.push("unreviewed AI changes".into());
     }
     if m.mcp_json_inline_secret {
         flags.push("secret in .mcp.json".into());
@@ -846,6 +859,10 @@ async fn scan_repo(
             (".clinerules", false) => push_other(&mut m, "cline"),
             (".junie", true) => push_other(&mut m, "junie"), // JetBrains agent
             ("GEMINI.md", false) | (".gemini", true) => push_other(&mut m, "gemini"),
+            (".kilocode", true) => push_other(&mut m, "kilo code"),
+            (".roo", true) | (".roomodes", false) => push_other(&mut m, "roo code"),
+            ("opencode.json", false) | (".opencode", true) => push_other(&mut m, "opencode"),
+            (".openhands", true) => push_other(&mut m, "openhands"),
             // Committed agent-memory infra (persistent across sessions): a code
             // graph, a Cline memory-bank, or Serena's store.
             (".codebase-memory", true) | ("memory-bank", true) | (".serena", true) => {
@@ -1038,14 +1055,9 @@ async fn scan_repo(
         m.total_mr_count = mrs.len();
         m.ai_mr_count = mrs
             .iter()
-            .filter(|mr| {
-                let desc = mr["description"].as_str().unwrap_or("");
-                let lower = desc.to_lowercase();
-                lower.contains("generated with claude")
-                    || lower.contains("co-authored-by")
-                    || desc.contains("🤖")
-            })
+            .filter(|mr| is_ai_mr_description(mr["description"].as_str().unwrap_or("")))
             .count();
+        (m.ai_mr_merged, m.ai_mr_unreviewed) = unreviewed_ai_merges(&mrs);
     }
 
     // 9. ADR cadence — is the decision log alive or a one-time import?
@@ -1081,14 +1093,103 @@ async fn scan_repo(
     m
 }
 
-/// True if the commit message carries an AI co-author trailer.
+/// AI tools recognised by a co-author's email domain — the reliable signal.
+const AI_COAUTHOR_DOMAINS: &[(&str, &str)] = &[
+    ("anthropic.com", "Claude"),
+    ("cursor.com", "Cursor"),
+    ("aider.chat", "Aider"),
+    ("all-hands.dev", "OpenHands"),
+    ("devin.ai", "Devin"),
+    ("cline.bot", "Cline"),
+    ("kilocode.ai", "Kilo Code"),
+    ("opencode.ai", "opencode"),
+    ("roocode.com", "Roo Code"),
+];
+
+/// Tool names recognised as a whole word of the co-author name or email. Names that
+/// are also people's names (Devin, Cline, Junie, Claude) are deliberately absent or
+/// qualified: "Claude Dupont" is a colleague, not a model.
+const AI_COAUTHOR_WORDS: &[(&str, &str)] = &[
+    ("copilot", "Copilot"),
+    ("cursoragent", "Cursor"),
+    ("codex", "Codex"),
+    ("aider", "Aider"),
+    ("openhands", "OpenHands"),
+    ("gemini", "Gemini"),
+    ("windsurf", "Windsurf"),
+    ("kilocode", "Kilo Code"),
+    ("opencode", "opencode"),
+    ("roocode", "Roo Code"),
+];
+
+/// Words that mark "Claude" as the model rather than a person called Claude.
+const CLAUDE_MODEL_WORDS: &[&str] = &["opus", "sonnet", "haiku", "fable", "code", "ai"];
+
+/// The AI tool behind one `Co-authored-by:` trailer line, or None for a human.
+pub(crate) fn ai_coauthor_tool(line: &str) -> Option<&'static str> {
+    let trimmed = line.trim_start();
+    if !trimmed.to_lowercase().starts_with("co-authored-by:") {
+        return None;
+    }
+    let value = trimmed.split_once(':').map_or("", |(_, v)| v).to_lowercase();
+    let email = value.split_once('<').map_or("", |(_, e)| e.trim_end_matches(['>', ' ']));
+    let domain = email.rsplit_once('@').map_or("", |(_, d)| d);
+    if let Some((_, tool)) = AI_COAUTHOR_DOMAINS
+        .iter()
+        .find(|(d, _)| domain == *d || domain.ends_with(&format!(".{d}")))
+    {
+        return Some(tool);
+    }
+    let words: Vec<&str> = value.split(|c: char| !c.is_ascii_alphanumeric()).filter(|w| !w.is_empty()).collect();
+    if let Some((_, tool)) = AI_COAUTHOR_WORDS.iter().find(|(w, _)| words.contains(w)) {
+        return Some(tool);
+    }
+    if words.contains(&"claude") && words.iter().any(|w| CLAUDE_MODEL_WORDS.contains(w)) {
+        return Some("Claude");
+    }
+    None
+}
+
+/// True if the commit message carries an AI co-author trailer, or is an aider commit.
+///
+/// Decided per trailer line: a human co-author plus "AI" anywhere in the message used
+/// to count as AI usage.
 fn is_ai_commit(msg: &str) -> bool {
-    let lower = msg.to_lowercase();
-    lower.contains("co-authored-by:")
-        && (lower.contains("claude")
-            || lower.contains("copilot")
-            || lower.contains("cursor")
-            || msg.contains("AI"))
+    msg.lines().any(|l| ai_coauthor_tool(l).is_some())
+        || msg.trim_start().to_lowercase().starts_with("aider: ")
+}
+
+/// True if an MR description marks the change as AI-assisted: an AI co-author trailer,
+/// a "Generated with <tool>" footer, or the robot emoji tools stamp on their footers.
+pub(crate) fn is_ai_mr_description(desc: &str) -> bool {
+    if desc.contains('\u{1F916}') || desc.lines().any(|l| ai_coauthor_tool(l).is_some()) {
+        return true;
+    }
+    desc.lines().any(|l| {
+        let lower = l.to_lowercase();
+        lower.contains("generated with")
+            && (lower.contains("claude")
+                || AI_COAUTHOR_WORDS.iter().any(|(w, _)| lower.contains(w)))
+    })
+}
+
+/// AI-marked MRs merged without a second person: no reviewer, or merged by their author.
+pub(crate) fn unreviewed_ai_merges(mrs: &[Value]) -> (usize, usize) {
+    let merged: Vec<&Value> = mrs
+        .iter()
+        .filter(|mr| mr["state"].as_str() == Some("merged"))
+        .filter(|mr| is_ai_mr_description(mr["description"].as_str().unwrap_or("")))
+        .collect();
+    let unreviewed = merged
+        .iter()
+        .filter(|mr| {
+            let no_reviewer = mr["reviewers"].as_array().is_none_or(|r| r.is_empty());
+            let author = mr["author"]["username"].as_str();
+            let merger = mr["merged_by"]["username"].as_str().or_else(|| mr["merge_user"]["username"].as_str());
+            no_reviewer || (author.is_some() && author == merger)
+        })
+        .count();
+    (merged.len(), unreviewed)
 }
 
 /// Count commits whose message carries an AI co-author trailer.
@@ -1155,12 +1256,7 @@ fn trailer_tool(msg: &str) -> Option<String> {
             .trim();
         // Drop the parenthetical suffix: "Claude Opus 4.7 (1M context)" → "Claude Opus 4.7"
         let name = name.split(" (").next().unwrap_or(name).trim();
-        let lower = name.to_lowercase();
-        if lower.contains("claude")
-            || lower.contains("copilot")
-            || lower.contains("cursor")
-            || name.contains("AI")
-        {
+        if ai_coauthor_tool(line).is_some() {
             return Some(name.to_string());
         }
     }
@@ -1877,6 +1973,10 @@ fn md_quality_flags(results: &[RepoResult], days: u32) -> Vec<String> {
                     "- {}: no attribution — {} .tasks / {} .claude commits in {days}d but 0 AI-trailed commits — enable Co-Authored-By attribution for measurable adoption",
                     r.path, m.tasks_recent_commits, m.claude_recent_commits
                 )),
+                "unreviewed AI changes" => flag_lines.push(format!(
+                    "- {}: unreviewed AI changes — {} of {} AI-marked MRs merged without a reviewer or by their author; review the intent of AI changes",
+                    r.path, m.ai_mr_unreviewed, m.ai_mr_merged
+                )),
                 "usage w/o config" => flag_lines.push(format!(
                     "- {}: usage w/o config — {:.0}% AI commits{} but no CLAUDE.md (add one)",
                     r.path,
@@ -1935,6 +2035,12 @@ fn md_recommendations(
                 s.repos
             ));
         }
+    }
+    let unreviewed = flag_count(results, "unreviewed AI changes");
+    if unreviewed > 0 {
+        recs.push(format!(
+            "- {unreviewed} repo(s) merge AI-marked MRs without review — require a reviewer other than the author"
+        ));
     }
     let no_config_count = flag_count(results, "usage w/o config");
     if no_config_count > 0 {
@@ -2022,10 +2128,18 @@ fn md_how_to_read() -> Vec<String> {
     out.push(
         "- **Tool-agnostic.** Markers cover Claude (`.claude/` incl. agents, skills, commands, \
          output-styles, plugins; `CLAUDE.md`), plus Cursor, Copilot, Aider, Windsurf, Continue, \
-         Cline, JetBrains Junie, Gemini (`AGENTS.md`, `.mcp.json`), agent-memory infra \
-         (`.codebase-memory/`, `memory-bank/`, `.serena/`), hooks, and `llms.txt` — so a \
-         non-Claude repo isn't misreported as \"no AI\". Known gap: only **root** `CLAUDE.md` is \
+         Cline, JetBrains Junie, Gemini, Kilo Code, Roo Code, opencode, OpenHands (`AGENTS.md`, \
+         `.mcp.json`), agent-memory infra (`.codebase-memory/`, `memory-bank/`, `.serena/`), hooks, \
+         and `llms.txt` — so a non-Claude repo isn't misreported as \"no AI\". A commit counts as \
+         AI-assisted only when a `Co-authored-by` trailer names an AI tool (by its email domain, or \
+         by name where the name can't be a person's). Known gap: only **root** `CLAUDE.md` is \
          detected, so nested per-directory memory in a monorepo is undercounted."
+            .to_string(),
+    );
+    out.push(
+        "- **What a repository scan cannot see.** Prompts and their content, chat or IDE use that \
+         never reaches a commit, and per-person usage outside git. Endpoint tools (browser or \
+         desktop sensors) see those; this report sees what landed in the code."
             .to_string(),
     );
     out
@@ -2695,6 +2809,10 @@ fn html_quality_flags(results: &[RepoResult], days: u32) -> String {
                 "secret in .mcp.json" => flag_boxes.push(format!(
                     "<div class=\"issue risk\"><b>{repo} &mdash; credential committed in .mcp.json</b><div class=\"m\">Reference an environment variable (<code>${{VAR}}</code>) instead &mdash; the file is shared and travels to cloud sessions.</div></div>\n"
                 )),
+                "unreviewed AI changes" => flag_boxes.push(format!(
+                    "<div class=\"issue warn\"><b>{repo} &mdash; unreviewed AI changes</b><div class=\"m\">{} of {} AI-marked MRs merged without a reviewer or by their author &mdash; have someone review the intent of AI changes.</div></div>\n",
+                    m.ai_mr_unreviewed, m.ai_mr_merged,
+                )),
                 "usage w/o config" => flag_boxes.push(format!(
                     "<div class=\"issue warn\"><b>{repo} &mdash; usage without config</b><div class=\"m\">{:.0}% AI commits{} but no CLAUDE.md &mdash; add one.</div></div>\n",
                     m.ai_pct(),
@@ -2740,6 +2858,12 @@ fn html_recommendations(
                 link(pilot_url, &esc(pilot)),
             ));
         }
+    }
+    let unreviewed = flag_count(results, "unreviewed AI changes");
+    if unreviewed > 0 {
+        recs.push(format!(
+            "<div class=\"issue warn\"><b>{unreviewed} repo(s) merge AI-marked MRs without review</b><div class=\"m\">Require a reviewer other than the author.</div></div>\n"
+        ));
     }
     let no_config_count = flag_count(results, "usage w/o config");
     if no_config_count > 0 {
@@ -2807,7 +2931,7 @@ fn html_dormant(dormant: &[DormantRepo], group_path: &str, dormant_days: u32) ->
 
 fn html_methodology(days: u32, dormant_days: u32) -> String {
     format!(
-        "<details id=\"methodology\"><summary>Methodology</summary><p><b>Developer adoption</b> is the people-based industry headline: distinct non-bot commit authors with at least one AI-trailed commit in the window, divided by distinct non-bot commit authors overall (union across repos and teams &mdash; a developer active in several repos counts once). Automation identities (<code>[bot]</code>, renovate, dependabot, CI) are excluded from both sides. <b>AI commit share</b> is commit-weighted: total AI-trailed commits / total commits across all scanned repos &mdash; unlike the per-repo averages it cannot be skewed by tiny repos. Both are <i>telemetry lower bounds</i>: trailers are the only visible signal, and squash-merges or disabled attribution hide real usage. <b>AI-Active</b> counts repos with config markers <i>or</i> any usage evidence &mdash; an AI-trailed commit on any branch (squash-hidden feature-branch usage counts), recent <code>.tasks</code> activity, or an AI-marked MR &mdash; so real adoption is not gated on config presence; <b>Configured</b> is the marker-based count (L1+). Levels: <b>L0</b> no AI tooling markers; <b>L1 Exploring</b> any config marker (CLAUDE.md, AGENTS.md, .cursorrules, .mcp.json); <b>L2 Practicing</b> CLAUDE.md plus shared workflow assets (commands, settings, MCP config, hooks, or an ADR log) &mdash; or agents configured but not yet used; <b>L3 Scaling</b> agents plus measurable usage (&ge;10% AI-trailed commits, recent <code>.tasks</code> activity, or AI-marked MR descriptions). Usage is measured across <i>all</i> branches over the last {days} days because squash-merge strips commit trailers from the default branch; MR descriptions and <code>.tasks</code>/<code>.claude</code> path activity count as first-class evidence. <b>In-flight</b> repos have AI-named feature branches but no config merged yet. Trajectory: &uarr; actively building (live AI branches or recent config/ADR maintenance), &rarr; steady use, &darr; markers present but unused and unmaintained. Attribution rate = share of adopting repos with usage evidence whose usage is visible via Co-Authored-By trailers. &ldquo;Who&rdquo; names the commit authors of trailed commits (top 3) and the AI tool parsed from the trailer itself; sample commits link to the evidence. Repos with no activity in {dormant_days} days are skipped as dormant and listed as archive candidates.</p></details>\n"
+        "<details id=\"methodology\"><summary>Methodology</summary><p><b>Developer adoption</b> is the people-based industry headline: distinct non-bot commit authors with at least one AI-trailed commit in the window, divided by distinct non-bot commit authors overall (union across repos and teams &mdash; a developer active in several repos counts once). Automation identities (<code>[bot]</code>, renovate, dependabot, CI) are excluded from both sides. <b>AI commit share</b> is commit-weighted: total AI-trailed commits / total commits across all scanned repos &mdash; unlike the per-repo averages it cannot be skewed by tiny repos. Both are <i>telemetry lower bounds</i>: trailers are the only visible signal, and squash-merges or disabled attribution hide real usage. <b>AI-Active</b> counts repos with config markers <i>or</i> any usage evidence &mdash; an AI-trailed commit on any branch (squash-hidden feature-branch usage counts), recent <code>.tasks</code> activity, or an AI-marked MR &mdash; so real adoption is not gated on config presence; <b>Configured</b> is the marker-based count (L1+). Levels: <b>L0</b> no AI tooling markers; <b>L1 Exploring</b> any config marker (CLAUDE.md, AGENTS.md, .cursorrules, .mcp.json); <b>L2 Practicing</b> CLAUDE.md plus shared workflow assets (commands, settings, MCP config, hooks, or an ADR log) &mdash; or agents configured but not yet used; <b>L3 Scaling</b> agents plus measurable usage (&ge;10% AI-trailed commits, recent <code>.tasks</code> activity, or AI-marked MR descriptions). Usage is measured across <i>all</i> branches over the last {days} days because squash-merge strips commit trailers from the default branch; MR descriptions and <code>.tasks</code>/<code>.claude</code> path activity count as first-class evidence. <b>In-flight</b> repos have AI-named feature branches but no config merged yet. Trajectory: &uarr; actively building (live AI branches or recent config/ADR maintenance), &rarr; steady use, &darr; markers present but unused and unmaintained. Attribution rate = share of adopting repos with usage evidence whose usage is visible via Co-Authored-By trailers. &ldquo;Who&rdquo; names the commit authors of trailed commits (top 3) and the AI tool parsed from the trailer itself; sample commits link to the evidence. Repos with no activity in {dormant_days} days are skipped as dormant and listed as archive candidates. A commit counts as AI-assisted only when a <code>Co-authored-by</code> trailer names an AI tool (by its email domain, or by name where the name cannot be a person's). <b>Not visible to a repository scan:</b> prompts and their content, chat or IDE use that never reaches a commit, and per-person usage outside git &mdash; endpoint tools see those; this report sees what landed in the code.</p></details>\n"
     )
 }
 
@@ -2887,6 +3011,8 @@ mod tests {
         l3.ai_mr_count = 4;
         l3.total_mr_count = 10;
         l3.adr_recent_commits = 2;
+        l3.ai_mr_merged = 4;
+        l3.ai_mr_unreviewed = 1;
         l3.claude_md_last_touch = Some("2026-08-20T10:00:00Z".into());
         l3.ai_authors = vec![("ada".into(), 30), ("lin".into(), 10)];
         l3.ai_tools = vec!["Claude".into()];
@@ -3320,6 +3446,62 @@ mod tests {
         assert_eq!(trailer_tool(msg), Some("Claude Opus 4.7".to_string()));
         let plain = "fix: typo\n\nCo-authored-by: GitHub Copilot <copilot@github.com>";
         assert_eq!(trailer_tool(plain), Some("GitHub Copilot".to_string()));
+    }
+
+    #[test]
+    fn ai_coauthors_are_recognised_by_domain_or_unambiguous_name() {
+        let tool = |l: &str| ai_coauthor_tool(l);
+        assert_eq!(tool("Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"), Some("Claude"));
+        assert_eq!(tool("Co-authored-by: Claude <noreply@anthropic.com>"), Some("Claude"));
+        assert_eq!(tool("Co-authored-by: Claude Code"), Some("Claude"));
+        assert_eq!(tool("Co-authored-by: GitHub Copilot <copilot@github.com>"), Some("Copilot"));
+        assert_eq!(tool("Co-authored-by: Cursor Agent <cursoragent@cursor.com>"), Some("Cursor"));
+        assert_eq!(tool("Co-authored-by: aider (gpt-x) <noreply@aider.chat>"), Some("Aider"));
+        assert_eq!(tool("Co-authored-by: openhands <openhands@all-hands.dev>"), Some("OpenHands"));
+        assert_eq!(tool("Co-authored-by: Codex <codex@example.com>"), Some("Codex"));
+        assert_eq!(tool("Co-authored-by: Devin AI <bot@devin.ai>"), Some("Devin"));
+        assert_eq!(tool("    co-authored-by: Gemini <gemini@example.com>"), Some("Gemini"), "indentation and case");
+        // People who share a tool's name stay people.
+        assert_eq!(tool("Co-authored-by: Claude Dupont <claude.dupont@example.com>"), None);
+        assert_eq!(tool("Co-authored-by: Devin Smith <devin@example.com>"), None);
+        assert_eq!(tool("Co-authored-by: Patsy Cline <patsy@example.com>"), None);
+        assert_eq!(tool("Co-authored-by: Jo Brooks <jo@example.com>"), None, "no substring matches");
+        assert_eq!(tool("Reviewed-by: Claude Opus <noreply@anthropic.com>"), None, "only co-author trailers");
+    }
+
+    #[test]
+    fn ai_in_the_message_does_not_make_a_human_pairing_an_ai_commit() {
+        assert!(!is_ai_commit("fix AI summary endpoint\n\nCo-authored-by: Jane Doe <jane@example.com>"));
+        assert!(is_ai_commit("fix: x\n\nCo-authored-by: Cursor Agent <cursoragent@cursor.com>"));
+        assert!(is_ai_commit("aider: rename helper"), "aider's commit prefix");
+        assert!(!is_ai_commit("plain commit"));
+    }
+
+    #[test]
+    fn ai_mr_descriptions_need_a_tool_not_just_a_co_author() {
+        assert!(is_ai_mr_description("Adds X.\n\n\u{1F916} Generated with [Claude Code](https://claude.com/claude-code)"));
+        assert!(is_ai_mr_description("Generated with Codex"));
+        assert!(is_ai_mr_description("Co-authored-by: openhands <openhands@all-hands.dev>"));
+        assert!(!is_ai_mr_description("Pairing session.\n\nCo-authored-by: Jane Doe <jane@example.com>"));
+        assert!(!is_ai_mr_description("Generated with love by the platform team"));
+    }
+
+    #[test]
+    fn unreviewed_ai_merges_count_missing_reviewers_and_self_merges() {
+        let mr = |state: &str, desc: &str, reviewers: serde_json::Value, author: &str, merger: &str| {
+            serde_json::json!({"state": state, "description": desc, "reviewers": reviewers,
+                               "author": {"username": author}, "merged_by": {"username": merger}})
+        };
+        let ai = "\u{1F916} Generated with Claude Code";
+        let mrs = vec![
+            mr("merged", ai, serde_json::json!([{"username": "lin"}]), "ada", "lin"), // reviewed
+            mr("merged", ai, serde_json::json!([]), "ada", "lin"),                    // no reviewer
+            mr("merged", ai, serde_json::json!([{"username": "lin"}]), "ada", "ada"), // self-merged
+            mr("opened", ai, serde_json::json!([]), "ada", ""),                        // not merged
+            mr("merged", "human change", serde_json::json!([]), "sam", "sam"),         // not AI
+        ];
+        assert_eq!(unreviewed_ai_merges(&mrs), (3, 2));
+        assert_eq!(unreviewed_ai_merges(&[]), (0, 0));
     }
 
     #[test]

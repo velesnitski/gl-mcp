@@ -21,6 +21,7 @@ _Benchmarks & practices: [Claude Code best practices](https://www.anthropic.com/
 |----------|--------------------|--------------|-----|
 | CLAUDE.md within 200 lines | 0/1 | core/worker | It loads on every request; procedures belong in skills. |
 | CLAUDE.md says what the repo is | 2/2 | – | A stub gives no context; the useful part is purpose and gotchas. |
+| AI changes reviewed by someone else | 0/1 | core/api | Reviewing the intent of an AI change is the human check that remains. |
 | Procedures in skills | 1/2 | core/worker | Skills load only when needed instead of on every request. |
 | Team setup committed to the repo | 2/2 | – | Personal ~/.claude config reaches neither teammates nor cloud sessions. |
 | No credential in committed .mcp.json | 1/2 | web/site | The file is shared with every clone and travels to cloud sessions. |
@@ -40,7 +41,7 @@ _Source: Anthropic's Claude Code guidance (claude.dev, 2026: context engineering
 
 | Repo | Level | Traj | Markers | AI commits | Flags |
 |------|-------|------|---------|-----------|-------|
-| core/api | L3 | ↑ | CLAUDE.md, agents(3), skills(2), commands, settings, hooks, .mcp.json, tasks, ADR active(2) | 40% (40/100) +4 MRs +5 task commits | – |
+| core/api | L3 | ↑ | CLAUDE.md, agents(3), skills(2), commands, settings, hooks, .mcp.json, tasks, ADR active(2) | 40% (40/100) +4 MRs +5 task commits | unreviewed AI changes |
 | core/worker | L2 | ↓ | CLAUDE.md, agents(1) | 0% (0/20) | bloated CLAUDE.md, setup unused, stale config (30+ commits behind) |
 | web/site | L1 | → | AGENTS.md, .mcp.json, cursor, tasks | 0% (0/15) +2 task commits | secret in .mcp.json, no attribution |
 
@@ -59,6 +60,7 @@ Devs adopted Claude on their own — the repo gives it no context. Cheapest win:
 | data/etl | 40% (12/30) | joe (12) · Copilot | squash-hidden (branches only) |
 
 ### Quality Flags
+- acme/core/api: unreviewed AI changes — 1 of 4 AI-marked MRs merged without a reviewer or by their author; review the intent of AI changes
 - acme/core/worker: bloated CLAUDE.md (260 lines) — keep it under 200 lines: what the repo is and its gotchas; move procedures into skills
 - acme/core/worker: setup unused — .claude/agents present, 0 AI commits in 30d
 - acme/core/worker: stale config — CLAUDE.md last touched 2025-11-01 but 20+ commits since — refresh it
@@ -71,6 +73,7 @@ Devs adopted Claude on their own — the repo gives it no context. Cheapest win:
 ### Recommendations
 - 1 repo(s) commit a credential in .mcp.json — rotate it and switch to an environment reference
 - data team: 0 adoption across 2 active repos — pilot candidate: acme/data/etl
+- 1 repo(s) merge AI-marked MRs without review — require a reviewer other than the author
 - 1 repos have AI commits but no CLAUDE.md — quick win: add one
 - 1 repos show agent activity without commit attribution — standardize Co-Authored-By trailers to measure adoption
 - 1 repos lose attribution at merge — check squash settings or rely on MR descriptions
@@ -88,4 +91,5 @@ Inactive 90+ days and not archived — consider archiving to reduce noise.
 ### How to read this
 - **Config, usage, and visibility are three separate axes.** A repo can be fully configured yet unused (setup present, 0 AI commits — flagged), or heavily used with no config (invisible-usage section). Don't read "has `.claude/`" as "adopting".
 - **The commit share is a lower bound.** Squash-merge strips Co-Authored-By trailers (flagged as squash-hidden), teams disable attribution, and local-only tooling (a dev's own `.codebase-memory/`, hooks, or commands that are never committed) is invisible to any repo scan. Real usage is ≥ what's shown.
-- **Tool-agnostic.** Markers cover Claude (`.claude/` incl. agents, skills, commands, output-styles, plugins; `CLAUDE.md`), plus Cursor, Copilot, Aider, Windsurf, Continue, Cline, JetBrains Junie, Gemini (`AGENTS.md`, `.mcp.json`), agent-memory infra (`.codebase-memory/`, `memory-bank/`, `.serena/`), hooks, and `llms.txt` — so a non-Claude repo isn't misreported as "no AI". Known gap: only **root** `CLAUDE.md` is detected, so nested per-directory memory in a monorepo is undercounted.
+- **Tool-agnostic.** Markers cover Claude (`.claude/` incl. agents, skills, commands, output-styles, plugins; `CLAUDE.md`), plus Cursor, Copilot, Aider, Windsurf, Continue, Cline, JetBrains Junie, Gemini, Kilo Code, Roo Code, opencode, OpenHands (`AGENTS.md`, `.mcp.json`), agent-memory infra (`.codebase-memory/`, `memory-bank/`, `.serena/`), hooks, and `llms.txt` — so a non-Claude repo isn't misreported as "no AI". A commit counts as AI-assisted only when a `Co-authored-by` trailer names an AI tool (by its email domain, or by name where the name can't be a person's). Known gap: only **root** `CLAUDE.md` is detected, so nested per-directory memory in a monorepo is undercounted.
+- **What a repository scan cannot see.** Prompts and their content, chat or IDE use that never reaches a commit, and per-person usage outside git. Endpoint tools (browser or desktop sensors) see those; this report sees what landed in the code.

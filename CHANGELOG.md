@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-10-19
+
+### Fixed
+
+- **AI-commit detection no longer counts human pairings.** A commit used to count as
+  AI-assisted if it had any co-author trailer and "AI" anywhere in the message. MR
+  descriptions counted any co-author trailer at all. Attribution is now decided per
+  trailer line: by the tool's email domain, or by an unambiguous tool name. Names that
+  are also people's names (Claude, Devin, Cline) need the tool's domain or, for Claude,
+  a model word (ADR 064).
+
+### Added
+
+- **More coding agents recognised.** Trailers from Codex, OpenHands, Aider, Gemini,
+  Windsurf, Kilo Code, Roo Code, opencode and Devin are now recognised, as are config
+  markers `.kilocode/`, `.roo/`, `.roomodes`, `opencode.json`, `.opencode/` and
+  `.openhands/`.
+- **Unreviewed AI changes.** AI-marked MRs merged with no reviewer, or by their own
+  author, are reported per repo, as an organisation recommendation, and as a
+  practice-check row. The scan makes no extra requests for this.
+- **The methodology names what a repository scan cannot see:** prompts, chat or IDE
+  use that never reaches a commit, and per-person usage outside git.
+
 ## [1.13.1] - 2026-10-14
 
 ### Added
