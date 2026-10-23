@@ -10,8 +10,10 @@
         },
         "expires_at": {
           "description": "Optional membership expiry date, YYYY-MM-DD",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "group_id": {
           "description": "Group ID or full path (e.g. 'my-org/devops'). Grants access to all projects in the group.",
@@ -19,8 +21,10 @@
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "user": {
           "description": "User to add: a username (leading '@' optional) or a numeric user id",
@@ -32,7 +36,6 @@
         "user",
         "access_level"
       ],
-      "title": "AddGroupMemberParams",
       "type": "object"
     },
     "name": "add_group_member"
@@ -48,13 +51,17 @@
         },
         "expires_at": {
           "description": "Optional membership expiry date, YYYY-MM-DD",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or URL-encoded path (e.g. 'group/project')",
@@ -70,7 +77,6 @@
         "user",
         "access_level"
       ],
-      "title": "AddMemberParams",
       "type": "object"
     },
     "name": "add_member"
@@ -92,13 +98,17 @@
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "note_type": {
           "description": "Note type: 'issue' or 'mr' (default: 'issue')",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -110,7 +120,6 @@
         "iid",
         "body"
       ],
-      "title": "AddNoteParams",
       "type": "object"
     },
     "name": "add_note"
@@ -126,8 +135,10 @@
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -135,15 +146,16 @@
         },
         "ref_name": {
           "description": "Branch, tag, or SHA (default: HEAD)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id",
         "file_path"
       ],
-      "title": "AnalyzeFileParams",
       "type": "object"
     },
     "name": "analyze_file"
@@ -158,35 +170,44 @@
           "description": "Days of pipeline history to analyze (default: 30)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "group_path": {
           "description": "Group path — analyze every non-archived project in the group (incl. subgroups).",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "max_logs": {
           "default": null,
           "description": "Max failed pipelines whose job logs are fetched for root-cause clustering (default: 20)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "project_id": {
           "default": null,
           "description": "Project ID or path. Omit when using group_path.",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
-      "title": "AnalyzePipelineFailuresParams",
       "type": "object"
     },
     "name": "analyze_pipeline_failures"
@@ -198,16 +219,20 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "max_files": {
           "default": null,
           "description": "Max files to analyze (default: 50)",
           "format": "uint",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -215,19 +240,22 @@
         },
         "ref_name": {
           "description": "Branch or tag (default: HEAD)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "summary_only": {
           "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id"
       ],
-      "title": "AnalyzeProjectParams",
       "type": "object"
     },
     "name": "analyze_project"
@@ -239,30 +267,37 @@
       "properties": {
         "group_path": {
           "description": "Group path — audit every non-archived project in the group",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "max_projects": {
           "default": null,
           "description": "Max projects to audit in a group sweep (default: 60). A clean result over a subset is not a clean group, and the response says so.",
           "format": "uint",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "project_id": {
           "default": null,
           "description": "Project ID or path. Omit when using group_path.",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
-      "title": "AuditCiSecurityParams",
       "type": "object"
     },
     "name": "audit_ci_security"
@@ -275,41 +310,52 @@
         "group_path": {
           "default": null,
           "description": "Group path: audit every non-archived project in the group (with subgroups)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "max_projects": {
           "description": "Group sweeps: audit at most this many most recently active projects (default: 30)",
           "format": "uint",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "min_severity": {
           "default": null,
           "description": "Only list packages whose worst advisory is at least this severe: critical, high, medium or low (default: all). Totals still count everything.",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "default": null,
           "description": "Project ID or path. Omit when using group_path.",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "summary_only": {
           "default": null,
           "description": "One line: counts and the five packages to fix first (default: false)",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
-      "title": "AuditDependenciesParams",
       "type": "object"
     },
     "name": "audit_dependencies"
@@ -324,8 +370,10 @@
           "format": "uint8",
           "maximum": 255,
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "group_path": {
           "description": "Group path to scan, including subgroups (e.g. 'my-org' or 'my-org/backend')",
@@ -333,26 +381,31 @@
         },
         "include_ok": {
           "description": "Also list repos with an OK README (default: false — only problems are listed)",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "small_bytes": {
           "description": "READMEs smaller than this many bytes are flagged as 'small' stubs (default: 300)",
           "format": "uint",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "required": [
         "group_path"
       ],
-      "title": "AuditReadmesParams",
       "type": "object"
     },
     "name": "audit_readmes"
@@ -364,8 +417,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path to audit against the spec",
@@ -373,13 +428,17 @@
         },
         "ref_name": {
           "description": "Branch or tag to search in (default: default branch)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "routes_file": {
           "description": "Optional path(s) to the route-defining source for precise reverse-drift: a file, a comma-separated list of files, or a directory (every code file under it, recursively — e.g. 'routes/api' for a Laravel app). Without it, reverse-drift is search-harvested within documented namespaces.",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "spec": {
           "description": "The spec document as markdown/text (e.g. a knowledge-base app-spec article). Documented routes and version are extracted from it and cross-referenced against the codebase.",
@@ -387,15 +446,16 @@
         },
         "summary_only": {
           "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id",
         "spec"
       ],
-      "title": "AuditSpecDriftParams",
       "type": "object"
     },
     "name": "audit_spec_drift"
@@ -407,8 +467,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "pipeline_id": {
           "description": "Pipeline ID",
@@ -425,7 +487,6 @@
         "project_id",
         "pipeline_id"
       ],
-      "title": "CancelPipelineParams",
       "type": "object"
     },
     "name": "cancel_pipeline"
@@ -441,8 +502,10 @@
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -453,7 +516,6 @@
         "project_id",
         "branch"
       ],
-      "title": "CheckBranchProtectionParams",
       "type": "object"
     },
     "name": "check_branch_protection"
@@ -465,8 +527,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "mr_iid": {
           "description": "Merge request IID (the ! number)",
@@ -483,7 +547,6 @@
         "project_id",
         "mr_iid"
       ],
-      "title": "CloseMrParams",
       "type": "object"
     },
     "name": "close_mr"
@@ -499,8 +562,10 @@
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -516,7 +581,6 @@
         "from",
         "to"
       ],
-      "title": "CompareBranchesParams",
       "type": "object"
     },
     "name": "compare_branches"
@@ -531,13 +595,17 @@
           "description": "Number of days to analyze (default: 14)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Comma-separated project IDs or paths for cross-project comparison (e.g. 'group/project1,group/project2')",
@@ -545,8 +613,10 @@
         },
         "summary_only": {
           "description": "Return compact one-line-per-developer summary (~5x smaller). Use first to scan.",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "usernames": {
           "description": "Comma-separated GitLab usernames to compare",
@@ -557,7 +627,6 @@
         "project_id",
         "usernames"
       ],
-      "title": "CompareDevelopersParams",
       "type": "object"
     },
     "name": "compare_developers"
@@ -573,8 +642,10 @@
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -582,15 +653,16 @@
         },
         "ref_name": {
           "description": "Source ref (branch/tag/SHA) to branch from (default: main)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id",
         "branch"
       ],
-      "title": "CreateBranchParams",
       "type": "object"
     },
     "name": "create_branch"
@@ -602,13 +674,17 @@
       "properties": {
         "expires_at": {
           "description": "Expiration as ISO date (e.g., '2026-12-31T23:59:59Z'). Optional, omit for no expiry.",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "name": {
           "description": "Deploy token name",
@@ -620,8 +696,10 @@
         },
         "reveal_token": {
           "description": "Return the token value in the response. Defaults to false. This places a live credential in the conversation transcript and the model's context.",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "scopes": {
           "description": "Comma-separated scopes: read_repository, read_registry, write_registry, read_package_registry, write_package_registry",
@@ -629,18 +707,24 @@
         },
         "store_as_ci_variable": {
           "description": "PREFERRED: CI/CD variable key to write the token into (masked). Only metadata is returned — the value is never surfaced. If the write fails the token is revoked rather than left orphaned.",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "username": {
           "description": "Custom username for the token (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "variable_protected": {
           "description": "Mark the stored CI variable as protected (default: false)",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "required": [
@@ -648,7 +732,6 @@
         "name",
         "scopes"
       ],
-      "title": "CreateDeployTokenParams",
       "type": "object"
     },
     "name": "create_deploy_token"
@@ -660,23 +743,31 @@
       "properties": {
         "assignee": {
           "description": "Assignee username",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "description": {
           "description": "Issue description (markdown)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "labels": {
           "description": "Comma-separated label names",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -691,7 +782,6 @@
         "project_id",
         "title"
       ],
-      "title": "CreateIssueParams",
       "type": "object"
     },
     "name": "create_issue"
@@ -707,13 +797,17 @@
         },
         "description": {
           "description": "Label description (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "name": {
           "description": "Label name",
@@ -729,7 +823,6 @@
         "name",
         "color"
       ],
-      "title": "CreateLabelParams",
       "type": "object"
     },
     "name": "create_label"
@@ -741,28 +834,38 @@
       "properties": {
         "assignee": {
           "description": "Assignee username",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "description": {
           "description": "MR description in markdown (default: auto-generated commit list)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "draft": {
           "description": "Create as draft MR (default: false)",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "labels": {
           "description": "Comma-separated labels",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -770,13 +873,17 @@
         },
         "remove_source_branch": {
           "description": "Delete source branch after merge (default: true)",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "reviewers": {
           "description": "Comma-separated reviewer usernames",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "source_branch": {
           "description": "Source branch (your feature branch)",
@@ -784,25 +891,30 @@
         },
         "squash": {
           "description": "Squash commits on merge (default: true)",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "target_branch": {
           "description": "Target branch (default: project default branch)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "title": {
           "description": "MR title (default: auto-generated from branch name, e.g., 'feature/PROJ-123-add-auth' → 'PROJ-123: Add auth')",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id",
         "source_branch"
       ],
-      "title": "CreateMergeRequestParams",
       "type": "object"
     },
     "name": "create_merge_request"
@@ -814,8 +926,10 @@
       "properties": {
         "active": {
           "description": "Active on creation (default: true)",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "cron": {
           "description": "5-field cron expression, e.g. `0 3 * * *`",
@@ -823,8 +937,10 @@
         },
         "cron_timezone": {
           "description": "Cron timezone (default: UTC)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "description": {
           "description": "Human-readable description",
@@ -832,8 +948,10 @@
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -850,7 +968,6 @@
         "ref_name",
         "cron"
       ],
-      "title": "CreatePipelineScheduleParams",
       "type": "object"
     },
     "name": "create_pipeline_schedule"
@@ -862,23 +979,31 @@
       "properties": {
         "default_branch": {
           "description": "Default branch name (default: 'main')",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "description": {
           "description": "Project description",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "initialize_with_readme": {
           "description": "Initialize repository with a README (default: true)",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "name": {
           "description": "Project name",
@@ -886,32 +1011,39 @@
         },
         "namespace": {
           "description": "Namespace as a full group path (e.g. 'my-org/devops') or numeric id — resolved and validated. Preferred over namespace_id; avoids having to look up the subgroup's numeric id.",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "namespace_id": {
           "default": null,
           "description": "Namespace (group) ID for project placement (numeric)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "path": {
           "description": "Project path/slug (default: derived from name)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "visibility": {
           "description": "Visibility: 'private', 'internal', or 'public' (default: 'private')",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "name"
       ],
-      "title": "CreateProjectParams",
       "type": "object"
     },
     "name": "create_project"
@@ -926,18 +1058,24 @@
           "description": "Access level: 10 guest, 20 reporter, 30 developer (default), 40 maintainer, 50 owner",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "expires_at": {
           "description": "Expiry date YYYY-MM-DD (GitLab requires one; max 1 year)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "name": {
           "description": "Token name",
@@ -949,8 +1087,10 @@
         },
         "reveal_token": {
           "description": "Return the token value in the response. Defaults to false. This puts a live credential into the conversation transcript and the model's context, so use it only when something outside CI must consume the value.",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "scopes": {
           "description": "Comma-separated scopes: api, read_api, read_repository, write_repository, read_registry, write_registry, create_runner, manage_runner, k8s_proxy, ai_features, read_observability, write_observability, self_rotate. Unlike a deploy token, this can carry write_repository.",
@@ -958,13 +1098,17 @@
         },
         "store_as_ci_variable": {
           "description": "PREFERRED: CI/CD variable key to write the token into (masked). Only metadata is returned — the value is never surfaced to the model or the transcript. If the write fails the token is revoked rather than left orphaned.",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "variable_protected": {
           "description": "Mark the stored CI variable as protected (default: false)",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "required": [
@@ -972,7 +1116,6 @@
         "name",
         "scopes"
       ],
-      "title": "CreateProjectAccessTokenParams",
       "type": "object"
     },
     "name": "create_project_access_token"
@@ -988,8 +1131,10 @@
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -1000,7 +1145,6 @@
         "project_id",
         "branch"
       ],
-      "title": "DeleteBranchParams",
       "type": "object"
     },
     "name": "delete_branch"
@@ -1012,8 +1156,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "key": {
           "description": "Variable key to delete",
@@ -1028,7 +1174,6 @@
         "project_id",
         "key"
       ],
-      "title": "DeleteCiVariableParams",
       "type": "object"
     },
     "name": "delete_ci_variable"
@@ -1040,8 +1185,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -1058,7 +1205,6 @@
         "project_id",
         "schedule_id"
       ],
-      "title": "PlayPipelineScheduleParams",
       "type": "object"
     },
     "name": "delete_pipeline_schedule"
@@ -1070,8 +1216,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "key": {
           "description": "Variable key",
@@ -1093,7 +1241,6 @@
         "schedule_id",
         "key"
       ],
-      "title": "DeletePipelineScheduleVariableParams",
       "type": "object"
     },
     "name": "delete_pipeline_schedule_variable"
@@ -1109,8 +1256,10 @@
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or URL-encoded path (e.g. 'group/project')",
@@ -1121,7 +1270,6 @@
         "project_id",
         "confirm_full_path"
       ],
-      "title": "DeleteProjectParams",
       "type": "object"
     },
     "name": "delete_project"
@@ -1136,16 +1284,20 @@
           "description": "Days of commit history to scan for AI co-authorship (default: 30)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "dormant_days": {
           "default": null,
           "description": "Days of inactivity before a repo is skipped as dormant (default: 180)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "group_path": {
           "description": "Group path (e.g., 'my-org') — scans all projects including subgroups. A single project path also works, to report on just that repo.",
@@ -1153,14 +1305,15 @@
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "group_path"
       ],
-      "title": "GenerateAiAdoptionReportParams",
       "type": "object"
     },
     "name": "generate_ai_adoption_report"
@@ -1172,18 +1325,24 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "period": {
           "description": "Period: 'today', 'yesterday', 'week', '3d', or hours (default: today)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project": {
           "description": "Filter to specific project path substring (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "username": {
           "description": "GitLab username",
@@ -1193,7 +1352,6 @@
       "required": [
         "username"
       ],
-      "title": "GenerateDevReportParams",
       "type": "object"
     },
     "name": "generate_dev_report"
@@ -1205,16 +1363,20 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "max_files": {
           "default": null,
           "description": "Max files to analyze (default: 50)",
           "format": "uint",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -1222,14 +1384,15 @@
         },
         "ref_name": {
           "description": "Branch or tag (default: default branch)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id"
       ],
-      "title": "GenerateProjectReportParams",
       "type": "object"
     },
     "name": "generate_project_report"
@@ -1241,8 +1404,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path to audit against the spec",
@@ -1250,13 +1415,17 @@
         },
         "ref_name": {
           "description": "Branch or tag to search in (default: default branch)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "routes_file": {
           "description": "Optional route-defining source for precise reverse-drift: a file, comma-separated files, or a directory (recursive).",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "spec": {
           "description": "The spec document as markdown/text (e.g. a knowledge-base app-spec article). Documented routes and version are extracted from it and cross-referenced against the codebase.",
@@ -1267,7 +1436,6 @@
         "project_id",
         "spec"
       ],
-      "title": "GenerateSpecAuditReportParams",
       "type": "object"
     },
     "name": "generate_spec_audit_report"
@@ -1280,8 +1448,10 @@
           "properties": {
             "label": {
               "description": "Display label for the rollup (e.g. 'iOS'). Defaults to the project path.",
-              "nullable": true,
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "project_id": {
               "description": "Project ID or path for this platform",
@@ -1289,13 +1459,17 @@
             },
             "ref_name": {
               "description": "Branch or tag to search in (default: default branch)",
-              "nullable": true,
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "routes_file": {
               "description": "Optional route-defining source for precise reverse-drift: a file, comma-separated files, or a directory (recursive)",
-              "nullable": true,
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "spec": {
               "description": "The spec document for this platform, as markdown/text",
@@ -1313,8 +1487,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "targets": {
           "description": "Teams/platforms to audit. Each is audited independently (and concurrently); results roll up into one clickable cross-team HTML report.",
@@ -1327,7 +1503,6 @@
       "required": [
         "targets"
       ],
-      "title": "GenerateSweepReportParams",
       "type": "object"
     },
     "name": "generate_sweep_report"
@@ -1342,13 +1517,17 @@
           "description": "Number of days to analyze (default: 14)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -1363,7 +1542,6 @@
         "project_id",
         "usernames"
       ],
-      "title": "GenerateTeamReportParams",
       "type": "object"
     },
     "name": "generate_team_report"
@@ -1378,16 +1556,20 @@
           "description": "Days of commit history to scan for AI co-authorship (default: 30)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "dormant_days": {
           "default": null,
           "description": "Days of inactivity before a repo is skipped as dormant (default: 180)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "group_path": {
           "description": "Group path (e.g., 'my-org') — scans all projects including subgroups. A single project path also works, to scan just that repo.",
@@ -1395,19 +1577,22 @@
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "summary_only": {
           "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "required": [
         "group_path"
       ],
-      "title": "GetAiAdoptionParams",
       "type": "object"
     },
     "name": "get_ai_adoption"
@@ -1419,8 +1604,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -1430,7 +1617,6 @@
       "required": [
         "project_id"
       ],
-      "title": "GetApprovalRulesParams",
       "type": "object"
     },
     "name": "get_approval_rules"
@@ -1444,8 +1630,10 @@
           "description": "Last line (inclusive)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "file_path": {
           "description": "File path within the repository",
@@ -1453,8 +1641,10 @@
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -1462,22 +1652,25 @@
         },
         "ref_name": {
           "description": "Branch, tag, or commit SHA (default: HEAD)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "start_line": {
           "description": "First line (1-indexed). With no end_line, a 100-line window from here.",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id",
         "file_path"
       ],
-      "title": "GetBlameParams",
       "type": "object"
     },
     "name": "get_blame"
@@ -1489,8 +1682,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -1500,7 +1695,6 @@
       "required": [
         "project_id"
       ],
-      "title": "GetCiVariablesParams",
       "type": "object"
     },
     "name": "get_ci_variables"
@@ -1512,21 +1706,27 @@
       "properties": {
         "branch": {
           "description": "Branch name (default: default branch)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "days": {
           "default": null,
           "description": "Number of days to analyze (default: 30)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -1534,14 +1734,15 @@
         },
         "summary_only": {
           "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id"
       ],
-      "title": "GetCodeHotspotsParams",
       "type": "object"
     },
     "name": "get_code_hotspots"
@@ -1553,26 +1754,34 @@
       "properties": {
         "compact": {
           "description": "Strip markdown formatting for smaller responses",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "file": {
           "description": "Only show diff for files matching this path substring",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "max_lines_per_file": {
           "default": null,
           "description": "Max diff lines per file (default: 200)",
           "format": "uint",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -1584,20 +1793,23 @@
         },
         "skip_generated": {
           "description": "Skip lockfiles and generated code (default: true)",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "summary_only": {
           "description": "Return only file list + stats, no diff content. ~10x smaller response.",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id",
         "sha"
       ],
-      "title": "GetCommitDiffParams",
       "type": "object"
     },
     "name": "get_commit_diff"
@@ -1609,8 +1821,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -1625,7 +1839,6 @@
         "project_id",
         "sha"
       ],
-      "title": "GetCommitRefsParams",
       "type": "object"
     },
     "name": "get_commit_refs"
@@ -1637,8 +1850,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -1648,7 +1863,6 @@
       "required": [
         "project_id"
       ],
-      "title": "GetContributorsParams",
       "type": "object"
     },
     "name": "get_contributors"
@@ -1660,8 +1874,10 @@
       "properties": {
         "instance": {
           "description": "Default instance if not specified per-group",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "targets": {
           "description": "Comma-separated 'instance:group' pairs (e.g., 'staging:my-org/backend,production:my-org/frontend'). Groups within same instance are batched.",
@@ -1671,7 +1887,6 @@
       "required": [
         "targets"
       ],
-      "title": "GetCrossInstanceDashboardParams",
       "type": "object"
     },
     "name": "get_cross_instance_dashboard"
@@ -1686,18 +1901,24 @@
           "description": "Number of days to analyze (default: 30)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "environment": {
           "description": "Filter by environment name (e.g., 'production')",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -1707,7 +1928,6 @@
       "required": [
         "project_id"
       ],
-      "title": "GetDeployFrequencyParams",
       "type": "object"
     },
     "name": "get_deploy_frequency"
@@ -1722,8 +1942,10 @@
           "description": "Last line to return (1-indexed, inclusive). Defaults to end of file.",
           "format": "uint",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "file_path": {
           "description": "File path within the repository",
@@ -1731,13 +1953,17 @@
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "pattern": {
           "description": "Case-insensitive regex; when set, returns only matching lines (numbered) from the whole file, with the match count. Takes precedence over start_line/end_line. Use to locate something in a large file without pulling all of it.",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -1745,23 +1971,26 @@
         },
         "ref_name": {
           "description": "Branch, tag, or commit SHA (default: default branch)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "start_line": {
           "default": null,
           "description": "First line to return (1-indexed, inclusive). Pair with end_line to read one window of a large file instead of all of it — the response always states the file's true line count, so a window is never mistaken for the whole file.",
           "format": "uint",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id",
         "file_path"
       ],
-      "title": "GetFileContentParams",
       "type": "object"
     },
     "name": "get_file_content"
@@ -1777,24 +2006,29 @@
         },
         "include_commit_messages": {
           "description": "Include head-commit titles per push under each member (from push events; enables text correlation, e.g. issue IDs). Default: false",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "period": {
           "description": "Period: 'today', 'yesterday', 'week', '3d', or hours (default: 24)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "group_path"
       ],
-      "title": "GetGroupActivityParams",
       "type": "object"
     },
     "name": "get_group_activity"
@@ -1810,22 +2044,25 @@
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "per_page": {
           "default": null,
           "description": "Max results (default: 100)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "required": [
         "group_id"
       ],
-      "title": "GetGroupMembersParams",
       "type": "object"
     },
     "name": "get_group_members"
@@ -1837,13 +2074,17 @@
       "properties": {
         "include_notes": {
           "description": "Include comments (default: true)",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "issue_iid": {
           "description": "Issue IID (the # number)",
@@ -1860,7 +2101,6 @@
         "project_id",
         "issue_iid"
       ],
-      "title": "GetIssueParams",
       "type": "object"
     },
     "name": "get_issue"
@@ -1872,8 +2112,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "job_id": {
           "description": "Job ID",
@@ -1883,8 +2125,10 @@
         },
         "pattern": {
           "description": "Case-insensitive regex; when set, searches the WHOLE log and returns only matching lines (numbered), capped at `tail` matches. Far cheaper than pulling a large log to find one error.",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -1895,15 +2139,16 @@
           "description": "Max lines from end of log (default: 100)",
           "format": "uint",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id",
         "job_id"
       ],
-      "title": "GetJobLogParams",
       "type": "object"
     },
     "name": "get_job_log"
@@ -1915,8 +2160,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -1926,7 +2173,6 @@
       "required": [
         "project_id"
       ],
-      "title": "GetLanguagesParams",
       "type": "object"
     },
     "name": "get_languages"
@@ -1938,8 +2184,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -1954,7 +2202,6 @@
         "project_id",
         "refs"
       ],
-      "title": "GetMergeBaseParams",
       "type": "object"
     },
     "name": "get_merge_base"
@@ -1966,13 +2213,17 @@
       "properties": {
         "include_notes": {
           "description": "Include comments (default: true)",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "mr_iid": {
           "description": "Merge request IID (the ! number)",
@@ -1989,7 +2240,6 @@
         "project_id",
         "mr_iid"
       ],
-      "title": "GetMergeRequestParams",
       "type": "object"
     },
     "name": "get_merge_request"
@@ -2001,16 +2251,20 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "per_page": {
           "default": null,
           "description": "Max results (default: 20)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -2018,14 +2272,15 @@
         },
         "state": {
           "description": "Filter by state: active, closed, all (default: all)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id"
       ],
-      "title": "GetMilestonesParams",
       "type": "object"
     },
     "name": "get_milestones"
@@ -2037,8 +2292,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "mr_iid": {
           "description": "Merge request IID",
@@ -2055,7 +2312,6 @@
         "project_id",
         "mr_iid"
       ],
-      "title": "GetMrApprovalsParams",
       "type": "object"
     },
     "name": "get_mr_approvals"
@@ -2070,31 +2326,40 @@
           "description": "Number of days to analyze (default: 7)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "group_id": {
           "description": "Group path for cross-project stats",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path (optional if group_id set)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "state": {
           "description": "Filter by state: opened, merged, closed, all (default: all)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
-      "title": "GetMrCategoriesParams",
       "type": "object"
     },
     "name": "get_mr_categories"
@@ -2106,26 +2371,34 @@
       "properties": {
         "compact": {
           "description": "Strip markdown formatting for smaller responses",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "file": {
           "description": "Only show diff for files matching this path substring",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "max_lines_per_file": {
           "default": null,
           "description": "Max diff lines per file (default: 200)",
           "format": "uint",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "mr_iid": {
           "description": "Merge request IID",
@@ -2139,20 +2412,23 @@
         },
         "skip_generated": {
           "description": "Skip lockfiles and generated code (default: true)",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "summary_only": {
           "description": "Return only file list + stats, no diff content",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id",
         "mr_iid"
       ],
-      "title": "GetMrChangesParams",
       "type": "object"
     },
     "name": "get_mr_changes"
@@ -2168,19 +2444,22 @@
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "summary_only": {
           "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "required": [
         "group_id"
       ],
-      "title": "GetMrDashboardParams",
       "type": "object"
     },
     "name": "get_mr_dashboard"
@@ -2192,8 +2471,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "mr_iid": {
           "description": "Merge request IID (the ! number)",
@@ -2207,15 +2488,16 @@
         },
         "summary_only": {
           "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id",
         "mr_iid"
       ],
-      "title": "GetMrDiscussionsParams",
       "type": "object"
     },
     "name": "get_mr_discussions"
@@ -2227,8 +2509,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "mr_iid": {
           "description": "Merge request IID (the ! number)",
@@ -2245,7 +2529,6 @@
         "project_id",
         "mr_iid"
       ],
-      "title": "GetMrPipelinesParams",
       "type": "object"
     },
     "name": "get_mr_pipelines"
@@ -2260,31 +2543,40 @@
           "description": "Number of days to analyze (default: 7)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "group_id": {
           "description": "Group path for cross-project stats",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path (optional if group_id set)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "summary_only": {
           "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
-      "title": "GetMrReviewDepthParams",
       "type": "object"
     },
     "name": "get_mr_review_depth"
@@ -2299,31 +2591,40 @@
           "description": "Number of days to analyze (default: 30)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "group_id": {
           "description": "Group path for cross-project stats (e.g., 'my-org/backend')",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path (optional if group_id set)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "summary_only": {
           "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
-      "title": "GetMrSizeTrendParams",
       "type": "object"
     },
     "name": "get_mr_size_trend"
@@ -2338,31 +2639,40 @@
           "description": "Number of days to analyze (default: 7)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "group_id": {
           "description": "Group path for cross-project stats",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path (optional if group_id set)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "summary_only": {
           "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
-      "title": "GetMrTimelineParams",
       "type": "object"
     },
     "name": "get_mr_timeline"
@@ -2377,26 +2687,33 @@
           "description": "Number of days to analyze (default: 7)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "group_id": {
           "description": "Group path for cross-project stats (e.g., 'my-org/backend')",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path (optional if group_id set)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
-      "title": "GetMrTurnaroundParams",
       "type": "object"
     },
     "name": "get_mr_turnaround"
@@ -2412,14 +2729,15 @@
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "groups"
       ],
-      "title": "GetOrgMrDashboardParams",
       "type": "object"
     },
     "name": "get_org_mr_dashboard"
@@ -2431,8 +2749,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "pipeline_id": {
           "description": "Pipeline ID",
@@ -2449,7 +2769,6 @@
         "project_id",
         "pipeline_id"
       ],
-      "title": "GetPipelineParams",
       "type": "object"
     },
     "name": "get_pipeline"
@@ -2461,8 +2780,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or URL-encoded path (e.g., 'my-group/my-project')",
@@ -2472,7 +2793,6 @@
       "required": [
         "project_id"
       ],
-      "title": "GetProjectParams",
       "type": "object"
     },
     "name": "get_project"
@@ -2484,21 +2804,27 @@
       "properties": {
         "action": {
           "description": "Filter by action: pushed, merged, commented, joined, left, etc. (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "per_page": {
           "default": null,
           "description": "Max results (default: 20)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -2506,14 +2832,15 @@
         },
         "summary_only": {
           "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id"
       ],
-      "title": "GetProjectEventsParams",
       "type": "object"
     },
     "name": "get_project_events"
@@ -2525,8 +2852,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -2536,7 +2865,6 @@
       "required": [
         "project_id"
       ],
-      "title": "GetProjectStatsParams",
       "type": "object"
     },
     "name": "get_project_stats"
@@ -2551,31 +2879,40 @@
           "description": "Number of days to analyze (default: 14)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "group_id": {
           "description": "Group path for cross-project stats (e.g., 'my-org/backend')",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path (optional if group_id set)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "summary_only": {
           "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
-      "title": "GetReviewLoadParams",
       "type": "object"
     },
     "name": "get_review_load"
@@ -2590,31 +2927,40 @@
           "description": "Number of days to analyze (default: 14)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "group_id": {
           "description": "Group path for cross-project stats (e.g., 'my-org/backend')",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path (optional if group_id set)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "summary_only": {
           "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
-      "title": "GetReviewerVelocityParams",
       "type": "object"
     },
     "name": "get_reviewer_velocity"
@@ -2629,13 +2975,17 @@
           "description": "Days of inactivity to consider stale (default: 30)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -2645,7 +2995,6 @@
       "required": [
         "project_id"
       ],
-      "title": "GetStaleBranchesParams",
       "type": "object"
     },
     "name": "get_stale_branches"
@@ -2657,13 +3006,17 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "period": {
           "description": "Period: 'today', 'yesterday', 'week', '3d', or hours (default: 24)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "team": {
           "description": "Team key from teams.json (e.g., 'devops', 'backend') OR comma-separated usernames",
@@ -2673,7 +3026,6 @@
       "required": [
         "team"
       ],
-      "title": "GetTeamActivityParams",
       "type": "object"
     },
     "name": "get_team_activity"
@@ -2688,18 +3040,24 @@
           "description": "Number of days to analyze (default: 14)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "summary_only": {
           "description": "Return compact one-line summary (~5x smaller). Use first to scan.",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "usernames": {
           "description": "Comma-separated GitLab usernames",
@@ -2709,7 +3067,6 @@
       "required": [
         "usernames"
       ],
-      "title": "GetTeamTimezoneParams",
       "type": "object"
     },
     "name": "get_team_timezone"
@@ -2721,21 +3078,27 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "path": {
           "description": "Directory path (empty = root)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "per_page": {
           "default": null,
           "description": "Max results (default: 100)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -2743,19 +3106,22 @@
         },
         "recursive": {
           "description": "Include subdirectories recursively (default: false)",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "ref_name": {
           "description": "Branch/tag/SHA (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id"
       ],
-      "title": "GetTreeParams",
       "type": "object"
     },
     "name": "get_tree"
@@ -2767,24 +3133,29 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "user_id": {
           "default": null,
           "description": "GitLab user ID (numeric)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "username": {
           "description": "GitLab username (e.g., 'john.doe')",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
-      "title": "GetUserParams",
       "type": "object"
     },
     "name": "get_user"
@@ -2796,13 +3167,17 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "period": {
           "description": "Period: 'today', 'yesterday', 'week' (since Monday), '3d', or hours as number (default: 24)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "username": {
           "description": "GitLab username",
@@ -2812,7 +3187,6 @@
       "required": [
         "username"
       ],
-      "title": "GetUserActivityParams",
       "type": "object"
     },
     "name": "get_user_activity"
@@ -2830,7 +3204,6 @@
       "required": [
         "id"
       ],
-      "title": "GetVulnerabilityParams",
       "type": "object"
     },
     "name": "get_vulnerability"
@@ -2842,16 +3215,20 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "per_page": {
           "default": null,
           "description": "Max results (default: 20)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -2859,14 +3236,15 @@
         },
         "search": {
           "description": "Search branch name",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id"
       ],
-      "title": "ListBranchesParams",
       "type": "object"
     },
     "name": "list_branches"
@@ -2878,31 +3256,41 @@
       "properties": {
         "all_branches": {
           "description": "When true, returns commits from all branches, not just the default. Useful for catching work-in-progress on feature branches. Mutually exclusive with branch.",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "author": {
           "description": "Filter by author name or email",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "branch": {
           "description": "Branch or tag name (empty = default branch). Mutually exclusive with all_branches. Accepts `ref_name` as an alias — the name sibling tools (search_code, list_pipelines) and the GitLab API itself use — so a caller who passes `ref_name` is honoured rather than silently dropped.",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "per_page": {
           "default": null,
           "description": "Max results (default: 20)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -2910,24 +3298,29 @@
         },
         "since": {
           "description": "ISO date: commits after this date (e.g., '2026-03-24T00:00:00Z')",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "summary_only": {
           "description": "Return compact one-line-per-commit summary (~3x smaller). Use first to scan, then get_commit_diff to drill in.",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "until": {
           "description": "ISO date: commits before this date",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id"
       ],
-      "title": "ListCommitsParams",
       "type": "object"
     },
     "name": "list_commits"
@@ -2939,8 +3332,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -2950,7 +3345,6 @@
       "required": [
         "project_id"
       ],
-      "title": "ListDeployTokensParams",
       "type": "object"
     },
     "name": "list_deploy_tokens"
@@ -2962,16 +3356,20 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "per_page": {
           "default": null,
           "description": "Max results (default: 20)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -2981,7 +3379,6 @@
       "required": [
         "project_id"
       ],
-      "title": "ListEnvironmentsParams",
       "type": "object"
     },
     "name": "list_environments"
@@ -2997,22 +3394,25 @@
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "per_page": {
           "default": null,
           "description": "Max results to return — paginated across pages (default: 200, hard ceiling 2000)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "required": [
         "group_path"
       ],
-      "title": "ListGroupProjectsParams",
       "type": "object"
     },
     "name": "list_group_projects"
@@ -3024,8 +3424,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -3035,7 +3437,6 @@
       "required": [
         "project_id"
       ],
-      "title": "ListLabelsParams",
       "type": "object"
     },
     "name": "list_labels"
@@ -3047,8 +3448,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -3058,7 +3461,6 @@
       "required": [
         "project_id"
       ],
-      "title": "ListMembersParams",
       "type": "object"
     },
     "name": "list_members"
@@ -3070,64 +3472,85 @@
       "properties": {
         "author": {
           "description": "Filter by author username",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "created_after": {
           "description": "Only MRs created after this date (ISO, e.g., '2026-03-01')",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "group_id": {
           "description": "Group path to list MRs across all group projects (e.g., 'my-org/backend')",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "include_descriptions": {
           "description": "Include MR descriptions in output (useful for parsing ticket IDs or context). Adds ~1KB per MR.",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "opened_before": {
           "description": "Only MRs created before this date (ISO). Use to find stale/old MRs.",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "per_page": {
           "default": null,
           "description": "Max results (default: 20)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path (empty = all projects)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "scope": {
           "description": "Scope: assigned_to_me, created_by_me, all (default: all)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "state": {
           "description": "Filter by state: opened, closed, merged, all (default: opened)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "summary_only": {
           "description": "Return compact one-line-per-MR summary (~5x smaller). Use first to scan, then get_merge_request to drill in.",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
-      "title": "ListMergeRequestsParams",
       "type": "object"
     },
     "name": "list_merge_requests"
@@ -3139,8 +3562,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -3150,7 +3575,6 @@
       "required": [
         "project_id"
       ],
-      "title": "ProjectOnlyParams",
       "type": "object"
     },
     "name": "list_pipeline_schedules"
@@ -3162,16 +3586,20 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "per_page": {
           "default": null,
           "description": "Max results (default: 20)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -3179,24 +3607,29 @@
         },
         "ref_name": {
           "description": "Filter by git ref (branch/tag)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "source": {
           "description": "Filter by trigger source: trigger, api, schedule, web, external (production runs) or push, merge_request_event (development CI), or pipeline/parent_pipeline (child pipelines). Use this to exclude child pipelines, which otherwise inflate counts.",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "status": {
           "description": "Filter by status: running, pending, success, failed, canceled",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id"
       ],
-      "title": "ListPipelinesParams",
       "type": "object"
     },
     "name": "list_pipelines"
@@ -3208,8 +3641,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -3219,7 +3654,6 @@
       "required": [
         "project_id"
       ],
-      "title": "ProjectOnlyParams",
       "type": "object"
     },
     "name": "list_project_access_tokens"
@@ -3231,13 +3665,17 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "job_tags": {
           "description": "Comma-separated job tags to test eligibility against. Omit for an untagged job. The verdict distinguishes no runners, all offline, and no tag match — three different fixes that GitLab renders identically as a pending job.",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -3247,7 +3685,6 @@
       "required": [
         "project_id"
       ],
-      "title": "ListProjectRunnersParams",
       "type": "object"
     },
     "name": "list_project_runners"
@@ -3259,24 +3696,29 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "per_page": {
           "default": null,
           "description": "Max results (default: 20)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "search": {
           "description": "Search query to filter projects",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
-      "title": "ListProjectsParams",
       "type": "object"
     },
     "name": "list_projects"
@@ -3288,11 +3730,12 @@
       "properties": {
         "language": {
           "description": "Language filter: PHP, Kotlin, TypeScript, Ansible (empty = all)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
-      "title": "ListRulesParams",
       "type": "object"
     },
     "name": "list_rules"
@@ -3304,16 +3747,20 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "per_page": {
           "default": null,
           "description": "Max results (default: 20)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -3321,14 +3768,15 @@
         },
         "search": {
           "description": "Search tag name",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id"
       ],
-      "title": "ListTagsParams",
       "type": "object"
     },
     "name": "list_tags"
@@ -3337,7 +3785,6 @@
     "description": "List configured teams from ~/.gl-mcp/teams.json",
     "input_schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "title": "ListTeamsParams",
       "type": "object"
     },
     "name": "list_teams"
@@ -3349,13 +3796,17 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "merge_commit_message": {
           "description": "Custom merge commit message (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "mr_iid": {
           "description": "Merge request IID (the ! number)",
@@ -3369,20 +3820,23 @@
         },
         "should_remove_source_branch": {
           "description": "Delete source branch after merge (optional)",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "squash": {
           "description": "Squash commits on merge (optional)",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id",
         "mr_iid"
       ],
-      "title": "MergeMrParams",
       "type": "object"
     },
     "name": "merge_mr"
@@ -3394,8 +3848,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -3412,7 +3868,6 @@
         "project_id",
         "schedule_id"
       ],
-      "title": "PlayPipelineScheduleParams",
       "type": "object"
     },
     "name": "play_pipeline_schedule"
@@ -3424,8 +3879,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "mr_iid": {
           "description": "Merge request IID (the ! number)",
@@ -3442,7 +3899,6 @@
         "project_id",
         "mr_iid"
       ],
-      "title": "RebaseMrParams",
       "type": "object"
     },
     "name": "rebase_mr"
@@ -3454,8 +3910,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "pipeline_id": {
           "description": "Pipeline ID",
@@ -3472,7 +3930,6 @@
         "project_id",
         "pipeline_id"
       ],
-      "title": "RetryPipelineParams",
       "type": "object"
     },
     "name": "retry_pipeline"
@@ -3488,8 +3945,10 @@
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -3505,7 +3964,6 @@
         "sha",
         "branch"
       ],
-      "title": "RevertCommitParams",
       "type": "object"
     },
     "name": "revert_commit"
@@ -3521,8 +3979,10 @@
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -3540,7 +4000,6 @@
         "token_id",
         "confirm_name"
       ],
-      "title": "RevokeProjectAccessTokenParams",
       "type": "object"
     },
     "name": "revoke_project_access_token"
@@ -3552,8 +4011,10 @@
       "properties": {
         "instances": {
           "description": "Comma-separated instance names per user (optional, matches usernames order)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "key": {
           "description": "Team key (e.g., 'devops')",
@@ -3565,8 +4026,10 @@
         },
         "projects": {
           "description": "Comma-separated project paths (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "usernames": {
           "description": "Comma-separated GitLab usernames",
@@ -3578,7 +4041,6 @@
         "name",
         "usernames"
       ],
-      "title": "SaveTeamParams",
       "type": "object"
     },
     "name": "save_team"
@@ -3590,40 +4052,52 @@
       "properties": {
         "full_sweep": {
           "description": "Group sweeps only: cover every repo in one call instead of the default window. Costs one API call per repo — use when an empty result must actually mean absence.",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "group_path": {
           "description": "Group path — search every (non-archived) project in the group instead of one repo. Use for org-wide sweeps (renames, leaked strings).",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "offset": {
           "default": null,
           "description": "Group sweeps only: skip this many repos (ordered by last activity) to continue a partial sweep. When repos remain, the response prints the exact offset to use next.",
           "format": "uint",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "per_page": {
           "default": null,
           "description": "Max results (default: 20)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "project_id": {
           "default": null,
           "description": "Project ID or path. Omit when using group_path.",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "query": {
           "description": "Search terms. NOT a regex — GitLab matches substrings/terms, so `foo|bar` is searched literally. If an alternation query returns nothing, the tool re-runs each alternative separately and says so, because an empty result must never be mistaken for proof of absence.",
@@ -3631,14 +4105,15 @@
         },
         "ref_name": {
           "description": "Branch/tag to search in (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "query"
       ],
-      "title": "SearchCodeParams",
       "type": "object"
     },
     "name": "search_code"
@@ -3650,49 +4125,64 @@
       "properties": {
         "assignee": {
           "description": "Filter by assignee username",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "group_id": {
           "description": "Group ID or path to search issues within a group (e.g., 'my-org/backend')",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "labels": {
           "description": "Comma-separated label names",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "per_page": {
           "default": null,
           "description": "Max results (default: 20)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path (empty = search all projects)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "search": {
           "description": "Search text in title/description",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "state": {
           "description": "Filter by state: opened, closed, all (default: opened)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
-      "title": "SearchIssuesParams",
       "type": "object"
     },
     "name": "search_issues"
@@ -3704,16 +4194,20 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "per_page": {
           "default": null,
           "description": "Max results (default: 20)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "query": {
           "description": "Search query (name, username, or email)",
@@ -3723,7 +4217,6 @@
       "required": [
         "query"
       ],
-      "title": "SearchUsersParams",
       "type": "object"
     },
     "name": "search_users"
@@ -3735,13 +4228,17 @@
       "properties": {
         "environment_scope": {
           "description": "Environment scope (default: '*' for all environments)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "key": {
           "description": "Variable key (uppercase letters, digits, underscores)",
@@ -3749,8 +4246,10 @@
         },
         "masked": {
           "description": "Masked variable: hidden in job logs (default: false)",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -3758,8 +4257,10 @@
         },
         "protected": {
           "description": "Protected variable: only exposed to protected branches/tags (default: false)",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "value": {
           "description": "Variable value",
@@ -3767,8 +4268,10 @@
         },
         "variable_type": {
           "description": "Variable type: 'env_var' or 'file' (default: 'env_var')",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -3776,7 +4279,6 @@
         "key",
         "value"
       ],
-      "title": "SetCiVariableParams",
       "type": "object"
     },
     "name": "set_ci_variable"
@@ -3788,8 +4290,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "key": {
           "description": "Variable key",
@@ -3811,8 +4315,10 @@
         },
         "variable_type": {
           "description": "env_var (default) or file",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -3821,7 +4327,6 @@
         "key",
         "value"
       ],
-      "title": "SetPipelineScheduleVariableParams",
       "type": "object"
     },
     "name": "set_pipeline_schedule_variable"
@@ -3834,8 +4339,10 @@
           "properties": {
             "label": {
               "description": "Display label for the rollup (e.g. 'iOS'). Defaults to the project path.",
-              "nullable": true,
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "project_id": {
               "description": "Project ID or path for this platform",
@@ -3843,13 +4350,17 @@
             },
             "ref_name": {
               "description": "Branch or tag to search in (default: default branch)",
-              "nullable": true,
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "routes_file": {
               "description": "Optional route-defining source for precise reverse-drift: a file, comma-separated files, or a directory (recursive)",
-              "nullable": true,
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "spec": {
               "description": "The spec document for this platform, as markdown/text",
@@ -3867,13 +4378,17 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "summary_only": {
           "description": "Return only the rollup table (no needs-attention / totals detail).",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "targets": {
           "description": "Platforms to audit. Each is audited independently (and concurrently); results roll up into one cross-platform table.",
@@ -3886,7 +4401,6 @@
       "required": [
         "targets"
       ],
-      "title": "SweepSpecAuditParams",
       "type": "object"
     },
     "name": "sweep_spec_audit"
@@ -3898,8 +4412,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "namespace": {
           "description": "Target namespace: a full group path like 'my-org/devops' or a numeric group id. Resolved and validated before the move.",
@@ -3914,7 +4430,6 @@
         "project_id",
         "namespace"
       ],
-      "title": "TransferProjectParams",
       "type": "object"
     },
     "name": "transfer_project"
@@ -3926,8 +4441,10 @@
       "properties": {
         "allow_force_push": {
           "description": "Allow force push (default: false)",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "branch": {
           "description": "Branch name to protect (e.g., 'main')",
@@ -3935,21 +4452,27 @@
         },
         "code_owner_approval_required": {
           "description": "Require code owner approval (default: false)",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "merge_access_level": {
           "default": null,
           "description": "Merge access level: 0=No access, 30=Developer, 40=Maintainer, 60=Admin",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -3960,15 +4483,16 @@
           "description": "Push access level: 0=No access, 30=Developer, 40=Maintainer, 60=Admin",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id",
         "branch"
       ],
-      "title": "UpdateBranchProtectionParams",
       "type": "object"
     },
     "name": "update_branch_protection"
@@ -3980,13 +4504,17 @@
       "properties": {
         "environment_scope": {
           "description": "Environment scope (e.g., '*', 'production')",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "key": {
           "description": "Variable key to update",
@@ -3994,8 +4522,10 @@
         },
         "masked": {
           "description": "Masked variable: hidden in job logs",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -4003,8 +4533,10 @@
         },
         "protected": {
           "description": "Protected variable: only exposed to protected branches/tags",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "value": {
           "description": "New variable value",
@@ -4012,8 +4544,10 @@
         },
         "variable_type": {
           "description": "Variable type: 'env_var' or 'file'",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -4021,7 +4555,6 @@
         "key",
         "value"
       ],
-      "title": "UpdateCiVariableParams",
       "type": "object"
     },
     "name": "update_ci_variable"
@@ -4045,8 +4578,10 @@
         },
         "create_mr": {
           "description": "Create a merge request after commit (default: true)",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "file_path": {
           "description": "File path in the repository (e.g., 'README.md')",
@@ -4054,8 +4589,10 @@
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -4063,8 +4600,10 @@
         },
         "source_branch": {
           "description": "Source branch to create from (default: main)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -4074,7 +4613,6 @@
         "branch",
         "commit_message"
       ],
-      "title": "UpdateFileParams",
       "type": "object"
     },
     "name": "update_file"
@@ -4086,18 +4624,24 @@
       "properties": {
         "assignee": {
           "description": "Assignee username (empty = unassign)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "description": {
           "description": "New description (empty = keep)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "issue_iid": {
           "description": "Issue IID",
@@ -4107,8 +4651,10 @@
         },
         "labels": {
           "description": "New labels (comma-separated, replaces existing)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -4116,20 +4662,23 @@
         },
         "state_event": {
           "description": "New state: close or reopen",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "title": {
           "description": "New title (empty = keep)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id",
         "issue_iid"
       ],
-      "title": "UpdateIssueParams",
       "type": "object"
     },
     "name": "update_issue"
@@ -4141,23 +4690,31 @@
       "properties": {
         "assignee": {
           "description": "Assignee: username (leading @ optional) or numeric user id. Use 'none' to unassign. Unknown username errors (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "description": {
           "description": "New description / body in markdown (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "labels": {
           "description": "Comma-separated labels to set, replacing existing (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "mr_iid": {
           "description": "Merge request IID (the ! number)",
@@ -4171,20 +4728,23 @@
         },
         "target_branch": {
           "description": "New target branch (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "title": {
           "description": "New title (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id",
         "mr_iid"
       ],
-      "title": "UpdateMergeRequestParams",
       "type": "object"
     },
     "name": "update_merge_request"
@@ -4196,28 +4756,38 @@
       "properties": {
         "active": {
           "description": "Activate or deactivate",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "cron": {
           "description": "New 5-field cron expression",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "cron_timezone": {
           "description": "New cron timezone",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "description": {
           "description": "New description",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -4225,8 +4795,10 @@
         },
         "ref_name": {
           "description": "New branch or tag — validated to resolve before the update",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "schedule_id": {
           "description": "Schedule ID",
@@ -4239,7 +4811,6 @@
         "project_id",
         "schedule_id"
       ],
-      "title": "UpdatePipelineScheduleParams",
       "type": "object"
     },
     "name": "update_pipeline_schedule"
@@ -4251,28 +4822,38 @@
       "properties": {
         "default_branch": {
           "description": "Default branch name",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "description": {
           "description": "Project description",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "group_runners_enabled": {
           "description": "Enable group runners for this project",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "merge_method": {
           "description": "Merge method: merge, rebase_merge or ff",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -4280,19 +4861,22 @@
         },
         "shared_runners_enabled": {
           "description": "Enable instance-wide shared runners for this project",
-          "nullable": true,
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "visibility": {
           "description": "Visibility: private, internal or public",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "project_id"
       ],
-      "title": "UpdateProjectParams",
       "type": "object"
     },
     "name": "update_project"
@@ -4304,8 +4888,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -4320,7 +4906,6 @@
         "project_id",
         "sha"
       ],
-      "title": "ValidateCommitParams",
       "type": "object"
     },
     "name": "validate_commit"
@@ -4332,8 +4917,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "mr_iid": {
           "description": "Merge request IID",
@@ -4350,7 +4937,6 @@
         "project_id",
         "mr_iid"
       ],
-      "title": "ValidateMrParams",
       "type": "object"
     },
     "name": "validate_mr"
@@ -4362,8 +4948,10 @@
       "properties": {
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "mr_iid": {
           "description": "Merge request IID",
@@ -4380,7 +4968,6 @@
         "project_id",
         "mr_iid"
       ],
-      "title": "ValidateMrChangesParams",
       "type": "object"
     },
     "name": "validate_mr_changes"
@@ -4392,21 +4979,27 @@
       "properties": {
         "branch": {
           "description": "Branch name (default: default branch)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "days": {
           "default": null,
           "description": "Number of days to look back (default: 14)",
           "format": "uint32",
           "minimum": 0,
-          "nullable": true,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "instance": {
           "description": "GitLab instance name (optional)",
-          "nullable": true,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "Project ID or path",
@@ -4416,7 +5009,6 @@
       "required": [
         "project_id"
       ],
-      "title": "ValidateProjectCommitsParams",
       "type": "object"
     },
     "name": "validate_project_commits"

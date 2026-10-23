@@ -2,7 +2,8 @@
 //!
 //! Usage:
 //!   gl-mcp                              # stdio transport (default)
-//!   gl-mcp --transport http --port 8000 # HTTP/SSE transport for n8n, etc.
+//!   gl-mcp --transport http --port 8000 # HTTP/SSE transport for n8n, etc. (loopback;
+//!                                       # --host 0.0.0.0 needs GL_MCP_HTTP_TOKEN)
 //!   gl-mcp --adoption-report GROUP [--days N] [--gl-instance NAME] > report.html
 //!                                       # one-shot: print the AI-adoption HTML
 //!                                       # report to stdout and exit. Same engine
@@ -148,20 +149,28 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(8000);
 
+    // HTTP binds loopback unless told otherwise (see http_guard).
+    let host = args
+        .iter()
+        .position(|a| a == "--host")
+        .and_then(|i| args.get(i + 1))
+        .cloned()
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+
     match transport {
         "http" | "sse" | "streamable-http" => {
             #[cfg(feature = "http")]
             {
-                serve_http(config, port).await
+                serve_http(config, &host, port).await
             }
             #[cfg(not(feature = "http"))]
             {
-                let _ = (config, port);
+                let _ = (config, &host, port);
                 anyhow::bail!("HTTP transport not compiled (rebuild with --features http)");
             }
         }
         "stdio" | _ => {
-            let _ = port;
+            let _ = (port, host);
             serve_stdio(config).await
         }
     }
@@ -179,15 +188,29 @@ async fn serve_stdio(config: Config) -> anyhow::Result<()> {
 }
 
 #[cfg(feature = "http")]
-async fn serve_http(config: Config, port: u16) -> anyhow::Result<()> {
+async fn serve_http(config: Config, host: &str, port: u16) -> anyhow::Result<()> {
+    use axum::response::IntoResponse;
+    use gl_mcp::http_guard;
     use rmcp::transport::streamable_http_server::{
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
     };
     use std::net::SocketAddr;
     use std::sync::Arc;
 
+    // Fail closed: off loopback without a token, the server does not start.
+    let policy = http_guard::policy(
+        host,
+        std::env::var(http_guard::TOKEN_ENV).ok().as_deref(),
+        std::env::var(http_guard::ALLOWED_HOSTS_ENV).ok().as_deref(),
+    )
+    .map_err(|e| anyhow::anyhow!(e))?;
+
     let session_manager = Arc::new(LocalSessionManager::default());
-    let http_config = StreamableHttpServerConfig::default();
+    let http_config = match &policy.allowed_hosts {
+        None => StreamableHttpServerConfig::default(),
+        Some(hosts) if hosts.is_empty() => StreamableHttpServerConfig::default().disable_allowed_hosts(),
+        Some(hosts) => StreamableHttpServerConfig::default().with_allowed_hosts(hosts.clone()),
+    };
 
     let mcp_service = StreamableHttpService::new(
         move || Ok(GlMcpServer::new(config.clone())),
@@ -195,11 +218,33 @@ async fn serve_http(config: Config, port: u16) -> anyhow::Result<()> {
         http_config,
     );
 
-    let app = axum::Router::new().fallback_service(mcp_service);
+    let mut app = axum::Router::new().fallback_service(mcp_service);
+    if let Some(token) = policy.token.clone() {
+        let token = Arc::new(token);
+        app = app.layer(axum::middleware::from_fn(
+            move |req: axum::extract::Request, next: axum::middleware::Next| {
+                let token = token.clone();
+                async move {
+                    let header = req
+                        .headers()
+                        .get(axum::http::header::AUTHORIZATION)
+                        .and_then(|v| v.to_str().ok());
+                    if http_guard::authorized(header, &token) {
+                        next.run(req).await
+                    } else {
+                        axum::http::StatusCode::UNAUTHORIZED.into_response()
+                    }
+                }
+            },
+        ));
+    }
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let addr = SocketAddr::new(policy.bind, port);
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    eprintln!("gl-mcp: serving HTTP on http://0.0.0.0:{port}/mcp");
+    eprintln!(
+        "gl-mcp: serving HTTP on http://{addr}/mcp ({})",
+        if policy.token.is_some() { "bearer token required" } else { "loopback only, no token" }
+    );
 
     axum::serve(listener, app).await?;
     Ok(())

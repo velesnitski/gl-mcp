@@ -760,7 +760,7 @@ mod tests {
                 "4.17.15",
                 "HIGH",
                 true,
-                "2026-10-26",
+                "2024-10-26",
             )],
             "group `acme`",
             &scanned(&["acme/api"]),
@@ -772,10 +772,10 @@ mod tests {
 
     #[test]
     fn another_scope_or_schema_is_a_baseline_too() {
-        let mut prev = snap("2026-10-19", vec![]);
+        let mut prev = snap("2024-10-19", vec![]);
         prev.scope = "group `other`".into();
         assert!(diff(Some(&prev), vec![], "group `acme`", &scanned(&[])).baseline);
-        let mut prev = snap("2026-10-19", vec![]);
+        let mut prev = snap("2024-10-19", vec![]);
         prev.schema = SNAPSHOT_SCHEMA + 1;
         assert!(diff(Some(&prev), vec![], "group `acme`", &scanned(&[])).baseline);
     }
@@ -783,27 +783,27 @@ mod tests {
     #[test]
     fn diff_finds_new_fixed_upgraded_and_carries_age() {
         let prev = snap(
-            "2026-10-19",
+            "2024-10-19",
             vec![
-                item("acme/api", "lodash", "4.17.15", "HIGH", true, "2026-09-28"),
+                item("acme/api", "lodash", "4.17.15", "HIGH", true, "2024-09-28"),
                 item(
                     "acme/api",
                     "minimist",
                     "0.0.8",
                     "CRITICAL",
                     true,
-                    "2026-10-05",
+                    "2024-10-05",
                 ),
-                item("acme/web", "axios", "0.19.2", "HIGH", true, "2026-10-12"),
-                item("acme/gone", "qs", "6.5.2", "HIGH", true, "2026-10-12"),
+                item("acme/web", "axios", "0.19.2", "HIGH", true, "2024-10-12"),
+                item("acme/gone", "qs", "6.5.2", "HIGH", true, "2024-10-12"),
             ],
         );
-        let mut lodash = item("acme/api", "lodash", "4.17.15", "HIGH", true, "2026-10-26");
+        let mut lodash = item("acme/api", "lodash", "4.17.15", "HIGH", true, "2024-10-26");
         lodash.advisories.push("CVE-2099-fresh".into());
         let current = vec![
             lodash,
-            item("acme/web", "axios", "0.21.1", "HIGH", true, "2026-10-26"),
-            item("acme/web", "vite", "5.2.0", "CRITICAL", true, "2026-10-26"),
+            item("acme/web", "axios", "0.21.1", "HIGH", true, "2024-10-26"),
+            item("acme/web", "vite", "5.2.0", "CRITICAL", true, "2024-10-26"),
         ];
         // acme/gone failed to scan this week.
         let d = diff(
@@ -837,7 +837,7 @@ mod tests {
         );
         assert_eq!(d.carried[0].repo, "acme/gone");
         let lodash = d.open.iter().find(|i| i.package == "lodash").unwrap();
-        assert_eq!(lodash.first_seen, "2026-09-28", "age survives across runs");
+        assert_eq!(lodash.first_seen, "2024-09-28", "age survives across runs");
         assert_eq!(d.open.len(), 4, "3 current + 1 carried");
     }
 
@@ -854,7 +854,7 @@ mod tests {
                 "1",
                 "CRITICAL",
                 true,
-                "2026-10-26",
+                "2024-10-26",
             ),
             item(
                 "acme/qa/e2e-tests",
@@ -862,10 +862,10 @@ mod tests {
                 "1",
                 "CRITICAL",
                 true,
-                "2026-10-26",
+                "2024-10-26",
             ),
-            item("acme/backend/api", "c", "1", "CRITICAL", true, "2026-10-26"),
-            item("acme/web", "d", "1", "CRITICAL", false, "2026-10-26"),
+            item("acme/backend/api", "c", "1", "CRITICAL", true, "2024-10-26"),
+            item("acme/web", "d", "1", "CRITICAL", false, "2024-10-26"),
         ];
         let order: Vec<&str> = rank_repos(&open).iter().map(|r| r.repo).collect();
         // api 10 > tests 2×10×0.3 = 6 > web dev-only 2.5
@@ -879,7 +879,7 @@ mod tests {
     fn subject_leads_with_the_change() {
         let d = diff(
             None,
-            vec![item("acme/api", "x", "1", "HIGH", true, "2026-10-26")],
+            vec![item("acme/api", "x", "1", "HIGH", true, "2024-10-26")],
             "group `acme`",
             &scanned(&["acme/api"]),
         );
@@ -888,14 +888,14 @@ mod tests {
             "Dependency CVEs — acme: baseline · 1 open runtime critical/high"
         );
         let prev = snap(
-            "2026-10-19",
-            vec![item("acme/api", "old", "1", "HIGH", true, "2026-10-12")],
+            "2024-10-19",
+            vec![item("acme/api", "old", "1", "HIGH", true, "2024-10-12")],
         );
         let d = diff(
             Some(&prev),
             vec![
-                item("acme/api", "x", "1", "CRITICAL", true, "2026-10-26"),
-                item("acme/api", "y", "1", "HIGH", false, "2026-10-26"),
+                item("acme/api", "x", "1", "CRITICAL", true, "2024-10-26"),
+                item("acme/api", "y", "1", "HIGH", false, "2024-10-26"),
             ],
             "group `acme`",
             &scanned(&["acme/api"]),
@@ -923,7 +923,7 @@ mod tests {
     #[test]
     fn golden_weekly_email() {
         let prev = snap(
-            "2026-10-19",
+            "2024-10-19",
             vec![
                 item(
                     "acme/backend/api",
@@ -931,7 +931,7 @@ mod tests {
                     "4.17.15",
                     "HIGH",
                     true,
-                    "2026-09-28",
+                    "2024-09-28",
                 ),
                 item(
                     "acme/backend/api",
@@ -939,7 +939,7 @@ mod tests {
                     "0.0.8",
                     "CRITICAL",
                     true,
-                    "2026-10-05",
+                    "2024-10-05",
                 ),
             ],
         );
@@ -950,18 +950,18 @@ mod tests {
                 "4.17.15",
                 "HIGH",
                 true,
-                "2026-10-26",
+                "2024-10-26",
             ),
-            item("acme/web", "vite", "5.2.0", "CRITICAL", true, "2026-10-26"),
+            item("acme/web", "vite", "5.2.0", "CRITICAL", true, "2024-10-26"),
             item(
                 "acme/qa/e2e-tests",
                 "pillow",
                 "10.3.0",
                 "CRITICAL",
                 true,
-                "2026-10-26",
+                "2024-10-26",
             ),
-            item("acme/web", "<script>", "1", "MEDIUM", false, "2026-10-26"),
+            item("acme/web", "<script>", "1", "MEDIUM", false, "2024-10-26"),
         ];
         let d = diff(
             Some(&prev),
@@ -969,7 +969,7 @@ mod tests {
             "group `acme`",
             &scanned(&["acme/backend/api", "acme/web", "acme/qa/e2e-tests"]),
         );
-        let html = render_email(&meta("2026-10-26"), &d, true);
+        let html = render_email(&meta("2024-10-26"), &d, true);
         crate::golden::assert_golden("render/dependency_email.html", &html);
         assert!(html.starts_with("<!DOCTYPE html>"));
         assert!(
@@ -978,7 +978,7 @@ mod tests {
         );
         assert!(!html.contains("<script>"), "package names are escaped");
         assert!(html.contains("open 4 wk"), "lodash first seen 4 weeks ago");
-        assert!(html.contains("Fixed since 2026-10-19"));
+        assert!(html.contains("Fixed since 2024-10-19"));
         assert!(html.contains("<b>backend/api</b>: minimist 0.0.8"));
         let ranking =
             &html[html.find("Fix first").unwrap()..html.find("What this does not cover").unwrap()];
@@ -998,12 +998,12 @@ mod tests {
                 "5.2.0",
                 "CRITICAL",
                 true,
-                "2026-10-26",
+                "2024-10-26",
             )],
             "group `acme`",
             &scanned(&["acme/web"]),
         );
-        let html = render_email(&meta("2026-10-26"), &d, false);
+        let html = render_email(&meta("2024-10-26"), &d, false);
         assert!(html.contains("All 1 open findings") || html.contains("all 1 open findings"));
         assert!(
             !html.contains("All open findings"),
@@ -1016,14 +1016,14 @@ mod tests {
     #[test]
     fn snapshot_round_trips_through_json() {
         let s = snap(
-            "2026-10-19",
+            "2024-10-19",
             vec![item(
                 "acme/api",
                 "lodash",
                 "4.17.15",
                 "HIGH",
                 true,
-                "2026-09-28",
+                "2024-09-28",
             )],
         );
         let back: Snapshot = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();

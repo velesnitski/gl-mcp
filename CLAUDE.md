@@ -23,6 +23,7 @@ src/
 ├── resolver.rs      # Multi-instance resolution (domain auto-detect from URLs)
 ├── logging.rs       # Analytics + Sentry integration
 ├── error.rs         # Error types
+├── http_guard.rs    # HTTP transport policy: loopback default, mandatory bearer token off loopback
 ├── teams.rs         # teams.json management
 └── tools/
     ├── mod.rs           # WRITE_TOOLS list, is_tool_enabled()
@@ -65,6 +66,8 @@ src/
 | `GITLAB_INSTANCES` | no | Multi-instance: comma-separated names |
 | `SENTRY_DSN` | no | Sentry error tracking |
 | `OSV_API_URL` | no | OSV mirror for dependency audits (default public api.osv.dev) |
+| `GL_MCP_HTTP_TOKEN` | HTTP off loopback | Bearer token for `--transport http`; mandatory unless `--host` is loopback (default) |
+| `GL_MCP_ALLOWED_HOSTS` | no | HTTP off loopback: comma-separated `Host` values to accept |
 
 ## Adding a New Tool
 

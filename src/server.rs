@@ -6,7 +6,7 @@ use rmcp::{
     ErrorData as McpError, ServerHandler,
     handler::server::wrapper::Parameters,
     model::{
-        CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
+        CallToolResult, ContentBlock as Content, Implementation, ProtocolVersion, ServerCapabilities, ServerConfig,
     },
     tool, tool_handler, tool_router,
 };
@@ -2712,28 +2712,22 @@ impl GlMcpServer {
 
 // ─── ServerHandler ───
 
-#[tool_handler]
+// The router must be the instance's pruned one: since rmcp 3.x the macro defaults to a
+// fresh `Self::tool_router()`, which would bring back every tool that read-only mode,
+// GITLAB_TOOLSET or DISABLED_TOOLS removed.
+#[tool_handler(router = self.tool_router)]
 impl ServerHandler for GlMcpServer {
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         // Set both `name` (programmatic ID) and `title` (display name) so
         // `/mcp` in Claude Code shows e.g. "gl-mcp v0.16.0".
         let version = env!("CARGO_PKG_VERSION");
         let display = format!("gl-mcp v{version}");
-        ServerInfo {
-            protocol_version: ProtocolVersion::V_2025_06_18,
-            capabilities: ServerCapabilities::builder()
-                .enable_tools()
-                .build(),
-            server_info: Implementation {
-                name: display.clone(),
-                title: Some(display),
-                version: version.to_string(),
-                ..Default::default()
-            },
-            instructions: Some(
-                "GitLab MCP server — projects, issues, merge requests, CI/CD pipelines, commits, and code review.".to_string(),
-            ),
-        }
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+            .with_protocol_version(ProtocolVersion::V_2025_06_18)
+            .with_server_info(Implementation::new(display.clone(), version).with_title(display))
+            .with_instructions(
+                "GitLab MCP server — projects, issues, merge requests, CI/CD pipelines, commits, and code review.",
+            )
     }
 }
 

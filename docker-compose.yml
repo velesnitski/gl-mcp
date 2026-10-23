@@ -2,16 +2,21 @@ services:
   gitlab-mcp:
     build: .
     ports:
-      - "8000:8000"
+      # Published on the host's loopback only; widen deliberately.
+      - "127.0.0.1:8000:8000"
     environment:
       - GITLAB_URL=https://gitlab.example.com
-      - GITLAB_TOKEN=glpat-your-token-here
+      # Taken from your shell or an .env file, never written here.
+      - GITLAB_TOKEN=${GITLAB_TOKEN:?set GITLAB_TOKEN}
+      # Clients send `Authorization: Bearer <this>`; 24+ random characters.
+      - GL_MCP_HTTP_TOKEN=${GL_MCP_HTTP_TOKEN:?set GL_MCP_HTTP_TOKEN}
       # Optional:
+      # - GL_MCP_ALLOWED_HOSTS=mcp.example.com
       # - GITLAB_INSTANCES=main,staging
       # - GITLAB_MAIN_URL=https://gitlab.example.com
-      # - GITLAB_MAIN_TOKEN=glpat-xxx
+      # - GITLAB_MAIN_TOKEN=${GITLAB_MAIN_TOKEN}
       # - GITLAB_STAGING_URL=https://staging.gitlab.example.com
-      # - GITLAB_STAGING_TOKEN=glpat-yyy
+      # - GITLAB_STAGING_TOKEN=${GITLAB_STAGING_TOKEN}
       # - GITLAB_READ_ONLY=true
       # - GITLAB_COMPACT=true
       # - DISABLED_TOOLS=delete_branch,create_issue

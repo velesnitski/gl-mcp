@@ -1,6 +1,6 @@
 [package]
 name = "gl-mcp"
-version = "1.17.0"
+version = "2.0.0"
 edition = "2024"
 description = "GitLab MCP server for Claude Code — 100 tools for projects, issues, MRs, CI/CD, code review, team analytics, and spec-drift auditing"
 license = "MIT"
@@ -25,7 +25,7 @@ sentry = ["dep:sentry"]
 http = ["dep:axum", "rmcp/transport-streamable-http-server"]
 
 [dependencies]
-rmcp = { version = "0.11", features = ["transport-io"] }
+rmcp = { version = "3.7", features = ["transport-io"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "time", "sync", "net", "fs"] }
 axum = { version = "0.8", optional = true }
 futures = "0.3"
@@ -53,7 +53,7 @@ codegen-units = 1
 
 [dev-dependencies]
 # The client half of the protocol, for the in-process end-to-end test only.
-rmcp = { version = "0.11", features = ["client", "transport-io"] }
+rmcp = { version = "3.7", features = ["client", "transport-io"] }
 proptest = "1"
 
 # Trim debug info from dev/test builds: keeps file:line in backtraces (so test

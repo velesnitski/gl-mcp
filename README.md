@@ -98,13 +98,19 @@ Or run directly:
 
 ```bash
 docker build -t gl-mcp .
-docker run -p 8000:8000 \
+docker run -p 127.0.0.1:8000:8000 \
   -e GITLAB_URL=https://gitlab.example.com \
-  -e GITLAB_TOKEN=glpat-your-token-here \
+  -e GITLAB_TOKEN \
+  -e GL_MCP_HTTP_TOKEN \
   gl-mcp
 ```
 
-In n8n, add an MCP Client node pointing to `http://localhost:8000/mcp`.
+`-e NAME` without a value passes the variable from your shell, so no secret is typed
+into the command. The container listens off loopback, so `GL_MCP_HTTP_TOKEN` is
+required: without it the server refuses to start.
+
+In n8n, add an MCP Client node pointing to `http://localhost:8000/mcp`, with the header
+`Authorization: Bearer <GL_MCP_HTTP_TOKEN>`.
 
 </details>
 
@@ -113,7 +119,7 @@ In n8n, add an MCP Client node pointing to `http://localhost:8000/mcp`.
 
 gl-mcp uses stdio transport by default — point your client's MCP config to the binary and set `GITLAB_URL` + `GITLAB_TOKEN`.
 
-For HTTP transport: `gl-mcp --transport http --port 8000`
+For HTTP transport: `gl-mcp --transport http --port 8000` (loopback only; see Transport Options to expose it)
 
 </details>
 
@@ -319,6 +325,8 @@ Language detection for 25+ languages including PHP, Go, Kotlin, Swift, TypeScrip
 | `GITLAB_TOOLSET` | No | `full` (default), `core` (~30 everyday dev tools), or an explicit comma-separated tool list. Pruned tools are absent from `tools/list` itself, cutting the schema payload ~70% in `core` — useful for MCP clients that load all tool schemas up front |
 | `SENTRY_DSN` | No | Sentry DSN for error tracking |
 | `GITLAB_ALLOW_HTTP` | No | Allow non-HTTPS URLs |
+| `GL_MCP_HTTP_TOKEN` | HTTP off loopback | Bearer token clients must send; required when `--host` is not loopback |
+| `GL_MCP_ALLOWED_HOSTS` | No | HTTP off loopback: comma-separated `Host` values to accept |
 
 ### Multi-Instance
 
@@ -343,6 +351,16 @@ Pass `instance="staging"` to any tool. URLs auto-resolve to the correct instance
 | *(default)* | stdio — for Claude Code, Copilot, Cursor |
 | `--transport http` | HTTP/SSE — for n8n, web clients, Docker |
 | `--port 8000` | Port for HTTP transport (default: 8000) |
+| `--host 127.0.0.1` | Address to bind (default: loopback). Any other address requires `GL_MCP_HTTP_TOKEN` |
+
+Every tool runs with the server's GitLab token, write tools included, so the HTTP
+listener is guarded:
+- On loopback (the default), only loopback `Host` headers are accepted, which blocks
+  DNS rebinding from a browser.
+- Off loopback, `GL_MCP_HTTP_TOKEN` is mandatory. Clients send
+  `Authorization: Bearer <token>`, and without the variable the server refuses to
+  start. `GL_MCP_ALLOWED_HOSTS` (comma-separated) can also restrict the accepted
+  `Host` values.
 
 ### One-shot CLI reports (cron/CI)
 

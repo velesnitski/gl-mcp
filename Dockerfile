@@ -8,4 +8,6 @@ RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/
 COPY --from=builder /app/target/release/gl-mcp /usr/local/bin/gl-mcp
 EXPOSE 8000
 ENTRYPOINT ["gl-mcp"]
-CMD ["--transport", "http", "--port", "8000"]
+# Inside a container the listener must leave loopback, so GL_MCP_HTTP_TOKEN is
+# required: without it the server refuses to start.
+CMD ["--transport", "http", "--host", "0.0.0.0", "--port", "8000"]

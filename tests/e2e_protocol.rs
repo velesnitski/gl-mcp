@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use gl_mcp::config::{Config, GitLabInstance};
 use gl_mcp::server::GlMcpServer;
-use rmcp::model::{CallToolRequestParam, Tool};
+use rmcp::model::{CallToolRequestParams, Tool};
 use rmcp::ServiceExt;
 use serde_json::{json, Map, Value};
 
@@ -122,10 +122,7 @@ async fn every_tool_survives_an_unreachable_gitlab() {
     let mut outcomes: BTreeMap<String, &'static str> = BTreeMap::new();
     for tool in &tools {
         let name = tool.name.to_string();
-        let call = client.call_tool(CallToolRequestParam {
-            name: tool.name.clone(),
-            arguments: Some(minimal_args(tool)),
-        });
+        let call = client.call_tool(CallToolRequestParams::new(tool.name.clone()).with_arguments(minimal_args(tool)));
         let outcome = match tokio::time::timeout(Duration::from_secs(20), call).await {
             Err(_) => "HUNG",
             Ok(Err(_)) => "protocol-error",
@@ -156,8 +153,9 @@ async fn every_tool_survives_an_unreachable_gitlab() {
     // The server introduces itself by name and the running crate version.
     let info = client.peer_info().expect("server info received at initialize");
     // The name carries the version on purpose: clients label the server by it.
-    assert_eq!(info.server_info.name, concat!("gl-mcp v", env!("CARGO_PKG_VERSION")));
-    assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
+    let server = info.server_info.as_ref().expect("server_info sent at initialize");
+    assert_eq!(server.name, concat!("gl-mcp v", env!("CARGO_PKG_VERSION")));
+    assert_eq!(server.version, env!("CARGO_PKG_VERSION"));
 
     // The server is still alive and answering after every tool has failed once.
     assert_eq!(client.list_all_tools().await.expect("still serving").len(), tools.len());
@@ -182,13 +180,10 @@ async fn read_only_mode_hides_write_tools_on_the_wire() {
     }
     // Calling a hidden write tool by name is refused, not executed.
     let refused = client
-        .call_tool(CallToolRequestParam {
-            name: "delete_project".into(),
-            arguments: Some(Map::from_iter([
+        .call_tool(CallToolRequestParams::new("delete_project").with_arguments(Map::from_iter([
                 ("project_id".to_string(), json!("group/project")),
                 ("confirm_full_path".to_string(), json!("group/project")),
-            ])),
-        })
+            ])))
         .await;
     assert!(
         refused.is_err() || refused.as_ref().is_ok_and(|r| r.is_error == Some(true)),
@@ -248,14 +243,11 @@ async fn secret_arguments_never_reach_the_analytics_log() {
     // Assembled at runtime: no secret-shaped literal sits in this file.
     let secret = ["e2e", "-marker-", &std::process::id().to_string(), "-zz"].concat();
     let result = client
-        .call_tool(CallToolRequestParam {
-            name: "set_ci_variable".into(),
-            arguments: Some(Map::from_iter([
+        .call_tool(CallToolRequestParams::new("set_ci_variable").with_arguments(Map::from_iter([
                 ("project_id".to_string(), json!("group/project")),
                 ("key".to_string(), json!("DEPLOY_TOKEN")),
                 ("value".to_string(), json!(secret)),
-            ])),
-        })
+            ])))
         .await
         .expect("call completes");
     let text: String = result.content.iter().filter_map(|c| c.as_text()).map(|t| t.text.clone()).collect();

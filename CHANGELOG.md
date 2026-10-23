@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-23
+
+### Security
+
+- **HTTP transport binds loopback by default and requires a bearer token anywhere
+  else.**
+  - `--transport http` used to listen on `0.0.0.0` without authentication, and every
+    tool ran with the server's GitLab token.
+  - It now binds `127.0.0.1` unless `--host` says otherwise.
+  - Any other address requires `GL_MCP_HTTP_TOKEN` (24+ characters). Clients send
+    `Authorization: Bearer <token>`. Without the token the server refuses to start.
+  - `GL_MCP_ALLOWED_HOSTS` can restrict accepted `Host` values (ADR 069).
+- **rmcp 0.11 → 3.7.** This fixes DNS rebinding and unauthenticated session-table
+  growth in the HTTP server, plus three client-side advisories that did not apply.
+- Lockfile refreshed within semver: openssl 0.10.81, rustls 0.23.46, rustls-webpki
+  0.103.16, quinn-proto 0.11.19 and rand 0.8.8 clear their open advisories.
+
+### Changed (breaking)
+
+- HTTP deployments must pass `--host` and set `GL_MCP_HTTP_TOKEN` to stay reachable
+  off loopback. The Dockerfile and compose file now do this. Stdio is unchanged.
+- Tool input schemas use `type: [T, "null"]` for optional fields instead of
+  `nullable: true`, and no longer carry a `title`. Names, descriptions and required
+  fields are unchanged.
+
+### Fixed
+
+- Read-only mode, `GITLAB_TOOLSET` and `DISABLED_TOOLS` keep hiding tools on rmcp 3,
+  whose handler macro would otherwise route through an unpruned router.
+
 ## [1.17.0] - 2026-10-23
 
 ### Added
