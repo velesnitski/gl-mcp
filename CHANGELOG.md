@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-10-23
+
+### Changed
+
+- **`audit_dependencies` reports one row per vulnerable package**, not one per
+  advisory. Each row shows:
+  - the worst severity;
+  - the advisory count with CVE ids;
+  - the lowest version that fixes every advisory, flagged when it is a major
+    upgrade;
+  - whether any lockfile pins the package as a runtime dependency.
+
+  Runtime packages sort ahead of dev-only ones at the same severity. Advisories that
+  describe one issue under several ids (GHSA, GO-, RUSTSEC-) are merged into one.
+- **Go is read from `go.mod`**, with `replace` directives applied. `go.sum` is
+  skipped in a directory that has a `go.mod`. It lists every version ever seen in
+  the module graph, which inflated findings with versions the build does not use.
+
+### Added
+
+- Swift `Package.resolved` (v1–v3, OSV `SwiftURL` ecosystem) and Gradle version
+  catalogs (`libs.versions.toml`, direct dependencies only).
+- `audit_dependencies` parameters:
+  - `min_severity` filters the table while totals still count everything.
+  - `summary_only` returns a one-line sweep with the five packages to fix first.
+- Coverage notes for catalogs (direct dependencies only) and for dependencies pinned
+  to a branch, commit or range (ADR 067).
+
 ## [1.15.0] - 2026-10-23
 
 ### Added

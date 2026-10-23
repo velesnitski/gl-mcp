@@ -1,17 +1,20 @@
 # Dependency vulnerability audit — group `acme`
 
-**4 repo(s) scanned** of 6 · **2 lockfile(s)** · **180 distinct packages** · **2 vulnerable** · 2 advisories
-CRITICAL 1 · HIGH 1
+**5 repo(s) scanned** of 7 · **3 lockfile(s)** · **180 distinct packages** · **3 vulnerable** (2 runtime, 1 dev-only) · 4 distinct advisories
+Vulnerable packages by worst advisory: CRITICAL 1 · HIGH 1 · MEDIUM 1
 
-| Severity | Package | Advisory | Fixed in | Where |
-|----------|---------|----------|----------|-------|
-| CRITICAL | minimist@0.0.8 (npm) | GHSA-xvch-5gv4-984h (CVE-2020-8203) — Prototype pollution in merge | 0.2.4, 1.2.6 | acme/web:package-lock.json |
-| HIGH | lodash@4.17.15 (npm) | GHSA-p6mc-m468-83gw (CVE-2020-8203) — Prototype pollution in merge | 4.17.19 | acme/web:package-lock.json +1 more |
+| Severity | Package | Advisories | Fix | Where |
+|----------|---------|------------|-----|-------|
+| CRITICAL | minimist@0.0.8 (npm) · dev | 1 — CVE-2021-44906: issue GHSA-xvch-5gv4-984h | → 0.2.4 (major upgrade) | acme/web:package-lock.json |
+| HIGH | lodash@4.17.15 (npm) | 2 — CVE-2020-8203, CVE-2021-23337: issue GHSA-35jh-r3h4-6jhm | → 4.17.21 | acme/web:package-lock.json +1 more |
+| MEDIUM | semver@5.7.1 (npm) | 1 — CVE-2022-25883: issue GHSA-c2qf-rxjj-qqgw | → 5.7.2 | acme/web:package-lock.json |
 
 ## Coverage
 - **No supported lockfile** (1): acme/docs — dependencies there are not pinned, so they cannot be audited.
 - **Not auditable against OSV** (1): acme/ios:Podfile.lock — no advisory feed for that ecosystem.
+- **Direct dependencies only** (1): acme/android:gradle/libs.versions.toml — a version catalog declares direct dependencies; transitive ones need a `gradle.lockfile`.
 - 3 internal or non-registry dependencies (GitLab-hosted, git or path sources) were kept out of the query and not audited.
-- Only the 4 most recently active of 6 repos were scanned; raise `max_projects` to cover more.
+- 2 dependencies are pinned to a branch, commit or range rather than a release, so they could not be matched.
+- Only the 5 most recently active of 7 repos were scanned; raise `max_projects` to cover more.
 
-_Matched against OSV.dev (GitHub, RustSec, Go, PyPA and other advisory feeds). Only exact pinned versions are checked; severity is the advisory's own rating, else its CVSS v3 base score._
+_Matched against OSV.dev (GitHub, RustSec, Go, PyPA and other advisory feeds). Only exact pinned versions are checked; advisories for the same issue are merged; severity is the advisory's own rating, else its CVSS v3 base score. Go is read from `go.mod` (the selected build list), not `go.sum`._

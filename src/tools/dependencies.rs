@@ -13,7 +13,6 @@
 //!   OSV fails the tool, and repositories with nothing auditable are listed as such.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
 
 use futures::future::join_all;
 use serde_json::{json, Value};
@@ -32,6 +31,8 @@ pub(crate) enum Ecosystem {
     PyPI,
     RubyGems,
     Maven,
+    /// Swift Package Manager, keyed by repository URL.
+    SwiftURL,
 }
 
 impl Ecosystem {
@@ -45,6 +46,7 @@ impl Ecosystem {
             Self::PyPI => "PyPI",
             Self::RubyGems => "RubyGems",
             Self::Maven => "Maven",
+            Self::SwiftURL => "SwiftURL",
         }
     }
 }
@@ -57,6 +59,13 @@ pub(crate) enum LockKind {
     PnpmLock,
     ComposerLock,
     GoSum,
+    /// The build list Go actually selects — preferred over `go.sum`, which keeps a
+    /// checksum for every version ever seen in the module graph.
+    GoMod,
+    /// Swift Package Manager pins.
+    SwiftResolved,
+    /// Gradle version catalog: declared versions of direct dependencies only.
+    GradleCatalog,
     PoetryLock,
     PipfileLock,
     Requirements,
@@ -80,6 +89,9 @@ pub(crate) fn lockfile_kind(path: &str) -> Option<LockKind> {
         "pnpm-lock.yaml" => LockKind::PnpmLock,
         "composer.lock" => LockKind::ComposerLock,
         "go.sum" => LockKind::GoSum,
+        "go.mod" => LockKind::GoMod,
+        "Package.resolved" => LockKind::SwiftResolved,
+        "libs.versions.toml" => LockKind::GradleCatalog,
         "poetry.lock" => LockKind::PoetryLock,
         "Pipfile.lock" => LockKind::PipfileLock,
         "Gemfile.lock" => LockKind::GemfileLock,
@@ -102,14 +114,23 @@ pub(crate) struct Dep {
 #[derive(Debug, Default)]
 pub(crate) struct Parsed {
     pub deps: Vec<Dep>,
+    /// Parallel to `deps`: declared as a development-only dependency.
+    pub dev: Vec<bool>,
     pub internal_skipped: usize,
+    /// Pinned to a branch or commit rather than a release: nothing to match.
+    pub unversioned: usize,
 }
 
 impl Parsed {
     fn push(&mut self, ecosystem: Ecosystem, name: &str, version: &str) {
+        self.push_dev(ecosystem, name, version, false);
+    }
+
+    fn push_dev(&mut self, ecosystem: Ecosystem, name: &str, version: &str, dev: bool) {
         let (name, version) = (name.trim(), version.trim());
         if !name.is_empty() && !version.is_empty() {
             self.deps.push(Dep { ecosystem, name: name.to_string(), version: version.to_string() });
+            self.dev.push(dev);
         }
     }
 }
@@ -153,7 +174,7 @@ pub(crate) fn parse_lockfile(kind: LockKind, text: &str, internal_host: &str) ->
                         continue;
                     }
                 }
-                p.push(eco, get("name"), get("version"));
+                p.push_dev(eco, get("name"), get("version"), get("category") == "dev");
             }
         }
         LockKind::PackageLock => {
@@ -170,7 +191,8 @@ pub(crate) fn parse_lockfile(kind: LockKind, text: &str, internal_host: &str) ->
                         continue;
                     }
                     let name = info["name"].as_str().unwrap_or(&path[idx + "node_modules/".len()..]);
-                    p.push(Ecosystem::Npm, name, info["version"].as_str().unwrap_or(""));
+                    let dev = info["dev"].as_bool() == Some(true) || info["devOptional"].as_bool() == Some(true);
+                    p.push_dev(Ecosystem::Npm, name, info["version"].as_str().unwrap_or(""), dev);
                 }
             } else {
                 // lockfileVersion 1: nested "dependencies".
@@ -180,7 +202,7 @@ pub(crate) fn parse_lockfile(kind: LockKind, text: &str, internal_host: &str) ->
                         if is_internal_source(info["resolved"].as_str().unwrap_or(version), host) {
                             p.internal_skipped += 1;
                         } else {
-                            p.push(Ecosystem::Npm, name, version);
+                            p.push_dev(Ecosystem::Npm, name, version, info["dev"].as_bool() == Some(true));
                         }
                         walk(&info["dependencies"], host, p);
                     }
@@ -270,9 +292,15 @@ pub(crate) fn parse_lockfile(kind: LockKind, text: &str, internal_host: &str) ->
                     }
                     let version = pkg["version"].as_str().unwrap_or("");
                     if version.starts_with("dev-") {
-                        continue; // a branch, not a release: nothing to match
+                        p.unversioned += 1; // a branch, not a release: nothing to match
+                        continue;
                     }
-                    p.push(Ecosystem::Packagist, pkg["name"].as_str().unwrap_or(""), version.trim_start_matches('v'));
+                    p.push_dev(
+                        Ecosystem::Packagist,
+                        pkg["name"].as_str().unwrap_or(""),
+                        version.trim_start_matches('v'),
+                        section == "packages-dev",
+                    );
                 }
             }
         }
@@ -296,7 +324,7 @@ pub(crate) fn parse_lockfile(kind: LockKind, text: &str, internal_host: &str) ->
             for section in ["default", "develop"] {
                 for (name, info) in doc[section].as_object().into_iter().flatten() {
                     if let Some(v) = info["version"].as_str().and_then(|v| v.strip_prefix("==")) {
-                        p.push(Ecosystem::PyPI, name, v);
+                        p.push_dev(Ecosystem::PyPI, name, v, section == "develop");
                     } else if info.get("git").is_some() || info.get("path").is_some() {
                         p.internal_skipped += 1;
                     }
@@ -360,6 +388,140 @@ pub(crate) fn parse_lockfile(kind: LockKind, text: &str, internal_host: &str) ->
                 let parts: Vec<&str> = coords.split(':').collect();
                 if parts.len() == 3 {
                     p.push(Ecosystem::Maven, &format!("{}:{}", parts[0], parts[1]), parts[2]);
+                }
+            }
+        }
+        LockKind::GoMod => {
+            // `require x vY` lines and `require ( … )` blocks. `replace` directives
+            // win: a replacement with a version is audited instead of the original,
+            // one pointing at a local path is internal.
+            let mut required: Vec<(String, String)> = Vec::new();
+            let mut replaced: BTreeMap<String, Option<(String, String)>> = BTreeMap::new();
+            let mut block = "";
+            for raw in text.lines() {
+                let line = raw.split("//").next().unwrap_or("").trim();
+                if line.is_empty() {
+                    continue;
+                }
+                if line == ")" {
+                    block = "";
+                    continue;
+                }
+                let (directive, rest) = match line.split_once(char::is_whitespace) {
+                    Some((d, r)) if matches!(d, "require" | "replace" | "exclude" | "retract") => (d, r.trim()),
+                    _ if !block.is_empty() => (block, line),
+                    _ => continue,
+                };
+                if rest == "(" {
+                    block = directive;
+                    continue;
+                }
+                match directive {
+                    "require" => {
+                        let mut it = rest.split_whitespace();
+                        if let (Some(m), Some(v)) = (it.next(), it.next()) {
+                            required.push((m.to_string(), v.to_string()));
+                        }
+                    }
+                    "replace" => {
+                        if let Some((from, to)) = rest.split_once("=>") {
+                            let from = from.split_whitespace().next().unwrap_or("").to_string();
+                            let mut t = to.split_whitespace();
+                            let target = match (t.next(), t.next()) {
+                                (Some(m), Some(v)) if !m.starts_with('.') && !m.starts_with('/') => Some((m.to_string(), v.to_string())),
+                                _ => None,
+                            };
+                            replaced.insert(from, target);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            for (module, version) in required {
+                let (module, version) = match replaced.get(&module) {
+                    Some(Some((m, v))) => (m.clone(), v.clone()),
+                    Some(None) => {
+                        p.internal_skipped += 1;
+                        continue;
+                    }
+                    None => (module, version),
+                };
+                if !internal_host.is_empty() && module.starts_with(internal_host) {
+                    p.internal_skipped += 1;
+                    continue;
+                }
+                let v = version.trim_end_matches("+incompatible");
+                p.push(Ecosystem::Go, &module, v.trim_start_matches('v'));
+            }
+        }
+        LockKind::SwiftResolved => {
+            // v1: object.pins[].{repositoryURL, state.version}; v2/v3: pins[].{location,
+            // state.version}. OSV keys Swift packages by URL without scheme or ".git".
+            let Ok(doc) = serde_json::from_str::<Value>(text) else { return p };
+            let pins = doc["pins"].as_array().or_else(|| doc["object"]["pins"].as_array());
+            for pin in pins.into_iter().flatten() {
+                let url = pin["location"].as_str().or_else(|| pin["repositoryURL"].as_str()).unwrap_or("");
+                let remote = url.starts_with("https://") || url.starts_with("http://") || url.starts_with("git@");
+                if !remote || (!internal_host.is_empty() && url.contains(internal_host)) {
+                    p.internal_skipped += 1;
+                    continue;
+                }
+                let Some(version) = pin["state"]["version"].as_str() else {
+                    p.unversioned += 1; // pinned to a branch or revision
+                    continue;
+                };
+                let name = url
+                    .trim_start_matches("https://")
+                    .trim_start_matches("http://")
+                    .trim_start_matches("git@")
+                    .replacen(':', "/", usize::from(url.starts_with("git@")))
+                    .trim_end_matches('/')
+                    .trim_end_matches(".git")
+                    .to_string();
+                p.push(Ecosystem::SwiftURL, &name, version);
+            }
+        }
+        LockKind::GradleCatalog => {
+            let Ok(doc) = text.parse::<toml::Table>() else { return p };
+            let version_of = |v: &toml::Value| -> Option<String> {
+                match v {
+                    toml::Value::String(s) => Some(s.clone()),
+                    toml::Value::Table(t) => ["strictly", "require", "prefer"]
+                        .iter()
+                        .find_map(|k| t.get(*k).and_then(|x| x.as_str()).map(str::to_string)),
+                    _ => None,
+                }
+            };
+            let versions = doc.get("versions").and_then(|v| v.as_table());
+            for lib in doc.get("libraries").and_then(|v| v.as_table()).into_iter().flat_map(|t| t.values()) {
+                let (coords, version) = match lib {
+                    toml::Value::String(s) => match s.rsplitn(2, ':').collect::<Vec<_>>().as_slice() {
+                        [v, ga] if ga.contains(':') => (ga.to_string(), Some(v.to_string())),
+                        _ => continue,
+                    },
+                    toml::Value::Table(t) => {
+                        let coords = match (t.get("module").and_then(|m| m.as_str()), t.get("group").and_then(|g| g.as_str()), t.get("name").and_then(|n| n.as_str())) {
+                            (Some(m), _, _) => m.to_string(),
+                            (None, Some(g), Some(n)) => format!("{g}:{n}"),
+                            _ => continue,
+                        };
+                        let version = match t.get("version") {
+                            Some(toml::Value::Table(vt)) if vt.contains_key("ref") => vt
+                                .get("ref")
+                                .and_then(|r| r.as_str())
+                                .and_then(|r| versions.and_then(|vs| vs.get(r)))
+                                .and_then(version_of),
+                            Some(v) => version_of(v),
+                            None => None,
+                        };
+                        (coords, version)
+                    }
+                    _ => continue,
+                };
+                match version {
+                    // Only exact versions can be matched; ranges and dynamic versions can't.
+                    Some(v) if !v.contains(['+', '[', '(', ',']) && !v.is_empty() => p.push(Ecosystem::Maven, &coords, &v),
+                    _ => p.unversioned += 1,
                 }
             }
         }
@@ -483,6 +645,8 @@ pub(crate) struct Advisory {
     pub severity: VulnSeverity,
     /// Fixed versions published for this package, in advisory order.
     pub fixed: Vec<String>,
+    /// Other ids of the same issue (CVE, GHSA, GO-, RUSTSEC-…).
+    pub aliases: Vec<String>,
 }
 
 pub(crate) fn advisory_for(vuln: &Value, dep: &Dep) -> Advisory {
@@ -521,7 +685,14 @@ pub(crate) fn advisory_for(vuln: &Value, dep: &Dep) -> Advisory {
             }
         }
     }
-    Advisory { id, cve, summary, severity: osv_severity(vuln), fixed }
+    let aliases = vuln["aliases"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect();
+    Advisory { id, cve, summary, severity: osv_severity(vuln), fixed, aliases }
 }
 
 // ─── OSV client ───
@@ -611,11 +782,35 @@ pub(crate) struct RepoScan {
     pub lockfiles: Vec<(String, usize)>,
     /// Lockfiles found but not auditable against OSV (e.g. Podfile.lock).
     pub unsupported: Vec<String>,
+    /// Gradle version catalogs: declared direct dependencies, not a resolved graph.
+    pub declared_only: Vec<String>,
     pub internal_skipped: usize,
+    pub unversioned: usize,
     pub capped: bool,
     pub deps: Vec<Dep>,
     /// Which lockfile each dependency came from (same order as `deps`).
     pub dep_lockfile: Vec<String>,
+    /// Development-only, per dependency (same order as `deps`).
+    pub dep_dev: Vec<bool>,
+}
+
+/// Lockfiles worth reading, in the order to read them. A `go.sum` next to a `go.mod`
+/// is dropped: it keeps checksums for every version ever seen in the module graph,
+/// so auditing it reports versions the build does not use.
+pub(crate) fn select_lockfiles(paths: &[String]) -> Vec<(String, LockKind)> {
+    let mut found: Vec<(String, LockKind)> = paths
+        .iter()
+        .filter_map(|p| lockfile_kind(p).map(|k| (p.clone(), k)))
+        .collect();
+    let dir = |p: &str| p.rsplit_once('/').map_or("", |(d, _)| d).to_string();
+    let mod_dirs: BTreeSet<String> = found
+        .iter()
+        .filter(|(_, k)| *k == LockKind::GoMod)
+        .map(|(p, _)| dir(p))
+        .collect();
+    found.retain(|(p, k)| *k != LockKind::GoSum || !mod_dirs.contains(&dir(p)));
+    found.sort_by_key(|(p, _)| (p.matches('/').count(), p.clone()));
+    found
 }
 
 async fn scan_repo(client: &GitLabClient, path: &str, internal_host: &str) -> Result<RepoScan> {
@@ -627,14 +822,13 @@ async fn scan_repo(client: &GitLabClient, path: &str, internal_host: &str) -> Re
             TREE_PAGES,
         )
         .await?;
-    let mut scan = RepoScan { path: path.to_string(), ..Default::default() };
-    let mut found: Vec<(String, LockKind)> = tree
+    let blobs: Vec<String> = tree
         .iter()
         .filter(|e| e["type"].as_str() == Some("blob"))
-        .filter_map(|e| e["path"].as_str())
-        .filter_map(|p| lockfile_kind(p).map(|k| (p.to_string(), k)))
+        .filter_map(|e| e["path"].as_str().map(str::to_string))
         .collect();
-    found.sort_by_key(|(p, _)| p.matches('/').count());
+    let mut scan = RepoScan { path: path.to_string(), ..Default::default() };
+    let mut found = select_lockfiles(&blobs);
     if found.len() > MAX_LOCKFILES_PER_REPO {
         scan.capped = true;
         found.truncate(MAX_LOCKFILES_PER_REPO);
@@ -648,23 +842,37 @@ async fn scan_repo(client: &GitLabClient, path: &str, internal_host: &str) -> Re
             .get_text(&format!("/projects/{enc}/repository/files/{}/raw", urlencoding::encode(&file)), &[("ref", "HEAD")])
             .await?;
         let parsed = parse_lockfile(kind, &text, internal_host);
+        if kind == LockKind::GradleCatalog {
+            scan.declared_only.push(file.clone());
+        }
         scan.internal_skipped += parsed.internal_skipped;
+        scan.unversioned += parsed.unversioned;
         scan.lockfiles.push((file.clone(), parsed.deps.len()));
-        for d in parsed.deps {
+        for (d, dev) in parsed.deps.into_iter().zip(parsed.dev) {
             scan.dep_lockfile.push(file.clone());
+            scan.dep_dev.push(dev);
             scan.deps.push(d);
         }
     }
     Ok(scan)
 }
 
-/// One finding: an advisory against a dependency, with every place it is pinned.
+/// One vulnerable package version, with every advisory against it and every place it
+/// is pinned.
 #[derive(Debug, Clone)]
-pub(crate) struct Finding {
+pub(crate) struct PackageFinding {
     pub dep: Dep,
-    pub advisory: Advisory,
+    pub advisories: Vec<Advisory>,
     /// "repo:lockfile" locations.
     pub locations: Vec<String>,
+    /// Pinned somewhere as a runtime (not dev-only) dependency.
+    pub runtime: bool,
+}
+
+impl PackageFinding {
+    pub(crate) fn severity(&self) -> VulnSeverity {
+        self.advisories.iter().map(|a| a.severity).min().unwrap_or(VulnSeverity::Unrated)
+    }
 }
 
 /// Audit pinned dependencies across one project or a whole group.
@@ -673,7 +881,10 @@ pub async fn audit_dependencies(
     project_id: &str,
     group_path: &str,
     max_projects: usize,
+    summary_only: bool,
+    min_severity: Option<&str>,
 ) -> Result<String> {
+    let min_severity = parse_min_severity(min_severity)?;
     let (targets, total_repos, scope) = if !group_path.is_empty() {
         let projects: Vec<Value> = client
             .get_all_pages(
@@ -719,10 +930,9 @@ pub async fn audit_dependencies(
     let osv = Osv::from_env()?;
     let ids_per_dep = if unique.is_empty() { Vec::new() } else { osv.query_batch(&unique).await? };
 
-    let ids: BTreeSet<&String> = ids_per_dep.iter().flatten().collect();
+    let ids: Vec<&String> = ids_per_dep.iter().flatten().collect::<BTreeSet<_>>().into_iter().collect();
     let mut records: BTreeMap<String, Value> = BTreeMap::new();
     let mut lookup = FanOut::default();
-    let ids: Vec<&String> = ids.into_iter().collect();
     for chunk in ids.chunks(8) {
         let fetched = join_all(chunk.iter().map(|id| osv.vuln(id))).await;
         for (id, r) in chunk.iter().zip(fetched) {
@@ -733,72 +943,228 @@ pub async fn audit_dependencies(
     }
     let lookup_warning = lookup.finish("advisory lookups")?.unwrap_or_default();
 
-    let mut findings: Vec<Finding> = Vec::new();
+    let mut findings: Vec<PackageFinding> = Vec::new();
     for (dep, ids) in unique.iter().zip(&ids_per_dep) {
-        let locations: Vec<String> = scans
+        let advisories: Vec<Advisory> = ids
             .iter()
-            .flat_map(|s| {
-                s.deps
-                    .iter()
-                    .zip(&s.dep_lockfile)
-                    .filter(move |(d, _)| *d == dep)
-                    .map(move |(_, f)| format!("{}:{f}", s.path))
-            })
-            .collect::<BTreeSet<_>>()
-            .into_iter()
+            .filter_map(|id| records.get(id))
+            .map(|v| advisory_for(v, dep))
             .collect();
-        for id in ids {
-            if let Some(v) = records.get(id) {
-                findings.push(Finding { dep: dep.clone(), advisory: advisory_for(v, dep), locations: locations.clone() });
+        if advisories.is_empty() {
+            continue;
+        }
+        let mut locations = BTreeSet::new();
+        let mut runtime = false;
+        for s in &scans {
+            for ((d, f), dev) in s.deps.iter().zip(&s.dep_lockfile).zip(&s.dep_dev) {
+                if d == dep {
+                    locations.insert(format!("{}:{f}", s.path));
+                    runtime |= !dev;
+                }
             }
         }
+        findings.push(PackageFinding {
+            dep: dep.clone(),
+            advisories: merge_advisories(advisories),
+            locations: locations.into_iter().collect(),
+            runtime,
+        });
     }
 
-    Ok(format!(
-        "{warning}{lookup_warning}{}",
-        render_dependency_audit(&scope, total_repos, &scans, unique.len(), findings)
-    ))
+    let report = if summary_only {
+        render_dependency_summary(&scope, &scans, unique.len(), &findings)
+    } else {
+        render_dependency_audit(&scope, total_repos, &scans, unique.len(), findings, min_severity)
+    };
+    Ok(format!("{warning}{lookup_warning}{report}"))
 }
 
-/// The audit report. Pure: ordering, counts, the coverage notes and the "nothing to
-/// audit" cases are verified on plain values.
+/// The `min_severity` parameter. Unknown values are a caller mistake, not "all".
+pub(crate) fn parse_min_severity(raw: Option<&str>) -> Result<Option<VulnSeverity>> {
+    match raw.map(|r| r.trim().to_ascii_lowercase()).as_deref() {
+        None | Some("") | Some("all") => Ok(None),
+        Some("critical") => Ok(Some(VulnSeverity::Critical)),
+        Some("high") => Ok(Some(VulnSeverity::High)),
+        Some("medium") | Some("moderate") => Ok(Some(VulnSeverity::Medium)),
+        Some("low") => Ok(Some(VulnSeverity::Low)),
+        Some(other) => Err(Error::user_input(format!(
+            "min_severity '{other}' is not one of critical, high, medium, low."
+        ))),
+    }
+}
+
+/// "upgrade to X" for a package: the lowest version fixing every advisory, and whether
+/// that crosses a major version. `None` when some advisory has no fix yet.
+pub(crate) fn upgrade_target(current: &str, advisories: &[Advisory]) -> Option<(String, bool)> {
+    let mut target: Option<String> = None;
+    for a in advisories {
+        // The lowest fixed version above what we run; release lines below it don't help.
+        let fix = a
+            .fixed
+            .iter()
+            .filter(|f| compare_versions(f, current) == std::cmp::Ordering::Greater)
+            .min_by(|x, y| compare_versions(x, y))?;
+        if target.as_ref().is_none_or(|t| compare_versions(fix, t) == std::cmp::Ordering::Greater) {
+            target = Some(fix.clone());
+        }
+    }
+    target.map(|t| {
+        let major = |v: &str| {
+            let parts: Vec<u64> = version_numbers(v);
+            // 0.x: the minor is the breaking component.
+            match parts.as_slice() {
+                [0, minor, ..] => (0, *minor),
+                [m, ..] => (*m, 0),
+                [] => (0, 0),
+            }
+        };
+        let crosses = major(&t) != major(current);
+        (t, crosses)
+    })
+}
+
+/// Leading numeric components of a version ("v1.2.3-rc1" → [1, 2, 3]).
+fn version_numbers(v: &str) -> Vec<u64> {
+    v.trim_start_matches(['v', 'V'])
+        .split(['.', '-', '+'])
+        .map_while(|p| p.parse::<u64>().ok())
+        .collect()
+}
+
+/// Ecosystem-agnostic version ordering: numeric components first, then the rest as
+/// text. Right for the semver-like versions every supported ecosystem uses.
+pub(crate) fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
+    let (na, nb) = (version_numbers(a), version_numbers(b));
+    for i in 0..na.len().max(nb.len()) {
+        let (x, y) = (na.get(i).copied().unwrap_or(0), nb.get(i).copied().unwrap_or(0));
+        if x != y {
+            return x.cmp(&y);
+        }
+    }
+    // Same numbers: a release sorts after its pre-releases ("1.0.0" > "1.0.0-rc1").
+    let pre = |v: &str| v.contains('-');
+    match (pre(a), pre(b)) {
+        (false, true) => std::cmp::Ordering::Greater,
+        (true, false) => std::cmp::Ordering::Less,
+        (true, true) => a.cmp(b),
+        (false, false) => std::cmp::Ordering::Equal,
+    }
+}
+
+/// Merge advisories that describe the same issue — the GitHub record and the Go or
+/// RustSec record of one CVE share an alias — keeping the highest rating and the
+/// union of fixed versions.
+pub(crate) fn merge_advisories(advisories: Vec<Advisory>) -> Vec<Advisory> {
+    let mut merged: Vec<Advisory> = Vec::new();
+    for a in advisories {
+        let keys: BTreeSet<&str> = a.aliases.iter().map(String::as_str).chain([a.id.as_str()]).collect();
+        let existing = merged.iter_mut().find(|m| {
+            m.aliases.iter().map(String::as_str).chain([m.id.as_str()]).any(|k| keys.contains(k))
+        });
+        match existing {
+            Some(m) => {
+                // Prefer the rated, GitHub-style record as the face of the merged entry.
+                if a.severity < m.severity || (m.severity == VulnSeverity::Unrated && a.id.starts_with("GHSA-")) {
+                    let previous = std::mem::replace(&mut m.id, a.id.clone());
+                    m.aliases.push(previous);
+                    let face = m.id.clone();
+                    m.aliases.retain(|x| *x != face);
+                    m.summary = a.summary.clone();
+                    m.severity = m.severity.min(a.severity);
+                }
+                for alias in a.aliases.iter().chain([&a.id]) {
+                    if !m.aliases.contains(alias) && *alias != m.id {
+                        m.aliases.push(alias.clone());
+                    }
+                }
+                if m.cve.is_none() {
+                    m.cve = a.cve.clone();
+                }
+                for f in a.fixed {
+                    if !m.fixed.contains(&f) {
+                        m.fixed.push(f);
+                    }
+                }
+            }
+            None => merged.push(a),
+        }
+    }
+    merged.sort_by(|a, b| (a.severity, &a.id).cmp(&(b.severity, &b.id)));
+    merged
+}
+
+fn order_findings(findings: &mut [PackageFinding]) {
+    findings.sort_by(|a, b| {
+        (a.severity(), !a.runtime, std::cmp::Reverse(a.advisories.len()), &a.dep)
+            .cmp(&(b.severity(), !b.runtime, std::cmp::Reverse(b.advisories.len()), &b.dep))
+    });
+}
+
+/// One line per scope, for sweeps: counts and the packages to fix first.
+pub(crate) fn render_dependency_summary(
+    scope: &str,
+    scans: &[RepoScan],
+    unique_deps: usize,
+    findings: &[PackageFinding],
+) -> String {
+    let mut f = findings.to_vec();
+    order_findings(&mut f);
+    let runtime_crit_high = f
+        .iter()
+        .filter(|x| x.runtime && x.severity() <= VulnSeverity::High)
+        .count();
+    let top: Vec<String> = f
+        .iter()
+        .take(5)
+        .map(|x| format!("{}@{} ({}, {} adv.)", x.dep.name, x.dep.version, x.severity().label(), x.advisories.len()))
+        .collect();
+    format!(
+        "{scope}: {} repos, {unique_deps} packages, {} vulnerable ({runtime_crit_high} runtime CRITICAL/HIGH). Top: {}",
+        scans.len(),
+        f.len(),
+        if top.is_empty() { "–".to_string() } else { top.join("; ") }
+    )
+}
+
+/// The audit report. Pure: ordering, roll-up, upgrade targets, coverage notes and the
+/// "nothing to audit" cases are verified on plain values.
 pub(crate) fn render_dependency_audit(
     scope: &str,
     total_repos: usize,
     scans: &[RepoScan],
     unique_deps: usize,
-    mut findings: Vec<Finding>,
+    mut findings: Vec<PackageFinding>,
+    min_severity: Option<VulnSeverity>,
 ) -> String {
-    findings.sort_by(|a, b| {
-        (a.advisory.severity, &a.dep.ecosystem, &a.dep.name, &a.advisory.id)
-            .cmp(&(b.advisory.severity, &b.dep.ecosystem, &b.dep.name, &b.advisory.id))
-    });
+    order_findings(&mut findings);
     let lockfiles: usize = scans.iter().map(|s| s.lockfiles.len()).sum();
+    let advisories: usize = findings.iter().map(|f| f.advisories.len()).sum();
     let mut by_sev: BTreeMap<VulnSeverity, usize> = BTreeMap::new();
     for f in &findings {
-        *by_sev.entry(f.advisory.severity).or_default() += 1;
+        *by_sev.entry(f.severity()).or_default() += 1;
     }
-    let vulnerable_pkgs: BTreeSet<&Dep> = findings.iter().map(|f| &f.dep).collect();
+    let runtime = findings.iter().filter(|f| f.runtime).count();
     let mut out = vec![
         format!("# Dependency vulnerability audit — {scope}"),
         String::new(),
         format!(
-            "**{} repo(s) scanned** of {total_repos} · **{lockfiles} lockfile(s)** · **{unique_deps} distinct packages** · **{} vulnerable** · {} advisories",
+            "**{} repo(s) scanned** of {total_repos} · **{lockfiles} lockfile(s)** · **{unique_deps} distinct packages** · **{} vulnerable** ({runtime} runtime, {} dev-only) · {advisories} distinct advisories",
             scans.len(),
-            vulnerable_pkgs.len(),
-            findings.len()
+            findings.len(),
+            findings.len() - runtime
         ),
     ];
     if !findings.is_empty() {
-        out.push(
-            by_sev
-                .iter()
-                .map(|(s, n)| format!("{} {n}", s.label()))
-                .collect::<Vec<_>>()
-                .join(" · "),
-        );
+        out.push(format!(
+            "Vulnerable packages by worst advisory: {}",
+            by_sev.iter().map(|(s, n)| format!("{} {n}", s.label())).collect::<Vec<_>>().join(" · ")
+        ));
     }
     out.push(String::new());
+    let shown: Vec<&PackageFinding> = findings
+        .iter()
+        .filter(|f| min_severity.is_none_or(|min| f.severity() <= min))
+        .collect();
     if findings.is_empty() {
         out.push(if unique_deps == 0 {
             "No auditable dependencies found — see coverage below; this is not a clean bill of health.".to_string()
@@ -806,31 +1172,55 @@ pub(crate) fn render_dependency_audit(
             "No known vulnerabilities in the pinned versions.".to_string()
         });
     } else {
-        out.push("| Severity | Package | Advisory | Fixed in | Where |".to_string());
-        out.push("|----------|---------|----------|----------|-------|".to_string());
-        const MAX_ROWS: usize = 150;
-        for f in findings.iter().take(MAX_ROWS) {
-            let advisory = match &f.advisory.cve {
-                Some(cve) if *cve != f.advisory.id => format!("{} ({cve})", f.advisory.id),
-                _ => f.advisory.id.clone(),
+        if let Some(min) = min_severity {
+            out.push(format!(
+                "_Showing {} of {} vulnerable packages ({} and above)._\n",
+                shown.len(),
+                findings.len(),
+                min.label()
+            ));
+        }
+        out.push("| Severity | Package | Advisories | Fix | Where |".to_string());
+        out.push("|----------|---------|------------|-----|-------|".to_string());
+        const MAX_ROWS: usize = 120;
+        for f in shown.iter().take(MAX_ROWS) {
+            let ids: Vec<String> = f
+                .advisories
+                .iter()
+                .map(|a| a.cve.clone().unwrap_or_else(|| a.id.clone()))
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            let ids_text = if ids.len() > 4 {
+                format!("{} +{} more", ids[..4].join(", "), ids.len() - 4)
+            } else {
+                ids.join(", ")
             };
-            let fixed = if f.advisory.fixed.is_empty() { "no fix yet".to_string() } else { f.advisory.fixed.join(", ") };
+            let headline = &f.advisories[0];
+            let fix = match upgrade_target(&f.dep.version, &f.advisories) {
+                Some((v, true)) => format!("→ {v} (major upgrade)"),
+                Some((v, false)) => format!("→ {v}"),
+                None => "no fix for every advisory yet".to_string(),
+            };
             let where_ = match f.locations.len() {
                 0 => "–".to_string(),
                 1 => f.locations[0].clone(),
                 n => format!("{} +{} more", f.locations[0], n - 1),
             };
             out.push(format!(
-                "| {} | {}@{} ({}) | {advisory} — {} | {fixed} | {where_} |",
-                f.advisory.severity.label(),
+                "| {} | {}@{} ({}){} | {} — {}: {} | {fix} | {where_} |",
+                f.severity().label(),
                 f.dep.name,
                 f.dep.version,
                 f.dep.ecosystem.osv_name(),
-                f.advisory.summary.replace('|', "/"),
+                if f.runtime { "" } else { " · dev" },
+                f.advisories.len(),
+                ids_text,
+                headline.summary.replace('|', "/"),
             ));
         }
-        if findings.len() > MAX_ROWS {
-            out.push(format!("\n_{} more advisories not shown — narrow to a project._", findings.len() - MAX_ROWS));
+        if shown.len() > MAX_ROWS {
+            out.push(format!("\n_{} more packages not shown — narrow to a project or raise min_severity._", shown.len() - MAX_ROWS));
         }
     }
 
@@ -844,8 +1234,13 @@ pub(crate) fn render_dependency_audit(
         .iter()
         .flat_map(|s| s.unsupported.iter().map(move |f| format!("{}:{f}", s.path)))
         .collect();
+    let declared: Vec<String> = scans
+        .iter()
+        .flat_map(|s| s.declared_only.iter().map(move |f| format!("{}:{f}", s.path)))
+        .collect();
     let capped: Vec<&str> = scans.iter().filter(|s| s.capped).map(|s| s.path.as_str()).collect();
     let internal: usize = scans.iter().map(|s| s.internal_skipped).sum();
+    let unversioned: usize = scans.iter().map(|s| s.unversioned).sum();
     let mut notes: Vec<String> = Vec::new();
     if !no_lockfile.is_empty() {
         notes.push(format!(
@@ -861,6 +1256,13 @@ pub(crate) fn render_dependency_audit(
             unsupported.join(", ")
         ));
     }
+    if !declared.is_empty() {
+        notes.push(format!(
+            "- **Direct dependencies only** ({}): {} — a version catalog declares direct dependencies; transitive ones need a `gradle.lockfile`.",
+            declared.len(),
+            declared.join(", ")
+        ));
+    }
     if !capped.is_empty() {
         notes.push(format!(
             "- **Lockfiles capped at {MAX_LOCKFILES_PER_REPO}** in: {} — audit those projects individually.",
@@ -872,6 +1274,11 @@ pub(crate) fn render_dependency_audit(
             "- {internal} internal or non-registry dependencies (GitLab-hosted, git or path sources) were kept out of the query and not audited."
         ));
     }
+    if unversioned > 0 {
+        notes.push(format!(
+            "- {unversioned} dependencies are pinned to a branch, commit or range rather than a release, so they could not be matched."
+        ));
+    }
     if scans.len() < total_repos {
         notes.push(format!("- Only the {} most recently active of {total_repos} repos were scanned; raise `max_projects` to cover more.", scans.len()));
     }
@@ -881,12 +1288,10 @@ pub(crate) fn render_dependency_audit(
         out.extend(notes);
     }
     out.push(String::new());
-    let mut footer = String::new();
-    let _ = write!(
-        footer,
-        "_Matched against OSV.dev (GitHub, RustSec, Go, PyPA and other advisory feeds). Only exact pinned versions are checked; severity is the advisory's own rating, else its CVSS v3 base score._"
+    out.push(
+        "_Matched against OSV.dev (GitHub, RustSec, Go, PyPA and other advisory feeds). Only exact pinned versions are checked; advisories for the same issue are merged; severity is the advisory's own rating, else its CVSS v3 base score. Go is read from `go.mod` (the selected build list), not `go.sum`._"
+            .to_string(),
     );
-    out.push(footer);
     out.join("\n")
 }
 
@@ -1142,54 +1547,237 @@ version = "0.1.0"
             lockfiles: lockfiles.iter().map(|(f, n)| (f.to_string(), *n)).collect(),
             deps: deps.iter().map(|(n, v)| Dep { ecosystem: Ecosystem::Npm, name: (*n).into(), version: (*v).into() }).collect(),
             dep_lockfile: deps.iter().map(|_| lockfiles.first().map_or(String::new(), |l| l.0.to_string())).collect(),
+            dep_dev: deps.iter().map(|_| false).collect(),
             ..Default::default()
         }
     }
 
+    fn adv(id: &str, aliases: &[&str], severity: VulnSeverity, fixed: &[&str]) -> Advisory {
+        Advisory {
+            id: id.into(),
+            cve: aliases.iter().find(|a| a.starts_with("CVE-")).map(|a| a.to_string()),
+            summary: format!("issue {id}"),
+            severity,
+            fixed: fixed.iter().map(|f| f.to_string()).collect(),
+            aliases: aliases.iter().map(|a| a.to_string()).collect(),
+        }
+    }
+
+    fn package(name: &str, version: &str, advisories: Vec<Advisory>, locations: &[&str], runtime: bool) -> PackageFinding {
+        PackageFinding {
+            dep: Dep { ecosystem: Ecosystem::Npm, name: name.into(), version: version.into() },
+            advisories: merge_advisories(advisories),
+            locations: locations.iter().map(|l| l.to_string()).collect(),
+            runtime,
+        }
+    }
+
+    fn sample_findings() -> Vec<PackageFinding> {
+        vec![
+            package(
+                "lodash",
+                "4.17.15",
+                vec![
+                    adv("GHSA-p6mc-m468-83gw", &["CVE-2020-8203"], VulnSeverity::High, &["4.17.19"]),
+                    adv("GHSA-35jh-r3h4-6jhm", &["CVE-2021-23337"], VulnSeverity::High, &["4.17.21"]),
+                ],
+                &["acme/web:package-lock.json", "acme/admin:yarn.lock"],
+                true,
+            ),
+            package(
+                "minimist",
+                "0.0.8",
+                vec![adv("GHSA-xvch-5gv4-984h", &["CVE-2021-44906"], VulnSeverity::Critical, &["0.2.4", "1.2.6"])],
+                &["acme/web:package-lock.json"],
+                false,
+            ),
+            package(
+                "semver",
+                "5.7.1",
+                vec![adv("GHSA-c2qf-rxjj-qqgw", &["CVE-2022-25883"], VulnSeverity::Medium, &["5.7.2", "6.3.1", "7.5.2"])],
+                &["acme/web:package-lock.json"],
+                true,
+            ),
+        ]
+    }
+
     #[test]
     fn golden_dependency_audit_report() {
-        let lodash = Dep { ecosystem: Ecosystem::Npm, name: "lodash".into(), version: "4.17.15".into() };
-        let minimist = Dep { ecosystem: Ecosystem::Npm, name: "minimist".into(), version: "0.0.8".into() };
-        let findings = vec![
-            Finding {
-                dep: minimist.clone(),
-                advisory: advisory_for(&vuln("GHSA-xvch-5gv4-984h", Some("CRITICAL"), None, "minimist", &["0.2.4", "1.2.6"]), &minimist),
-                locations: vec!["acme/web:package-lock.json".into()],
-            },
-            Finding {
-                dep: lodash.clone(),
-                advisory: advisory_for(&vuln("GHSA-p6mc-m468-83gw", Some("HIGH"), None, "lodash", &["4.17.19"]), &lodash),
-                locations: vec!["acme/web:package-lock.json".into(), "acme/admin:yarn.lock".into()],
-            },
-        ];
         let mut no_lock = scan("acme/docs", &[], &[]);
         no_lock.internal_skipped = 3;
         let mut ios = scan("acme/ios", &[], &[]);
         ios.unsupported = vec!["Podfile.lock".into()];
+        let mut android = scan("acme/android", &[("gradle/libs.versions.toml", 40)], &[]);
+        android.declared_only = vec!["gradle/libs.versions.toml".into()];
+        android.unversioned = 2;
         let scans = vec![
             scan("acme/web", &[("package-lock.json", 120)], &[("lodash", "4.17.15"), ("minimist", "0.0.8")]),
             scan("acme/admin", &[("yarn.lock", 80)], &[("lodash", "4.17.15")]),
             no_lock,
             ios,
+            android,
         ];
-        let out = render_dependency_audit("group `acme`", 6, &scans, 180, findings);
+        let out = render_dependency_audit("group `acme`", 7, &scans, 180, sample_findings(), None);
         crate::golden::assert_golden("render/dependency_audit.md", &out);
-        assert!(out.contains("CRITICAL 1 · HIGH 1"));
-        assert!(out.find("minimist").unwrap() < out.find("| HIGH").unwrap(), "most severe first");
+        assert!(out.contains("**3 vulnerable** (2 runtime, 1 dev-only)"));
+        assert!(out.contains("CRITICAL 1 · HIGH 1 · MEDIUM 1"));
+        assert!(out.find("minimist").unwrap() < out.find("lodash@").unwrap(), "most severe first");
+        assert!(out.contains("minimist@0.0.8 (npm) · dev"));
+        assert!(out.contains("| 2 — CVE-2020-8203, CVE-2021-23337"), "one row, both advisories");
+        assert!(out.contains("→ 4.17.21 |"), "the version fixing every advisory");
+        assert!(out.contains("→ 0.2.4 (major upgrade) |"), "the nearest fixed line, not the newest; 0.x minor is breaking");
         assert!(out.contains("acme/web:package-lock.json +1 more"));
         assert!(out.contains("No supported lockfile** (1): acme/docs"));
         assert!(out.contains("Not auditable against OSV** (1): acme/ios:Podfile.lock"));
+        assert!(out.contains("Direct dependencies only** (1): acme/android:gradle/libs.versions.toml"));
         assert!(out.contains("3 internal or non-registry dependencies"));
-        assert!(out.contains("Only the 4 most recently active of 6 repos"));
+        assert!(out.contains("2 dependencies are pinned to a branch, commit or range"));
+        assert!(out.contains("Only the 5 most recently active of 7 repos"));
+    }
+
+    #[test]
+    fn min_severity_filters_rows_but_not_totals() {
+        let scans = vec![scan("acme/web", &[("package-lock.json", 3)], &[])];
+        let out = render_dependency_audit("project `acme/web`", 1, &scans, 3, sample_findings(), Some(VulnSeverity::High));
+        assert!(out.contains("**3 vulnerable**"), "totals count everything");
+        assert!(out.contains("_Showing 2 of 3 vulnerable packages (HIGH and above)._"));
+        assert!(!out.contains("semver@"));
+        assert_eq!(parse_min_severity(Some(" High ")).unwrap(), Some(VulnSeverity::High));
+        assert_eq!(parse_min_severity(Some("moderate")).unwrap(), Some(VulnSeverity::Medium));
+        assert_eq!(parse_min_severity(None).unwrap(), None);
+        assert_eq!(parse_min_severity(Some("all")).unwrap(), None);
+        assert!(parse_min_severity(Some("severe")).is_err(), "a typo is not 'all'");
+    }
+
+    #[test]
+    fn summary_puts_runtime_critical_and_high_first() {
+        let scans = vec![scan("acme/web", &[("package-lock.json", 3)], &[])];
+        let out = render_dependency_summary("group `acme`", &scans, 180, &sample_findings());
+        assert_eq!(
+            out,
+            "group `acme`: 1 repos, 180 packages, 3 vulnerable (1 runtime CRITICAL/HIGH). Top: minimist@0.0.8 (CRITICAL, 1 adv.); lodash@4.17.15 (HIGH, 2 adv.); semver@5.7.1 (MEDIUM, 1 adv.)"
+        );
+        assert!(render_dependency_summary("p", &scans, 0, &[]).ends_with("Top: –"));
     }
 
     #[test]
     fn nothing_auditable_is_never_reported_as_clean() {
-        let out = render_dependency_audit("project `p`", 1, &[scan("p", &[], &[])], 0, vec![]);
+        let out = render_dependency_audit("project `p`", 1, &[scan("p", &[], &[])], 0, vec![], None);
         assert!(out.contains("not a clean bill of health"));
         assert!(!out.contains("No known vulnerabilities"));
-        let clean = render_dependency_audit("project `p`", 1, &[scan("p", &[("Cargo.lock", 3)], &[("x", "1")])], 3, vec![]);
+        let clean = render_dependency_audit("project `p`", 1, &[scan("p", &[("Cargo.lock", 3)], &[("x", "1")])], 3, vec![], None);
         assert!(clean.contains("No known vulnerabilities in the pinned versions."));
+    }
+
+    #[test]
+    fn duplicate_advisories_of_one_issue_merge() {
+        let merged = merge_advisories(vec![
+            adv("GO-2023-1571", &["CVE-2022-41723", "GHSA-vvpx-j8f3-3w6h"], VulnSeverity::Unrated, &["0.7.0"]),
+            adv("GHSA-vvpx-j8f3-3w6h", &["CVE-2022-41723"], VulnSeverity::High, &["0.7.0", "0.8.0"]),
+            adv("GHSA-other", &["CVE-2099-0001"], VulnSeverity::Low, &[]),
+        ]);
+        assert_eq!(merged.len(), 2, "linked by a shared alias");
+        let m = &merged[0];
+        assert_eq!(m.id, "GHSA-vvpx-j8f3-3w6h", "the rated record is the face");
+        assert_eq!(m.severity, VulnSeverity::High, "highest rating wins");
+        assert_eq!(m.cve.as_deref(), Some("CVE-2022-41723"));
+        assert!(m.aliases.contains(&"GO-2023-1571".to_string()));
+        assert!(!m.aliases.contains(&m.id), "the face is not its own alias");
+        assert_eq!(m.fixed, vec!["0.7.0".to_string(), "0.8.0".to_string()], "union, no duplicates");
+        assert_eq!(merged[1].id, "GHSA-other");
+    }
+
+    #[test]
+    fn upgrade_target_is_the_lowest_version_fixing_everything() {
+        let a = |fixed: &[&str]| adv("A", &[], VulnSeverity::High, fixed);
+        assert_eq!(upgrade_target("1.2.0", &[a(&["1.2.5", "2.0.1"]), a(&["1.3.0"])]), Some(("1.3.0".into(), false)));
+        assert_eq!(upgrade_target("1.2.0", &[a(&["2.0.0"])]), Some(("2.0.0".into(), true)));
+        assert_eq!(upgrade_target("0.3.1", &[a(&["0.4.0"])]), Some(("0.4.0".into(), true)), "0.x minor is breaking");
+        assert_eq!(upgrade_target("0.3.1", &[a(&["0.3.9"])]), Some(("0.3.9".into(), false)));
+        assert_eq!(upgrade_target("1.2.0", &[a(&["1.3.0"]), a(&[])]), None, "one advisory unfixed");
+        assert_eq!(upgrade_target("2.0.0", &[a(&["1.9.9"])]), None, "only older lines fixed");
+        assert_eq!(upgrade_target("v1.2.0", &[a(&["v1.10.0"])]), Some(("v1.10.0".into(), false)));
+    }
+
+    #[test]
+    fn versions_compare_numerically_with_prereleases_first() {
+        use std::cmp::Ordering::*;
+        assert_eq!(compare_versions("1.10.0", "1.9.9"), Greater);
+        assert_eq!(compare_versions("1.0", "1.0.0"), Equal);
+        assert_eq!(compare_versions("1.0.0-rc1", "1.0.0"), Less);
+        assert_eq!(compare_versions("v2", "1.99"), Greater);
+    }
+
+    #[test]
+    fn go_mod_next_to_go_sum_wins() {
+        let paths: Vec<String> = ["go.sum", "go.mod", "tools/go.sum", "web/package-lock.json", "vendor/x/go.mod"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let picked: Vec<String> = select_lockfiles(&paths).into_iter().map(|(p, _)| p).collect();
+        assert_eq!(picked, vec!["go.mod", "tools/go.sum", "web/package-lock.json"]);
+    }
+
+    #[test]
+    fn go_mod_reads_requires_and_honours_replace() {
+        let text = "module git.example.com/acme/svc\n\ngo 1.22\n\nrequire (\n\tgolang.org/x/net v0.7.0 // indirect\n\tgithub.com/pkg/old v1.0.0\n\tgit.example.com/acme/lib v0.3.0\n\tgithub.com/local/fork v1.0.0\n)\n\nrequire github.com/x/y v2.1.0+incompatible\n\nreplace github.com/pkg/old => github.com/pkg/new v1.2.0\nreplace github.com/local/fork => ../fork\n";
+        let p = parse_lockfile(LockKind::GoMod, text, "git.example.com");
+        let got: Vec<(String, String)> = p.deps.iter().map(|d| (d.name.clone(), d.version.clone())).collect();
+        assert_eq!(
+            got,
+            vec![
+                ("golang.org/x/net".into(), "0.7.0".into()),
+                ("github.com/pkg/new".into(), "1.2.0".into()),
+                ("github.com/x/y".into(), "2.1.0".into()),
+            ]
+        );
+        assert_eq!(p.internal_skipped, 2, "internal module and local replacement");
+    }
+
+    #[test]
+    fn swift_package_resolved_v1_and_v2() {
+        let v2 = json!({"pins": [
+            {"identity": "alamofire", "location": "https://github.com/Alamofire/Alamofire.git", "state": {"version": "5.6.1", "revision": "abc"}},
+            {"identity": "lib", "location": "https://git.example.com/acme/lib.git", "state": {"version": "1.0.0"}},
+            {"identity": "edge", "location": "https://github.com/acme/edge", "state": {"branch": "main", "revision": "def"}},
+            {"identity": "local", "location": "../local", "state": {"version": "1.0.0"}},
+        ], "version": 2})
+        .to_string();
+        let p = parse_lockfile(LockKind::SwiftResolved, &v2, "git.example.com");
+        assert_eq!(p.deps.len(), 1);
+        assert_eq!((p.deps[0].name.as_str(), p.deps[0].version.as_str()), ("github.com/Alamofire/Alamofire", "5.6.1"));
+        assert_eq!(p.deps[0].ecosystem.osv_name(), "SwiftURL");
+        assert_eq!((p.internal_skipped, p.unversioned), (2, 1));
+        let v1 = json!({"object": {"pins": [{"package": "Kingfisher", "repositoryURL": "git@github.com:onevcat/Kingfisher.git", "state": {"version": "7.0.0"}}]}, "version": 1}).to_string();
+        let p = parse_lockfile(LockKind::SwiftResolved, &v1, "git.example.com");
+        assert_eq!(p.deps[0].name, "github.com/onevcat/Kingfisher");
+    }
+
+    #[test]
+    fn gradle_catalog_resolves_refs_and_skips_ranges() {
+        let text = "[versions]\nokhttp = \"4.9.0\"\nkotlin = { strictly = \"1.9.0\" }\ndyn = \"1.+\"\n\n[libraries]\nokhttp = { module = \"com.squareup.okhttp3:okhttp\", version.ref = \"okhttp\" }\nstdlib = { group = \"org.jetbrains.kotlin\", name = \"kotlin-stdlib\", version.ref = \"kotlin\" }\ngson = \"com.google.code.gson:gson:2.8.5\"\nwild = { module = \"a.b:c\", version.ref = \"dyn\" }\nbom = { module = \"a.b:managed\" }\n";
+        let p = parse_lockfile(LockKind::GradleCatalog, text, "");
+        let mut got: Vec<String> = p.deps.iter().map(|d| format!("{}@{}", d.name, d.version)).collect();
+        got.sort();
+        assert_eq!(got, vec!["com.google.code.gson:gson@2.8.5", "com.squareup.okhttp3:okhttp@4.9.0", "org.jetbrains.kotlin:kotlin-stdlib@1.9.0"]);
+        assert_eq!(p.unversioned, 2, "a dynamic range and a BOM-managed library");
+    }
+
+    #[test]
+    fn dev_dependencies_are_flagged() {
+        let lock = json!({"lockfileVersion": 3, "packages": {
+            "": {"name": "app"},
+            "node_modules/express": {"version": "4.18.0"},
+            "node_modules/jest": {"version": "29.0.0", "dev": true},
+        }})
+        .to_string();
+        let p = parse_lockfile(LockKind::PackageLock, &lock, "");
+        let flags: Vec<(String, bool)> = p.deps.iter().zip(&p.dev).map(|(d, f)| (d.name.clone(), *f)).collect();
+        assert!(flags.contains(&("express".into(), false)));
+        assert!(flags.contains(&("jest".into(), true)));
+        let composer = json!({"packages": [{"name": "laravel/framework", "version": "v5.6.40"}], "packages-dev": [{"name": "phpunit/phpunit", "version": "7.0.0"}]}).to_string();
+        let p = parse_lockfile(LockKind::ComposerLock, &composer, "");
+        assert_eq!(p.dev, vec![false, true]);
     }
 
     #[test]

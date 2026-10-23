@@ -36,7 +36,7 @@ src/
     ├── repository.rs    # search_code, tree, languages, tags, branches, environments, deploy_frequency, project_stats
     ├── reports.rs       # HTML reports: dev, team, project (with auto-observations, print CSS)
     ├── lint.rs          # validate_commit/mr/mr_changes, analyze_file/project, validate_project_commits
-    ├── dependencies.rs  # audit_dependencies / get_vulnerability: lockfile parsers + OSV.dev matching
+    ├── dependencies.rs  # audit_dependencies / get_vulnerability: lockfile parsers, advisory merge, upgrade targets, OSV.dev
     ├── encoding.rs      # base64 file payload decoding (base64 crate; malformed = error)
     └── stats.rs         # shared numeric helpers (median)
 ```

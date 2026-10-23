@@ -208,7 +208,7 @@ For HTTP transport: `gl-mcp --transport http --port 8000`
 | `set_pipeline_schedule_variable` | Create or update a schedule variable (value never echoed) |
 | `delete_pipeline_schedule_variable` | Delete a schedule variable |
 | `audit_ci_security` | CI exposure audit: unredactable secret-shaped variables, debug tracing, floating images, unpinned remote scripts — names only, never values |
-| `audit_dependencies` | Known vulnerabilities in pinned dependencies across a project or group: lockfiles read over the API, matched against OSV.dev; severity, CVE, fixed version, where pinned, and what could not be audited |
+| `audit_dependencies` | Known vulnerabilities in pinned dependencies across a project or group: lockfiles (incl. `go.mod`, Swift `Package.resolved`, Gradle catalogs) read over the API, matched against OSV.dev; one row per package with worst severity, merged advisories, the version that fixes them all, runtime vs dev, and what could not be audited. `min_severity`, `summary_only` |
 | `get_vulnerability` | One advisory by id (CVE, GHSA, RUSTSEC, GO, PYSEC): severity, affected packages, fixed versions, references |
 
 ### Commits & Code Review
@@ -292,7 +292,7 @@ get_commit_diff(sha="abc123", file="AuthController.php")
 GITLAB_COMPACT=1
 ```
 
-`summary_only` is available on: `list_merge_requests`, `list_commits`, `get_commit_diff`, `get_mr_changes`, `compare_developers`, `get_mr_dashboard`, `get_mr_review_depth`, `get_mr_timeline`, `analyze_project`.
+`summary_only` is available on: `list_merge_requests`, `list_commits`, `get_commit_diff`, `get_mr_changes`, `compare_developers`, `get_mr_dashboard`, `get_mr_review_depth`, `get_mr_timeline`, `analyze_project`, `audit_dependencies`.
 
 ### Smart Filtering
 

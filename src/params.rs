@@ -1838,6 +1838,12 @@ pub struct AuditDependenciesParams {
     pub group_path: Option<String>,
     #[schemars(description = "Group sweeps: audit at most this many most recently active projects (default: 30)")]
     pub max_projects: Option<usize>,
+    #[schemars(description = "Only list packages whose worst advisory is at least this severe: critical, high, medium or low (default: all). Totals still count everything.")]
+    #[serde(default)]
+    pub min_severity: Option<String>,
+    #[schemars(description = "One line: counts and the five packages to fix first (default: false)")]
+    #[serde(default)]
+    pub summary_only: Option<bool>,
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }

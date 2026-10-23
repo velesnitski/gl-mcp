@@ -1744,13 +1744,21 @@ impl GlMcpServer {
     }
 
     #[tool(
-        description = "Audit pinned dependencies for known vulnerabilities across one project or a whole group: reads lockfiles over the API (Cargo, npm/yarn/pnpm, Composer, Go, Poetry/Pipfile/requirements, Bundler, Gradle) and matches every pinned public package against OSV.dev (GitHub, RustSec, Go, PyPA advisories). Reports severity, CVE, fixed version and where it is pinned, plus what could not be audited. Internal packages (GitLab-hosted, git, path) are never sent out."
+        description = "Audit pinned dependencies for known vulnerabilities across one project or a whole group: reads lockfiles over the API (Cargo, npm/yarn/pnpm, Composer, Go, Poetry/Pipfile/requirements, Bundler, Gradle) and matches every pinned public package against OSV.dev (GitHub, RustSec, Go, PyPA advisories). Reads go.mod (not go.sum), Swift Package.resolved and Gradle version catalogs too. One row per vulnerable package: worst severity, merged advisories, the version that fixes them all, runtime vs dev, where it is pinned, plus what could not be audited. Internal packages (GitLab-hosted, git, path) are never sent out."
     )]
     async fn audit_dependencies(&self, Parameters(p): Parameters<AuditDependenciesParams>) -> Result<CallToolResult, McpError> {
         let project = p.project_id.clone().unwrap_or_default();
         let group = p.group_path.clone().unwrap_or_default();
         simple_tool!(self, p, "audit_dependencies", &project, |client| {
-            tools::dependencies::audit_dependencies(client, &project, &group, p.max_projects.unwrap_or(30)).await
+            tools::dependencies::audit_dependencies(
+                client,
+                &project,
+                &group,
+                p.max_projects.unwrap_or(30),
+                p.summary_only.unwrap_or(false),
+                p.min_severity.as_deref(),
+            )
+            .await
         })
     }
 
