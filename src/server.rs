@@ -1744,6 +1744,24 @@ impl GlMcpServer {
     }
 
     #[tool(
+        description = "Audit pinned dependencies for known vulnerabilities across one project or a whole group: reads lockfiles over the API (Cargo, npm/yarn/pnpm, Composer, Go, Poetry/Pipfile/requirements, Bundler, Gradle) and matches every pinned public package against OSV.dev (GitHub, RustSec, Go, PyPA advisories). Reports severity, CVE, fixed version and where it is pinned, plus what could not be audited. Internal packages (GitLab-hosted, git, path) are never sent out."
+    )]
+    async fn audit_dependencies(&self, Parameters(p): Parameters<AuditDependenciesParams>) -> Result<CallToolResult, McpError> {
+        let project = p.project_id.clone().unwrap_or_default();
+        let group = p.group_path.clone().unwrap_or_default();
+        simple_tool!(self, p, "audit_dependencies", &project, |client| {
+            tools::dependencies::audit_dependencies(client, &project, &group, p.max_projects.unwrap_or(30)).await
+        })
+    }
+
+    #[tool(
+        description = "Look up one vulnerability advisory by id (CVE, GHSA, RUSTSEC, GO, PYSEC): severity, aliases, affected packages with fixed versions, details and references, from OSV.dev."
+    )]
+    async fn get_vulnerability(&self, Parameters(p): Parameters<GetVulnerabilityParams>) -> Result<CallToolResult, McpError> {
+        tool_call!(self, "get_vulnerability", tools::dependencies::get_vulnerability(&p.id).await)
+    }
+
+    #[tool(
         description = "Who last changed each line of a file, and in which commit (date, author, subject) — over the API, no clone needed. Pass start_line/end_line for a window; output is capped at 300 lines."
     )]
     async fn get_blame(&self, Parameters(p): Parameters<GetBlameParams>) -> Result<CallToolResult, McpError> {

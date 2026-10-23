@@ -268,6 +268,41 @@
     "name": "audit_ci_security"
   },
   {
+    "description": "Audit pinned dependencies for known vulnerabilities across one project or a whole group: reads lockfiles over the API (Cargo, npm/yarn/pnpm, Composer, Go, Poetry/Pipfile/requirements, Bundler, Gradle) and matches every pinned public package against OSV.dev (GitHub, RustSec, Go, PyPA advisories). Reports severity, CVE, fixed version and where it is pinned, plus what could not be audited. Internal packages (GitLab-hosted, git, path) are never sent out.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "group_path": {
+          "default": null,
+          "description": "Group path: audit every non-archived project in the group (with subgroups)",
+          "nullable": true,
+          "type": "string"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "nullable": true,
+          "type": "string"
+        },
+        "max_projects": {
+          "description": "Group sweeps: audit at most this many most recently active projects (default: 30)",
+          "format": "uint",
+          "minimum": 0,
+          "nullable": true,
+          "type": "integer"
+        },
+        "project_id": {
+          "default": null,
+          "description": "Project ID or path. Omit when using group_path.",
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "title": "AuditDependenciesParams",
+      "type": "object"
+    },
+    "name": "audit_dependencies"
+  },
+  {
     "description": "Audit README coverage/quality across a group (with subgroups): flags repos with a missing, small/stub, or Russian/Cyrillic README. Returns a compact table with counts — scanning happens server-side.",
     "input_schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -2769,6 +2804,24 @@
       "type": "object"
     },
     "name": "get_user_activity"
+  },
+  {
+    "description": "Look up one vulnerability advisory by id (CVE, GHSA, RUSTSEC, GO, PYSEC): severity, aliases, affected packages with fixed versions, details and references, from OSV.dev.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "description": "Advisory id: CVE-…, GHSA-…, RUSTSEC-…, GO-…, PYSEC-…",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "GetVulnerabilityParams",
+      "type": "object"
+    },
+    "name": "get_vulnerability"
   },
   {
     "description": "List branches for a project, optionally filtered by name",

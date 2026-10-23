@@ -164,3 +164,41 @@ fn ordinary_words_ending_in_sk_are_not_redacted() {
     let text = ["task-", &"a".repeat(24)].concat();
     assert_eq!(redact_log(&text), text);
 }
+
+proptest! {
+    /// Lockfiles are untrusted repository content: no input may crash a parser.
+    #[test]
+    fn lockfile_parsers_never_panic(text in any::<String>(), path in "[a-zA-Z0-9_./-]{0,40}") {
+        use crate::tools::dependencies::{lockfile_kind, parse_lockfile, LockKind};
+        let _ = lockfile_kind(&path);
+        for kind in [
+            LockKind::CargoLock, LockKind::PackageLock, LockKind::YarnLock, LockKind::PnpmLock,
+            LockKind::ComposerLock, LockKind::GoSum, LockKind::PoetryLock, LockKind::PipfileLock,
+            LockKind::Requirements, LockKind::GemfileLock, LockKind::GradleLockfile, LockKind::PodfileLock,
+        ] {
+            let parsed = parse_lockfile(kind, &text, "git.example.com");
+            for d in &parsed.deps {
+                prop_assert!(!d.name.is_empty() && !d.version.is_empty());
+            }
+        }
+    }
+
+    /// Line-structured formats get line-shaped noise, which reaches deeper branches.
+    #[test]
+    fn line_based_parsers_survive_structured_noise(
+        lines in proptest::collection::vec("[ ]{0,6}[@/\"a-z0-9._:,()~^-]{0,24}", 0..40)
+    ) {
+        use crate::tools::dependencies::{parse_lockfile, LockKind};
+        let text = lines.join("\n");
+        for kind in [LockKind::YarnLock, LockKind::PnpmLock, LockKind::GemfileLock, LockKind::GoSum, LockKind::Requirements, LockKind::GradleLockfile] {
+            let _ = parse_lockfile(kind, &text, "git.example.com");
+        }
+    }
+
+    #[test]
+    fn cvss_scoring_never_panics_and_stays_in_range(v in "CVSS:3\\.[01](/[A-Z]{1,2}:[A-Z]){0,10}") {
+        if let Some(s) = crate::tools::dependencies::cvss3_base_score(&v) {
+            prop_assert!((0.0..=10.0).contains(&s));
+        }
+    }
+}

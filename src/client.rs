@@ -65,6 +65,15 @@ impl GitLabClient {
         })
     }
 
+    /// Host of this GitLab instance ("" if the URL has none) — used to recognise
+    /// dependencies resolved from the instance itself, which are internal.
+    pub fn host(&self) -> String {
+        url::Url::parse(&self.base_url)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_string))
+            .unwrap_or_default()
+    }
+
     /// The single request core: send the request produced by `build`, retrying
     /// on HTTP 429 (honoring Retry-After), and return the successful body as
     /// text. Non-2xx responses become structured `Error::GitLab` values.

@@ -6,7 +6,7 @@
 [![MCP](https://img.shields.io/badge/MCP-compatible-purple)](https://modelcontextprotocol.io)
 [![Rust](https://img.shields.io/badge/Rust-1.80+-orange.svg)](https://www.rust-lang.org)
 
-**GitLab MCP server with 116 tools** for projects, issues, merge requests, CI/CD, code review, team analytics, and code quality analysis.
+**GitLab MCP server with 118 tools** for projects, issues, merge requests, CI/CD, code review, team analytics, and code quality analysis.
 
 Single Rust binary. Zero runtime dependencies. Works with Claude Code, GitHub Copilot, Cursor, Windsurf, n8n, and any MCP-compatible client.
 
@@ -14,7 +14,7 @@ Single Rust binary. Zero runtime dependencies. Works with Claude Code, GitHub Co
 
 ## Highlights
 
-- **116 tools** across 9 categories — from basic CRUD to advanced analytics
+- **118 tools** across 9 categories — from basic CRUD to advanced analytics
 - **Code quality analysis** — file-level scoring (A–F), project-wide reports, 81 lint rules for Swift/PHP/Go/Kotlin/TypeScript/Ansible
 - **Team performance reports** — developer comparison, review matrix, MR turnaround, auto-detected process issues
 - **HTML reports** — dark-theme reports with Export PDF button for dev activity, team performance, and project quality
@@ -119,7 +119,7 @@ For HTTP transport: `gl-mcp --transport http --port 8000`
 
 ---
 
-## Tools (116)
+## Tools (118)
 
 ### Projects & Users
 | Tool | Description |
@@ -208,6 +208,8 @@ For HTTP transport: `gl-mcp --transport http --port 8000`
 | `set_pipeline_schedule_variable` | Create or update a schedule variable (value never echoed) |
 | `delete_pipeline_schedule_variable` | Delete a schedule variable |
 | `audit_ci_security` | CI exposure audit: unredactable secret-shaped variables, debug tracing, floating images, unpinned remote scripts — names only, never values |
+| `audit_dependencies` | Known vulnerabilities in pinned dependencies across a project or group: lockfiles read over the API, matched against OSV.dev; severity, CVE, fixed version, where pinned, and what could not be audited |
+| `get_vulnerability` | One advisory by id (CVE, GHSA, RUSTSEC, GO, PYSEC): severity, affected packages, fixed versions, references |
 
 ### Commits & Code Review
 | Tool | Description |

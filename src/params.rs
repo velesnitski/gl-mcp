@@ -1827,3 +1827,23 @@ pub struct GetMergeBaseParams {
     #[schemars(description = "GitLab instance name (optional)")]
     pub instance: Option<String>,
 }
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AuditDependenciesParams {
+    #[schemars(description = "Project ID or path. Omit when using group_path.")]
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[schemars(description = "Group path: audit every non-archived project in the group (with subgroups)")]
+    #[serde(default)]
+    pub group_path: Option<String>,
+    #[schemars(description = "Group sweeps: audit at most this many most recently active projects (default: 30)")]
+    pub max_projects: Option<usize>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetVulnerabilityParams {
+    #[schemars(description = "Advisory id: CVE-…, GHSA-…, RUSTSEC-…, GO-…, PYSEC-…")]
+    pub id: String,
+}

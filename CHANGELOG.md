@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-10-23
+
+### Added
+
+- **`audit_dependencies`**: known vulnerabilities in pinned dependencies, for one
+  project or a whole group. Lockfiles are read over the API, with no clone:
+  `Cargo.lock`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `composer.lock`,
+  `go.sum`, `poetry.lock`, `Pipfile.lock`, `requirements*.txt`, `Gemfile.lock` and
+  `gradle.lockfile`. Every pinned public package is matched against OSV.dev, which
+  aggregates GitHub, RustSec, Go, PyPA and other advisory feeds.
+  - The report gives each finding's severity, CVE alias, fixed version, and every
+    place it is pinned, most severe first.
+  - A coverage section lists repos with no lockfile, lockfiles that cannot be audited
+    (CocoaPods has no feed), capped monorepos, and skipped internal dependencies.
+  - Internal packages are never sent out: those resolved from the GitLab host itself,
+    a git URL or a local path.
+  - An unreachable OSV fails the tool rather than reporting a clean result
+    (ADR 066).
+- **`get_vulnerability`**: one advisory by id (CVE, GHSA, RUSTSEC, GO, PYSEC), with
+  severity, aliases, affected packages, fixed versions and references.
+- **`OSV_API_URL`** points the audit at an OSV mirror.
+
 ## [1.14.1] - 2026-10-23
 
 ### Security
