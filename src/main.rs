@@ -8,6 +8,10 @@
 //!                                       # report to stdout and exit. Same engine
 //!                                       # as the generate_ai_adoption_report MCP
 //!                                       # tool — built for cron/CI consumers.
+//!   gl-mcp --dependency-audit GROUP [--previous last.json] [--snapshot-out now.json] [--full-out full.html]
+//!          [--max-projects N] [--gl-instance NAME] > report.html
+//!                                       # one-shot: weekly dependency-CVE email,
+//!                                       # diffed against last week's snapshot.
 
 // The binary is a thin shell over the library crate. It used to re-declare every
 // module, compiling the whole server twice and hiding library dead code behind
@@ -83,6 +87,50 @@ async fn main() -> anyhow::Result<()> {
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
         println!("{html}");
+        return Ok(());
+    }
+
+    // One-shot CLI mode: --dependency-audit GROUP. Prints the weekly email HTML and
+    // writes the snapshot (with the subject line) for the next run to diff against.
+    if let Some(group) = args
+        .iter()
+        .position(|a| a == "--dependency-audit")
+        .and_then(|i| args.get(i + 1))
+    {
+        let flag = |name: &str| {
+            args.iter()
+                .position(|a| a == name)
+                .and_then(|i| args.get(i + 1))
+                .cloned()
+        };
+        let max_projects: usize = flag("--max-projects")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(200);
+        let instance = flag("--gl-instance").unwrap_or_default();
+        // A missing previous snapshot is the first run, not an error.
+        let previous = flag("--previous").and_then(|p| std::fs::read_to_string(p).ok());
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+
+        let resolver = gl_mcp::resolver::Resolver::new(&config);
+        let client = resolver
+            .resolve(&instance, "")
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let report = tools::dep_report::weekly_report(
+            client,
+            group,
+            max_projects,
+            previous.as_deref(),
+            &today,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+        if let Some(out) = flag("--snapshot-out") {
+            std::fs::write(&out, &report.snapshot)?;
+        }
+        if let Some(out) = flag("--full-out") {
+            std::fs::write(&out, &report.full)?;
+        }
+        println!("{}", report.body);
         return Ok(());
     }
 

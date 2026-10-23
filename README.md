@@ -344,6 +344,21 @@ Pass `instance="staging"` to any tool. URLs auto-resolve to the correct instance
 | `--transport http` | HTTP/SSE — for n8n, web clients, Docker |
 | `--port 8000` | Port for HTTP transport (default: 8000) |
 
+### One-shot CLI reports (cron/CI)
+
+Same engines as the MCP tools, printed to stdout for scheduled email jobs:
+
+```bash
+gl-mcp --adoption-report GROUP [--days 30] [--gl-instance NAME] > ai.html
+gl-mcp --dependency-audit GROUP [--previous last.json] [--snapshot-out now.json] \
+       [--full-out full.html] [--max-projects 200] [--gl-instance NAME] > body.html
+```
+
+`--dependency-audit` writes a weekly email: what is new and fixed since the previous
+snapshot, repositories ranked by exposure, and coverage gaps. The body leaves out the
+full finding list (Gmail clips bodies over ~102 KB); `--full-out` has everything, for
+the attachment. The snapshot carries the subject line and is next week's `--previous`.
+
 ### Required Token Scopes
 
 | Scope | Needed for |

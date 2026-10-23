@@ -37,6 +37,7 @@ src/
     ├── reports.rs       # HTML reports: dev, team, project (with auto-observations, print CSS)
     ├── lint.rs          # validate_commit/mr/mr_changes, analyze_file/project, validate_project_commits
     ├── dependencies.rs  # audit_dependencies / get_vulnerability: lockfile parsers, advisory merge, upgrade targets, OSV.dev
+    ├── dep_report.rs    # weekly dependency-CVE email (--dependency-audit CLI): snapshot, diff, exposure ranking
     ├── encoding.rs      # base64 file payload decoding (base64 crate; malformed = error)
     └── stats.rs         # shared numeric helpers (median)
 ```

@@ -867,6 +867,8 @@ pub(crate) struct PackageFinding {
     pub locations: Vec<String>,
     /// Pinned somewhere as a runtime (not dev-only) dependency.
     pub runtime: bool,
+    /// Repositories that pin it as a runtime dependency.
+    pub runtime_repos: BTreeSet<String>,
 }
 
 impl PackageFinding {
@@ -875,16 +877,26 @@ impl PackageFinding {
     }
 }
 
-/// Audit pinned dependencies across one project or a whole group.
-pub async fn audit_dependencies(
+/// Everything one audit run gathered, before rendering.
+#[derive(Debug, Default)]
+pub(crate) struct Audit {
+    pub scope: String,
+    pub total_repos: usize,
+    pub scans: Vec<RepoScan>,
+    pub unique_deps: usize,
+    pub findings: Vec<PackageFinding>,
+    /// Partial-failure notes (some repos or advisories could not be fetched).
+    pub warnings: String,
+}
+
+/// Scan lockfiles and match them against OSV. Shared by the MCP tool and the
+/// weekly report CLI, so both see exactly the same findings.
+pub(crate) async fn collect_audit(
     client: &GitLabClient,
     project_id: &str,
     group_path: &str,
     max_projects: usize,
-    summary_only: bool,
-    min_severity: Option<&str>,
-) -> Result<String> {
-    let min_severity = parse_min_severity(min_severity)?;
+) -> Result<Audit> {
     let (targets, total_repos, scope) = if !group_path.is_empty() {
         let projects: Vec<Value> = client
             .get_all_pages(
@@ -954,12 +966,14 @@ pub async fn audit_dependencies(
             continue;
         }
         let mut locations = BTreeSet::new();
-        let mut runtime = false;
+        let mut runtime_repos = BTreeSet::new();
         for s in &scans {
             for ((d, f), dev) in s.deps.iter().zip(&s.dep_lockfile).zip(&s.dep_dev) {
                 if d == dep {
                     locations.insert(format!("{}:{f}", s.path));
-                    runtime |= !dev;
+                    if !dev {
+                        runtime_repos.insert(s.path.clone());
+                    }
                 }
             }
         }
@@ -967,16 +981,37 @@ pub async fn audit_dependencies(
             dep: dep.clone(),
             advisories: merge_advisories(advisories),
             locations: locations.into_iter().collect(),
-            runtime,
+            runtime: !runtime_repos.is_empty(),
+            runtime_repos,
         });
     }
+    Ok(Audit {
+        scope,
+        total_repos,
+        unique_deps: unique.len(),
+        scans,
+        findings,
+        warnings: format!("{warning}{lookup_warning}"),
+    })
+}
 
+/// Audit pinned dependencies across one project or a whole group.
+pub async fn audit_dependencies(
+    client: &GitLabClient,
+    project_id: &str,
+    group_path: &str,
+    max_projects: usize,
+    summary_only: bool,
+    min_severity: Option<&str>,
+) -> Result<String> {
+    let min_severity = parse_min_severity(min_severity)?;
+    let a = collect_audit(client, project_id, group_path, max_projects).await?;
     let report = if summary_only {
-        render_dependency_summary(&scope, &scans, unique.len(), &findings)
+        render_dependency_summary(&a.scope, &a.scans, a.unique_deps, &a.findings)
     } else {
-        render_dependency_audit(&scope, total_repos, &scans, unique.len(), findings, min_severity)
+        render_dependency_audit(&a.scope, a.total_repos, &a.scans, a.unique_deps, a.findings, min_severity)
     };
-    Ok(format!("{warning}{lookup_warning}{report}"))
+    Ok(format!("{}{report}", a.warnings))
 }
 
 /// The `min_severity` parameter. Unknown values are a caller mistake, not "all".
@@ -993,34 +1028,65 @@ pub(crate) fn parse_min_severity(raw: Option<&str>) -> Result<Option<VulnSeverit
     }
 }
 
-/// "upgrade to X" for a package: the lowest version fixing every advisory, and whether
-/// that crosses a major version. `None` when some advisory has no fix yet.
-pub(crate) fn upgrade_target(current: &str, advisories: &[Advisory]) -> Option<(String, bool)> {
+/// Where to upgrade a package to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UpgradeTarget {
+    /// The lowest version fixing every advisory that has a fix; `None` when none has.
+    pub version: Option<String>,
+    /// That version crosses a major version (for 0.x, a minor one).
+    pub major: bool,
+    /// Advisories with no fixed version above the current one.
+    pub unfixed: usize,
+}
+
+impl UpgradeTarget {
+    pub(crate) fn label(&self) -> String {
+        let unfixed = match self.unfixed {
+            0 => String::new(),
+            1 => "1 advisory has no fix yet".to_string(),
+            n => format!("{n} advisories have no fix yet"),
+        };
+        match (&self.version, self.unfixed) {
+            (None, _) => "no fix yet".to_string(),
+            (Some(v), 0) if self.major => format!("→ {v} (major upgrade)"),
+            (Some(v), 0) => format!("→ {v}"),
+            (Some(v), _) if self.major => format!("→ {v} (major upgrade; {unfixed})"),
+            (Some(v), _) => format!("→ {v} ({unfixed})"),
+        }
+    }
+}
+
+/// The upgrade for a package: for each advisory the lowest fixed version above the
+/// current one (release lines below it don't help), then the highest of those.
+/// Advisories without such a fix are counted rather than blocking the rest.
+pub(crate) fn upgrade_target(current: &str, advisories: &[Advisory]) -> UpgradeTarget {
     let mut target: Option<String> = None;
+    let mut unfixed = 0;
     for a in advisories {
-        // The lowest fixed version above what we run; release lines below it don't help.
         let fix = a
             .fixed
             .iter()
             .filter(|f| compare_versions(f, current) == std::cmp::Ordering::Greater)
-            .min_by(|x, y| compare_versions(x, y))?;
-        if target.as_ref().is_none_or(|t| compare_versions(fix, t) == std::cmp::Ordering::Greater) {
-            target = Some(fix.clone());
+            .min_by(|x, y| compare_versions(x, y));
+        match fix {
+            None => unfixed += 1,
+            Some(fix) => {
+                if target.as_ref().is_none_or(|t| compare_versions(fix, t) == std::cmp::Ordering::Greater) {
+                    target = Some(fix.clone());
+                }
+            }
         }
     }
-    target.map(|t| {
-        let major = |v: &str| {
-            let parts: Vec<u64> = version_numbers(v);
-            // 0.x: the minor is the breaking component.
-            match parts.as_slice() {
-                [0, minor, ..] => (0, *minor),
-                [m, ..] => (*m, 0),
-                [] => (0, 0),
-            }
-        };
-        let crosses = major(&t) != major(current);
-        (t, crosses)
-    })
+    let major_of = |v: &str| {
+        // 0.x: the minor is the breaking component.
+        match version_numbers(v).as_slice() {
+            [0, minor, ..] => (0, *minor),
+            [m, ..] => (*m, 0),
+            [] => (0, 0),
+        }
+    };
+    let major = target.as_deref().is_some_and(|t| major_of(t) != major_of(current));
+    UpgradeTarget { version: target, major, unfixed }
 }
 
 /// Leading numeric components of a version ("v1.2.3-rc1" → [1, 2, 3]).
@@ -1197,11 +1263,7 @@ pub(crate) fn render_dependency_audit(
                 ids.join(", ")
             };
             let headline = &f.advisories[0];
-            let fix = match upgrade_target(&f.dep.version, &f.advisories) {
-                Some((v, true)) => format!("→ {v} (major upgrade)"),
-                Some((v, false)) => format!("→ {v}"),
-                None => "no fix for every advisory yet".to_string(),
-            };
+            let fix = upgrade_target(&f.dep.version, &f.advisories).label();
             let where_ = match f.locations.len() {
                 0 => "–".to_string(),
                 1 => f.locations[0].clone(),
@@ -1569,6 +1631,11 @@ version = "0.1.0"
             advisories: merge_advisories(advisories),
             locations: locations.iter().map(|l| l.to_string()).collect(),
             runtime,
+            runtime_repos: if runtime {
+                locations.iter().map(|l| l.split_once(':').map_or(*l, |(r, _)| r).to_string()).collect()
+            } else {
+                BTreeSet::new()
+            },
         }
     }
 
@@ -1690,13 +1757,20 @@ version = "0.1.0"
     #[test]
     fn upgrade_target_is_the_lowest_version_fixing_everything() {
         let a = |fixed: &[&str]| adv("A", &[], VulnSeverity::High, fixed);
-        assert_eq!(upgrade_target("1.2.0", &[a(&["1.2.5", "2.0.1"]), a(&["1.3.0"])]), Some(("1.3.0".into(), false)));
-        assert_eq!(upgrade_target("1.2.0", &[a(&["2.0.0"])]), Some(("2.0.0".into(), true)));
-        assert_eq!(upgrade_target("0.3.1", &[a(&["0.4.0"])]), Some(("0.4.0".into(), true)), "0.x minor is breaking");
-        assert_eq!(upgrade_target("0.3.1", &[a(&["0.3.9"])]), Some(("0.3.9".into(), false)));
-        assert_eq!(upgrade_target("1.2.0", &[a(&["1.3.0"]), a(&[])]), None, "one advisory unfixed");
-        assert_eq!(upgrade_target("2.0.0", &[a(&["1.9.9"])]), None, "only older lines fixed");
-        assert_eq!(upgrade_target("v1.2.0", &[a(&["v1.10.0"])]), Some(("v1.10.0".into(), false)));
+        let t = |cur: &str, advs: &[Advisory]| {
+            let u = upgrade_target(cur, advs);
+            (u.version.unwrap_or_default(), u.major, u.unfixed)
+        };
+        assert_eq!(t("1.2.0", &[a(&["1.2.5", "2.0.1"]), a(&["1.3.0"])]), ("1.3.0".into(), false, 0));
+        assert_eq!(t("1.2.0", &[a(&["2.0.0"])]), ("2.0.0".into(), true, 0));
+        assert_eq!(t("0.3.1", &[a(&["0.4.0"])]), ("0.4.0".into(), true, 0), "0.x minor is breaking");
+        assert_eq!(t("0.3.1", &[a(&["0.3.9"])]), ("0.3.9".into(), false, 0));
+        assert_eq!(t("1.2.0", &[a(&["1.3.0"]), a(&[])]), ("1.3.0".into(), false, 1), "an unfixed advisory doesn't hide the rest");
+        assert_eq!(t("2.0.0", &[a(&["1.9.9"])]), (String::new(), false, 1), "only older lines fixed");
+        assert_eq!(t("v1.2.0", &[a(&["v1.10.0"])]), ("v1.10.0".into(), false, 0));
+        assert_eq!(upgrade_target("1.2.0", &[a(&["1.3.0"]), a(&[])]).label(), "→ 1.3.0 (1 advisory has no fix yet)");
+        assert_eq!(upgrade_target("1.2.0", &[a(&["2.0.0"]), a(&[]), a(&[])]).label(), "→ 2.0.0 (major upgrade; 2 advisories have no fix yet)");
+        assert_eq!(upgrade_target("1.2.0", &[a(&[])]).label(), "no fix yet");
     }
 
     #[test]

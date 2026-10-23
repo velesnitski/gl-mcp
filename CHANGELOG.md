@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-10-23
+
+### Added
+
+- **`--dependency-audit GROUP` CLI**: the weekly dependency-vulnerability email for
+  scheduled jobs, built on the same audit as `audit_dependencies`.
+  - It reports what is new and what got fixed since the previous snapshot
+    (`--previous`), and how many weeks each finding has been open.
+  - It ranks repositories to fix first by exposure, and lists coverage gaps.
+  - The body stays under Gmail's clipping limit. `--full-out` writes the complete
+    list for the attachment.
+  - `--snapshot-out` writes next week's snapshot, including the subject line.
+  - A repository that fails to scan is carried over, never counted as fixed
+    (ADR 068).
+
+### Changed
+
+- Upgrade targets cover partial fixes. When some advisories against a package have
+  no fix, the row still names the version that resolves the rest, for example
+  `→ 0.45.0 (1 advisory has no fix yet)`. Previously it said "no fix for every
+  advisory yet".
+
 ## [1.16.0] - 2026-10-23
 
 ### Changed

@@ -4,6 +4,7 @@
 
 pub mod adoption;
 pub mod commits;
+pub mod dep_report;
 pub mod dependencies;
 pub mod docs;
 pub(crate) mod encoding;
