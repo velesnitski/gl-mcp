@@ -36,6 +36,7 @@ fn isolate_home() -> std::path::PathBuf {
         std::env::remove_var("GITLAB_ANALYTICS_FILE");
         // The vulnerability database is an outside service too: keep tests offline.
         std::env::set_var("OSV_API_URL", format!("http://127.0.0.1:{}", closed_port()));
+        std::env::set_var("ENDOFLIFE_API_URL", format!("http://127.0.0.1:{}", closed_port()));
     }
     dir
 }

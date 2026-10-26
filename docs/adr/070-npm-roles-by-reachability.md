@@ -7,10 +7,10 @@ Accepted (2026-10-26)
 ## Context
 
 The weekly dependency email (ADR 068) ranks repositories by runtime exposure.
-Frontend repositories came out with dozens of "runtime" critical findings in
-packages such as `loader-utils`, `shell-quote`, `tar` and `websocket-driver`. These
-are webpack and dev-server internals that never reach a user. A frontend lead
-correctly answered that most of them only run in the Node.js build environment.
+Frontend repositories typically show many "runtime" critical findings in packages
+such as `loader-utils`, `shell-quote`, `tar` and `websocket-driver`. These are
+webpack and dev-server internals that never reach a user. The usual objection, that
+most of them only run in the Node.js build environment, is largely right.
 
 The cause was the lockfile's own `dev` flag, which answers the wrong question twice:
 
@@ -62,7 +62,5 @@ it's fine" is not right either. The report needs the actual split.
   `cipher-base`, `browserify-sign`) into the browser build when app code imports a
   Node core module such as `crypto`. In the lockfile these are reachable only
   through webpack, so they are labelled dev or build. Whether they ship depends on
-  the app's imports, which a lockfile cannot show. Checked on a real webpack 4
-  landing project, the runtime set otherwise matched a manual review (UI library,
-  HTTP client and its redirect handler). For webpack 4 projects, check the bundle or
-  the imports before discounting those packages.
+  the app's imports, which a lockfile cannot show. For webpack 4 projects, check the
+  bundle or the imports before discounting those packages.

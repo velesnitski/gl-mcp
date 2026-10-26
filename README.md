@@ -327,6 +327,8 @@ Language detection for 25+ languages including PHP, Go, Kotlin, Swift, TypeScrip
 | `GITLAB_ALLOW_HTTP` | No | Allow non-HTTPS URLs |
 | `GL_MCP_HTTP_TOKEN` | HTTP off loopback | Bearer token clients must send; required when `--host` is not loopback |
 | `GL_MCP_ALLOWED_HOSTS` | No | HTTP off loopback: comma-separated `Host` values to accept |
+| `OSV_API_URL` | No | OSV mirror for dependency audits (default: public api.osv.dev) |
+| `ENDOFLIFE_API_URL` | No | endoflife.date mirror for infrastructure end-of-life checks (default: public endoflife.date) |
 
 ### Multi-Instance
 

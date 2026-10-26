@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-10-26
+
+### Added
+
+- **Infrastructure end of life in `audit_dependencies` and the weekly email.**
+  - Covers base images in Dockerfiles (with `ARG` defaults), compose,
+    `.gitlab-ci.yml`, Kubernetes YAML and Helm values.
+  - Covers Kubernetes and managed-database versions in Terraform.
+  - Everything is checked against endoflife.date: past end of life → HIGH, within
+    90 days → MEDIUM, unpinned → LOW.
+  - Terraform providers from `.terraform.lock.hcl` are matched in OSV as Go modules.
+  - **The GitLab instance checks itself.** It is flagged when its minor version is
+    end of life or behind its latest patch release (GitLab patch releases carry
+    security fixes). Runner versions are checked too where the token may list them.
+  - Only public product names are sent to endoflife.date. `ENDOFLIFE_API_URL` points
+    at a mirror (ADR 072).
+- `group_path` accepts several comma-separated groups, producing one report.
+
+### Fixed
+
+- The weekly email uses `background-color` instead of the `background` shorthand.
+  Gmail strips the shorthand, which left severity badges as white text on white.
+
 ## [2.1.1] - 2026-10-26
 
 ### Added

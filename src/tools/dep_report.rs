@@ -112,6 +112,27 @@ pub(crate) fn items_from(findings: &[PackageFinding], today: &str) -> Vec<Item> 
     items
 }
 
+/// End-of-life findings as items: the same diff, ranking and age tracking apply.
+/// An item is keyed by repo + product + version, so upgrading a base image reads as
+/// "fixed" and a newly declared EOL version as "new".
+pub(crate) fn items_from_infra(infra: &[super::infra::InfraFinding], today: &str) -> Vec<Item> {
+    infra
+        .iter()
+        .map(|f| Item {
+            repo: f.repo.clone(),
+            ecosystem: "end of life".into(),
+            package: f.product.clone(),
+            version: f.version.clone(),
+            severity: f.verdict.severity.to_string(),
+            advisories: vec![f.verdict.note.clone()],
+            runtime: true,
+            build: false,
+            fix: f.verdict.fix.clone(),
+            first_seen: today.to_string(),
+        })
+        .collect()
+}
+
 /// What changed since the previous run.
 #[derive(Debug, Default)]
 pub(crate) struct Diff {
@@ -310,7 +331,7 @@ fn badge(sev: &str) -> String {
         .find(|(s, _)| *s == sev)
         .map_or("#6b7280", |(_, c)| c);
     format!(
-        r#"<span style="display:inline-block;padding:1px 6px;border-radius:4px;background:{color};color:#fff;font-size:11px;font-weight:600;letter-spacing:.02em">{}</span>"#,
+        r#"<span style="display:inline-block;padding:1px 6px;border-radius:4px;background-color:{color};color:#fff;font-size:11px;font-weight:600;letter-spacing:.02em">{}</span>"#,
         esc(sev)
     )
 }
@@ -367,6 +388,9 @@ pub(crate) struct ReportMeta<'a> {
     pub no_lockfile: Vec<String>,
     pub unsupported: Vec<String>,
     pub declared_only: Vec<String>,
+    /// Infrastructure files read, and private-registry images not checked.
+    pub infra_files: usize,
+    pub internal_images: usize,
     pub warnings: &'a str,
 }
 
@@ -376,7 +400,7 @@ impl<'a> ReportMeta<'a> {
         let mut unsupported = Vec::new();
         let mut declared_only = Vec::new();
         for s in &audit.scans {
-            if s.lockfiles.is_empty() && s.unsupported.is_empty() {
+            if s.lockfiles.is_empty() && s.unsupported.is_empty() && s.infra_files == 0 {
                 no_lockfile.push(s.path.clone());
             }
             unsupported.extend(s.unsupported.iter().map(|_| s.path.clone()));
@@ -391,6 +415,8 @@ impl<'a> ReportMeta<'a> {
             no_lockfile,
             unsupported,
             declared_only,
+            infra_files: audit.scans.iter().map(|s| s.infra_files).sum(),
+            internal_images: audit.scans.iter().map(|s| s.internal_images).sum(),
             warnings: &audit.warnings,
         }
     }
@@ -430,7 +456,7 @@ pub(crate) fn render_email(meta: &ReportMeta, d: &Diff, full: bool) -> String {
         r#"<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Dependency vulnerabilities — {ge} — {today}</title></head>
-<body style="margin:0;padding:16px;background:#ffffff;color:#111827;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+<body style="margin:0;padding:16px;background-color:#ffffff;color:#111827;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
 <div style="max-width:820px;margin:0 auto">
 <h1 style="font-size:22px;margin:0 0 4px">Dependency vulnerabilities — {ge}</h1>
 <div style="{MUTED}">{today} · {scanned} of {total} repos scanned · {deps} distinct packages · {since}</div>
@@ -447,7 +473,7 @@ pub(crate) fn render_email(meta: &ReportMeta, d: &Diff, full: bool) -> String {
     ));
     if !meta.warnings.trim().is_empty() {
         h.push_str(&format!(
-            r#"<div style="margin-top:10px;padding:8px 10px;background:#fef3c7;border-radius:6px;font-size:13px">⚠ {}</div>"#,
+            r#"<div style="margin-top:10px;padding:8px 10px;background-color:#fef3c7;border-radius:6px;font-size:13px">⚠ {}</div>"#,
             esc(meta.warnings.trim())
         ));
     }
@@ -635,7 +661,13 @@ pub(crate) fn render_email(meta: &ReportMeta, d: &Diff, full: bool) -> String {
             list_short(&meta.declared_only, g, 6)
         ));
     }
-    h.push_str("<li>Only versions pinned in lockfiles are checked; code you wrote, container images and OS packages are out of scope.</li></ul>");
+    if meta.infra_files > 0 {
+        h.push_str(&format!(
+            "<li><b>Infrastructure</b>: {} files read (Dockerfiles, compose/CI/Kubernetes YAML, Terraform) for base-image and platform versions, checked for end of life together with the GitLab instance itself. {} images from private registries are covered through their own Dockerfiles.</li>",
+            meta.infra_files, meta.internal_images
+        ));
+    }
+    h.push_str("<li>Packages: only versions pinned in lockfiles are checked. Infrastructure: end of life, not individual image CVEs — OS packages inside images need an image scanner. Code you wrote is out of scope.</li></ul>");
 
     // Appendix
     if !full {
@@ -691,10 +723,14 @@ pub async fn weekly_report(
     let audit = super::dependencies::collect_audit(client, "", group, max_projects).await?;
     // An unreadable previous snapshot means a baseline week, not a failed report.
     let previous: Option<Snapshot> = previous_json.and_then(|j| serde_json::from_str(j).ok());
-    let scanned: BTreeSet<String> = audit.scans.iter().map(|s| s.path.clone()).collect();
+    let mut scanned: BTreeSet<String> = audit.scans.iter().map(|s| s.path.clone()).collect();
+    // The platform answers every run, so its findings can always be judged fixed.
+    scanned.extend(audit.infra.iter().filter(|f| f.files.is_empty()).map(|f| f.repo.clone()));
+    let mut items = items_from(&audit.findings, today);
+    items.extend(items_from_infra(&audit.infra, today));
     let d = diff(
         previous.as_ref(),
-        items_from(&audit.findings, today),
+        items,
         &audit.scope,
         &scanned,
     );
@@ -938,6 +974,8 @@ mod tests {
             no_lockfile: vec!["acme/docs".into()],
             unsupported: vec!["acme/ios".into()],
             declared_only: vec!["acme/android".into()],
+            infra_files: 3,
+            internal_images: 1,
             warnings: "",
         }
     }
@@ -998,6 +1036,9 @@ mod tests {
             !html.contains("<style"),
             "inline styles only: mail clients strip <style>"
         );
+        // Gmail strips the `background:` shorthand (badges went white-on-white);
+        // only `background-color` survives.
+        assert!(!html.contains("background:"), "use background-color, never the shorthand");
         assert!(!html.contains("<script>"), "package names are escaped");
         assert!(html.contains("open 4 wk"), "lodash first seen 4 weeks ago");
         assert!(html.contains("Fixed since 2024-10-19"));
@@ -1033,6 +1074,25 @@ mod tests {
         );
         assert!(html.contains("first run — this week is the baseline"));
         assert!(!html.contains("New since"));
+    }
+
+    #[test]
+    fn end_of_life_findings_become_items_and_diff_like_packages() {
+        let f = super::super::infra::InfraFinding {
+            repo: "acme/web".into(),
+            files: vec!["Dockerfile".into()],
+            product: "nodejs".into(),
+            version: "16".into(),
+            what: "node:16".into(),
+            verdict: super::super::infra::Verdict { severity: "HIGH", note: "16 reached end of life".into(), fix: "→ 22".into() },
+        };
+        let items = items_from_infra(&[f], "2024-10-26");
+        assert_eq!((items[0].ecosystem.as_str(), items[0].package.as_str(), items[0].runtime), ("end of life", "nodejs", true));
+        assert!(is_urgent(&items[0]), "a runtime past end of life is urgent");
+        // Next week the image moved to 22: the EOL item is fixed.
+        let prev = snap("2024-10-26", items);
+        let d = diff(Some(&prev), vec![], "group `acme`", &scanned(&["acme/web"]));
+        assert_eq!(d.fixed.len(), 1);
     }
 
     #[test]

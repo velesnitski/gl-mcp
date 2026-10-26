@@ -6,8 +6,8 @@ Accepted (2026-10-26)
 
 ## Context
 
-gl-mcp now runs unattended inside GitLab instances that GitHub cannot reach, such
-as a corporate-network-only GitLab. These runs are the weekly AI-adoption and
+gl-mcp can run unattended inside self-managed GitLab instances that GitHub cannot
+reach. These runs are the weekly AI-adoption and
 dependency reports. The instance's own CI fetches the latest release binary on a
 schedule and keeps it in its package registry.
 

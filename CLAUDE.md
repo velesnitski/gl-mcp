@@ -38,6 +38,7 @@ src/
     ├── reports.rs       # HTML reports: dev, team, project (with auto-observations, print CSS)
     ├── lint.rs          # validate_commit/mr/mr_changes, analyze_file/project, validate_project_commits
     ├── dependencies.rs  # audit_dependencies / get_vulnerability: lockfile parsers, advisory merge, upgrade targets, OSV.dev
+    ├── infra.rs         # infrastructure end of life: image/Terraform parsers, endoflife.date, GitLab self-check
     ├── dep_report.rs    # weekly dependency-CVE email (--dependency-audit CLI): snapshot, diff, exposure ranking
     ├── encoding.rs      # base64 file payload decoding (base64 crate; malformed = error)
     └── stats.rs         # shared numeric helpers (median)
@@ -66,6 +67,7 @@ src/
 | `GITLAB_INSTANCES` | no | Multi-instance: comma-separated names |
 | `SENTRY_DSN` | no | Sentry error tracking |
 | `OSV_API_URL` | no | OSV mirror for dependency audits (default public api.osv.dev) |
+| `ENDOFLIFE_API_URL` | no | endoflife.date mirror for infrastructure end-of-life checks (default public endoflife.date/api) |
 | `GL_MCP_HTTP_TOKEN` | HTTP off loopback | Bearer token for `--transport http`; mandatory unless `--host` is loopback (default) |
 | `GL_MCP_ALLOWED_HOSTS` | no | HTTP off loopback: comma-separated `Host` values to accept |
 

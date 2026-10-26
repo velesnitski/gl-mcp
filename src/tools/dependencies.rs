@@ -20,6 +20,7 @@ use serde_json::{json, Value};
 use crate::client::GitLabClient;
 use crate::error::{Error, FanOut, Result};
 
+use super::infra;
 use super::npm_roles::{self, Role};
 
 // ─── Ecosystems and lockfiles ───
@@ -75,6 +76,8 @@ pub(crate) enum LockKind {
     GradleLockfile,
     /// Recognised but not auditable against OSV (no CocoaPods feed).
     PodfileLock,
+    /// Terraform provider pins; providers are Go modules in OSV.
+    TerraformLock,
 }
 
 /// Which lockfile a path is, by file name. Vendored trees are ignored: their
@@ -99,6 +102,7 @@ pub(crate) fn lockfile_kind(path: &str) -> Option<LockKind> {
         "Gemfile.lock" => LockKind::GemfileLock,
         "gradle.lockfile" => LockKind::GradleLockfile,
         "Podfile.lock" => LockKind::PodfileLock,
+        ".terraform.lock.hcl" => LockKind::TerraformLock,
         n if n.starts_with("requirements") && n.ends_with(".txt") => LockKind::Requirements,
         _ => return None,
     })
@@ -530,6 +534,32 @@ pub(crate) fn parse_lockfile(kind: LockKind, text: &str, internal_host: &str) ->
             }
         }
         LockKind::PodfileLock => {}
+        LockKind::TerraformLock => {
+            // provider "registry.terraform.io/<ns>/<name>" { version = "x" … }. A
+            // provider is the Go module github.com/<ns>/terraform-provider-<name>,
+            // which is how its advisories are published.
+            let mut current: Option<String> = None;
+            for line in text.lines() {
+                let t = line.trim();
+                if let Some(rest) = t.strip_prefix("provider \"") {
+                    let source = rest.split('"').next().unwrap_or("");
+                    let parts: Vec<&str> = source.split('/').collect();
+                    current = match parts.as_slice() {
+                        [host, _, _] if !internal_host.is_empty() && host.contains(internal_host) => {
+                            p.internal_skipped += 1;
+                            None
+                        }
+                        [_, ns, name] => Some(format!("github.com/{ns}/terraform-provider-{name}")),
+                        _ => None,
+                    };
+                } else if let (Some(module), Some(v)) = (current.as_ref(), t.strip_prefix("version")) {
+                    if let Some(ver) = v.trim_start().strip_prefix('=').map(|x| x.trim().trim_matches('"')) {
+                        p.push(Ecosystem::Go, module, ver);
+                        current = None;
+                    }
+                }
+            }
+        }
     }
     p
 }
@@ -775,6 +805,8 @@ impl Osv {
 
 /// Lockfiles read per repository at most; monorepos beyond this are reported as capped.
 const MAX_LOCKFILES_PER_REPO: usize = 12;
+/// Infrastructure files read per repository at most.
+const MAX_INFRA_FILES_PER_REPO: usize = 40;
 /// Tree pages (100 entries each) walked per repository.
 const TREE_PAGES: usize = 20;
 
@@ -798,6 +830,15 @@ pub(crate) struct RepoScan {
     pub dep_dev: Vec<bool>,
     /// Reached only through build tooling (npm), per dependency (same order as `deps`).
     pub dep_build: Vec<bool>,
+    /// Infrastructure files read (Dockerfiles, compose/CI/k8s YAML, Terraform).
+    pub infra_files: usize,
+    pub infra_capped: bool,
+    /// (file, declared version) for images and platform versions.
+    pub infra_refs: Vec<(String, infra::InfraRef)>,
+    /// (file, image) public images without a version.
+    pub unpinned_images: Vec<(String, String)>,
+    /// Images from private registries: covered through their own Dockerfiles.
+    pub internal_images: usize,
 }
 
 /// Lockfiles worth reading, in the order to read them. A `go.sum` next to a `go.mod`
@@ -847,6 +888,38 @@ async fn scan_repo(client: &GitLabClient, path: &str, internal_host: &str) -> Re
         .filter_map(|e| e["path"].as_str().map(str::to_string))
         .collect();
     let mut scan = RepoScan { path: path.to_string(), ..Default::default() };
+    let mut infra_files: Vec<(String, infra::InfraKind)> =
+        blobs.iter().filter_map(|b| infra::infra_kind(b).map(|k| (b.clone(), k))).collect();
+    infra_files.sort_by_key(|(p, _)| (p.matches('/').count(), p.clone()));
+    if infra_files.len() > MAX_INFRA_FILES_PER_REPO {
+        scan.infra_capped = true;
+        infra_files.truncate(MAX_INFRA_FILES_PER_REPO);
+    }
+    for (file, kind) in &infra_files {
+        let Ok(text) = client
+            .get_text(&format!("/projects/{enc}/repository/files/{}/raw", urlencoding::encode(file)), &[("ref", "HEAD")])
+            .await
+        else {
+            continue;
+        };
+        scan.infra_files += 1;
+        let images = match kind {
+            infra::InfraKind::Dockerfile => infra::dockerfile_images(&text),
+            infra::InfraKind::Yaml => infra::yaml_images(&text),
+            infra::InfraKind::Terraform => {
+                scan.infra_refs.extend(infra::terraform_versions(&text).into_iter().map(|r| (file.clone(), r)));
+                Vec::new()
+            }
+        };
+        for image in images {
+            match infra::parse_image(&image, internal_host) {
+                infra::ImageRef::Versioned(refs) => scan.infra_refs.extend(refs.into_iter().map(|r| (file.clone(), r))),
+                infra::ImageRef::Unpinned(i) => scan.unpinned_images.push((file.clone(), i)),
+                infra::ImageRef::Internal => scan.internal_images += 1,
+                infra::ImageRef::Unknown => {}
+            }
+        }
+    }
     let mut found = select_lockfiles(&blobs);
     if found.len() > MAX_LOCKFILES_PER_REPO {
         scan.capped = true;
@@ -941,6 +1014,8 @@ pub(crate) struct Audit {
     pub scans: Vec<RepoScan>,
     pub unique_deps: usize,
     pub findings: Vec<PackageFinding>,
+    /// End-of-life findings: base images, platform versions, the GitLab instance.
+    pub infra: Vec<infra::InfraFinding>,
     /// Partial-failure notes (some repos or advisories could not be fetched).
     pub warnings: String,
 }
@@ -954,25 +1029,39 @@ pub(crate) async fn collect_audit(
     max_projects: usize,
 ) -> Result<Audit> {
     let (targets, total_repos, scope) = if !group_path.is_empty() {
-        let projects: Vec<Value> = client
-            .get_all_pages(
-                &format!("/groups/{}/projects", urlencoding::encode(group_path)),
-                &[
-                    ("include_subgroups", "true"),
-                    ("archived", "false"),
-                    ("order_by", "last_activity_at"),
-                    ("sort", "desc"),
-                ],
-                10,
-            )
-            .await?;
+        // Several groups may be given, comma-separated: one instance, one report.
+        let groups: Vec<&str> = group_path.split(',').map(str::trim).filter(|g| !g.is_empty()).collect();
+        let mut projects: Vec<Value> = Vec::new();
+        for g in &groups {
+            let mut page: Vec<Value> = client
+                .get_all_pages(
+                    &format!("/groups/{}/projects", urlencoding::encode(g)),
+                    &[
+                        ("include_subgroups", "true"),
+                        ("archived", "false"),
+                        ("order_by", "last_activity_at"),
+                        ("sort", "desc"),
+                    ],
+                    10,
+                )
+                .await?;
+            projects.append(&mut page);
+        }
+        projects.sort_by(|a, b| b["last_activity_at"].as_str().cmp(&a["last_activity_at"].as_str()));
+        let mut seen = BTreeSet::new();
+        projects.retain(|p| seen.insert(p["id"].as_u64()));
         let total = projects.len();
         let targets: Vec<String> = projects
             .iter()
             .take(max_projects)
             .filter_map(|p| p["path_with_namespace"].as_str().map(str::to_string))
             .collect();
-        (targets, total, format!("group `{group_path}`"))
+        let label = if groups.len() == 1 {
+            format!("group `{}`", groups[0])
+        } else {
+            format!("groups {}", groups.iter().map(|g| format!("`{g}`")).collect::<Vec<_>>().join(", "))
+        };
+        (targets, total, label)
     } else if !project_id.is_empty() {
         (vec![project_id.to_string()], 1, format!("project `{project_id}`"))
     } else {
@@ -1045,14 +1134,94 @@ pub(crate) async fn collect_audit(
             build_repos,
         });
     }
+    let (infra, infra_warning) = collect_infra(client, &scans).await?;
     Ok(Audit {
         scope,
         total_repos,
         unique_deps: unique.len(),
         scans,
         findings,
-        warnings: format!("{warning}{lookup_warning}"),
+        infra,
+        warnings: format!("{warning}{lookup_warning}{infra_warning}"),
     })
+}
+
+/// End-of-life findings for what the scans declared, plus the platform itself: the
+/// GitLab instance's version and, where the token may list them, its runners'.
+/// endoflife.date being unreachable is a warning, not a failed audit: the package
+/// findings stand on their own.
+async fn collect_infra(client: &GitLabClient, scans: &[RepoScan]) -> Result<(Vec<infra::InfraFinding>, String)> {
+    let today = chrono::Utc::now().date_naive();
+    let eol = infra::EndOfLife::from_env()?;
+    let mut products: BTreeSet<String> = scans.iter().flat_map(|s| s.infra_refs.iter().map(|(_, r)| r.product.clone())).collect();
+    products.insert("gitlab".into());
+    let products: Vec<String> = products.into_iter().collect();
+    let mut cycles: BTreeMap<String, Vec<infra::Cycle>> = BTreeMap::new();
+    let mut failed = 0;
+    for chunk in products.chunks(8) {
+        let got = join_all(chunk.iter().map(|p| eol.cycles(p))).await;
+        for (p, r) in chunk.iter().zip(got) {
+            match r {
+                Ok(c) => {
+                    cycles.insert(p.clone(), c);
+                }
+                Err(_) => failed += 1,
+            }
+        }
+    }
+    let mut warning = String::new();
+    if failed > 0 {
+        warning = format!(
+            "*Warning: end-of-life data unavailable for {failed} of {} products (endoflife.date); infrastructure findings are incomplete.*\n\n",
+            products.len()
+        );
+    }
+    let mut out: Vec<infra::InfraFinding> = Vec::new();
+    for s in scans {
+        out.extend(infra::findings_for(&s.path, &s.infra_refs, &s.unpinned_images, &cycles, today));
+    }
+
+    // The platform: the GitLab instance this audit ran against.
+    let host = client.host();
+    if let (Ok(v), Some(gl)) = (client.get::<Value>("/version", &[]).await, cycles.get("gitlab")) {
+        let version = v["version"].as_str().unwrap_or("").split('-').next().unwrap_or("").to_string();
+        if let Some(verdict) = infra::verdict(gl, &version, today, true) {
+            out.push(infra::InfraFinding {
+                repo: format!("GitLab instance ({host})"),
+                files: Vec::new(),
+                product: "gitlab".into(),
+                version: version.clone(),
+                what: format!("GitLab {version}"),
+                verdict,
+            });
+        }
+        // Runners: listing every runner needs an admin token; without one this is skipped.
+        if let Ok(runners) = client.get_all_pages::<Value>("/runners/all", &[("per_page", "100")], 3).await {
+            let ids: Vec<u64> = runners.iter().filter_map(|r| r["id"].as_u64()).take(50).collect();
+            let paths: Vec<String> = ids.iter().map(|id| format!("/runners/{id}")).collect();
+            let details = join_all(paths.iter().map(|p| client.get::<Value>(p, &[]))).await;
+            for d in details.into_iter().flatten() {
+                let rv = d["version"].as_str().unwrap_or("").to_string();
+                let name = d["description"].as_str().filter(|s| !s.is_empty()).unwrap_or("unnamed").to_string();
+                if rv.is_empty() || d["online"].as_bool() == Some(false) {
+                    continue;
+                }
+                if let Some(verdict) = infra::verdict(gl, &rv, today, false) {
+                    out.push(infra::InfraFinding {
+                        repo: format!("GitLab runner \"{name}\""),
+                        files: Vec::new(),
+                        product: "gitlab-runner".into(),
+                        version: rv.clone(),
+                        what: format!("runner {rv}"),
+                        verdict,
+                    });
+                }
+            }
+        }
+    }
+    let rank = |s: &str| ["CRITICAL", "HIGH", "MEDIUM", "LOW"].iter().position(|x| *x == s).unwrap_or(9);
+    out.sort_by(|a, b| (rank(a.verdict.severity), &a.repo, &a.product).cmp(&(rank(b.verdict.severity), &b.repo, &b.product)));
+    Ok((out, warning))
 }
 
 /// Audit pinned dependencies across one project or a whole group.
@@ -1069,7 +1238,7 @@ pub async fn audit_dependencies(
     let report = if summary_only {
         render_dependency_summary(&a.scope, &a.scans, a.unique_deps, &a.findings)
     } else {
-        render_dependency_audit(&a.scope, a.total_repos, &a.scans, a.unique_deps, a.findings, min_severity)
+        render_dependency_audit(&a.scope, a.total_repos, &a.scans, a.unique_deps, a.findings, &a.infra, min_severity)
     };
     Ok(format!("{}{report}", a.warnings))
 }
@@ -1260,6 +1429,7 @@ pub(crate) fn render_dependency_audit(
     scans: &[RepoScan],
     unique_deps: usize,
     mut findings: Vec<PackageFinding>,
+    infra: &[infra::InfraFinding],
     min_severity: Option<VulnSeverity>,
 ) -> String {
     order_findings(&mut findings);
@@ -1347,10 +1517,35 @@ pub(crate) fn render_dependency_audit(
         }
     }
 
+    if !infra.is_empty() {
+        out.push(String::new());
+        out.push("## Infrastructure: end of life".to_string());
+        out.push(String::new());
+        out.push("| Severity | Where | What | Status | Fix |".to_string());
+        out.push("|----------|-------|------|--------|-----|".to_string());
+        for f in infra {
+            let where_ = match f.files.as_slice() {
+                [] => f.repo.clone(),
+                [one] => format!("{}:{one}", f.repo),
+                [one, rest @ ..] => format!("{}:{one} +{} more", f.repo, rest.len()),
+            };
+            out.push(format!(
+                "| {} | {} | {} ({} {}) | {} | {} |",
+                f.verdict.severity,
+                where_.replace('|', "/"),
+                f.what.replace('|', "/"),
+                f.product,
+                f.version,
+                f.verdict.note.replace('|', "/"),
+                f.verdict.fix
+            ));
+        }
+    }
+
     // Coverage: what could not be audited is part of the answer.
     let no_lockfile: Vec<&str> = scans
         .iter()
-        .filter(|s| s.lockfiles.is_empty() && s.unsupported.is_empty())
+        .filter(|s| s.lockfiles.is_empty() && s.unsupported.is_empty() && s.infra_files == 0)
         .map(|s| s.path.as_str())
         .collect();
     let unsupported: Vec<String> = scans
@@ -1364,6 +1559,8 @@ pub(crate) fn render_dependency_audit(
     let capped: Vec<&str> = scans.iter().filter(|s| s.capped).map(|s| s.path.as_str()).collect();
     let internal: usize = scans.iter().map(|s| s.internal_skipped).sum();
     let unversioned: usize = scans.iter().map(|s| s.unversioned).sum();
+    let infra_files: usize = scans.iter().map(|s| s.infra_files).sum();
+    let internal_images: usize = scans.iter().map(|s| s.internal_images).sum();
     let mut notes: Vec<String> = Vec::new();
     if !no_lockfile.is_empty() {
         notes.push(format!(
@@ -1402,6 +1599,11 @@ pub(crate) fn render_dependency_audit(
             "- {unversioned} dependencies are pinned to a branch, commit or range rather than a release, so they could not be matched."
         ));
     }
+    if infra_files > 0 {
+        notes.push(format!(
+            "- {infra_files} infrastructure files read (Dockerfiles, compose/CI/Kubernetes YAML, Terraform) for image and platform versions; {internal_images} images from private registries were not checked — their bases are covered through their own Dockerfiles."
+        ));
+    }
     if scans.len() < total_repos {
         notes.push(format!("- Only the {} most recently active of {total_repos} repos were scanned; raise `max_projects` to cover more.", scans.len()));
     }
@@ -1412,7 +1614,7 @@ pub(crate) fn render_dependency_audit(
     }
     out.push(String::new());
     out.push(
-        "_Matched against OSV.dev (GitHub, RustSec, Go, PyPA and other advisory feeds). Only exact pinned versions are checked; advisories for the same issue are merged; severity is the advisory's own rating, else its CVSS v3 base score. Go is read from `go.mod` (the selected build list), not `go.sum`. npm roles come from reachability: a package reached only through build tools (webpack, babel, vite…) is build tooling even when declared under `dependencies`._"
+        "_Matched against OSV.dev (GitHub, RustSec, Go, PyPA and other advisory feeds). Only exact pinned versions are checked; advisories for the same issue are merged; severity is the advisory's own rating, else its CVSS v3 base score. Go is read from `go.mod` (the selected build list), not `go.sum`. Images, Terraform-declared platforms and the GitLab instance are checked against endoflife.date support dates. npm roles come from reachability: a package reached only through build tools (webpack, babel, vite…) is build tooling even when declared under `dependencies`._"
             .to_string(),
     );
     out.join("\n")
@@ -1750,7 +1952,37 @@ version = "0.1.0"
             ios,
             android,
         ];
-        let out = render_dependency_audit("group `acme`", 7, &scans, 180, sample_findings(), None);
+        let v = |sev: &'static str, note: &str, fix: &str| infra::Verdict { severity: sev, note: note.into(), fix: fix.into() };
+        let infra = vec![
+            infra::InfraFinding {
+                repo: "acme/web".into(),
+                files: vec!["Dockerfile".into(), "docker-compose.yml".into()],
+                product: "nodejs".into(),
+                version: "16".into(),
+                what: "node:16-alpine".into(),
+                verdict: v("HIGH", "16 reached end of life on 2023-09-11: no security fixes since", "→ 22 (supported until 2027-04-30)"),
+            },
+            infra::InfraFinding {
+                repo: "GitLab instance (git.example.com)".into(),
+                files: vec![],
+                product: "gitlab".into(),
+                version: "17.5.2".into(),
+                what: "GitLab 17.5.2".into(),
+                verdict: v("HIGH", "behind the latest 17.5 patch release (17.5.5); patch releases carry security fixes", "→ 17.5.5"),
+            },
+            infra::InfraFinding {
+                repo: "acme/web".into(),
+                files: vec![".gitlab-ci.yml".into()],
+                product: "nginx".into(),
+                version: "latest".into(),
+                what: "nginx:latest".into(),
+                verdict: v("LOW", "unpinned: each build pulls whatever is newest, so what runs is unknown", "pin a supported version"),
+            },
+        ];
+        let out = render_dependency_audit("group `acme`", 7, &scans, 180, sample_findings(), &infra, None);
+        assert!(out.contains("## Infrastructure: end of life"));
+        assert!(out.contains("| HIGH | acme/web:Dockerfile +1 more | node:16-alpine (nodejs 16) |"));
+        assert!(out.contains("| HIGH | GitLab instance (git.example.com) | GitLab 17.5.2 (gitlab 17.5.2) |"));
         crate::golden::assert_golden("render/dependency_audit.md", &out);
         assert!(out.contains("**3 vulnerable** (2 runtime, 0 build tooling, 1 dev-only)"));
         assert!(out.contains("CRITICAL 1 · HIGH 1 · MEDIUM 1"));
@@ -1771,7 +2003,7 @@ version = "0.1.0"
     #[test]
     fn min_severity_filters_rows_but_not_totals() {
         let scans = vec![scan("acme/web", &[("package-lock.json", 3)], &[])];
-        let out = render_dependency_audit("project `acme/web`", 1, &scans, 3, sample_findings(), Some(VulnSeverity::High));
+        let out = render_dependency_audit("project `acme/web`", 1, &scans, 3, sample_findings(), &[], Some(VulnSeverity::High));
         assert!(out.contains("**3 vulnerable**"), "totals count everything");
         assert!(out.contains("_Showing 2 of 3 vulnerable packages (HIGH and above)._"));
         assert!(!out.contains("semver@"));
@@ -1795,10 +2027,10 @@ version = "0.1.0"
 
     #[test]
     fn nothing_auditable_is_never_reported_as_clean() {
-        let out = render_dependency_audit("project `p`", 1, &[scan("p", &[], &[])], 0, vec![], None);
+        let out = render_dependency_audit("project `p`", 1, &[scan("p", &[], &[])], 0, vec![], &[], None);
         assert!(out.contains("not a clean bill of health"));
         assert!(!out.contains("No known vulnerabilities"));
-        let clean = render_dependency_audit("project `p`", 1, &[scan("p", &[("Cargo.lock", 3)], &[("x", "1")])], 3, vec![], None);
+        let clean = render_dependency_audit("project `p`", 1, &[scan("p", &[("Cargo.lock", 3)], &[("x", "1")])], 3, vec![], &[], None);
         assert!(clean.contains("No known vulnerabilities in the pinned versions."));
     }
 
@@ -1935,6 +2167,16 @@ version = "0.1.0"
         assert_eq!(roles["swiper"], Role::Runtime, "bundled UI library ships to the browser");
         assert_eq!(roles["loader-utils"], Role::Build, "only webpack reaches it");
         assert!(npm_roles(LockKind::CargoLock, "", None).is_none());
+    }
+
+    #[test]
+    fn terraform_lock_providers_become_go_modules() {
+        let lock = "# This file is maintained automatically by \"terraform init\".\nprovider \"registry.terraform.io/hashicorp/aws\" {\n  version     = \"5.31.0\"\n  constraints = \"~> 5.0\"\n  hashes = [\n    \"h1:abc=\",\n  ]\n}\n\nprovider \"registry.terraform.io/cloudflare/cloudflare\" {\n  version = \"4.20.0\"\n}\n\nprovider \"git.example.com/acme/internal\" {\n  version = \"1.0.0\"\n}\n";
+        assert_eq!(lockfile_kind("infra/prod/.terraform.lock.hcl"), Some(LockKind::TerraformLock));
+        let p = parse_lockfile(LockKind::TerraformLock, lock, HOST);
+        assert_eq!(names(&p), vec!["github.com/hashicorp/terraform-provider-aws@5.31.0", "github.com/cloudflare/terraform-provider-cloudflare@4.20.0"]);
+        assert!(p.deps.iter().all(|d| d.ecosystem == Ecosystem::Go));
+        assert_eq!(p.internal_skipped, 1, "a provider from the internal registry stays in");
     }
 
     #[test]

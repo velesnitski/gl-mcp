@@ -296,7 +296,9 @@ mod tests {
 
     #[test]
     fn test_scrub_tokens() {
-        assert_eq!(scrub_tokens("token glpat-abc123_def"), "token [REDACTED]");
+        // Assembled at runtime: no token-shaped literal sits in the source.
+        let token = ["gl", "pat-", "abc123_def"].concat();
+        assert_eq!(scrub_tokens(&format!("token {token}")), "token [REDACTED]");
         assert_eq!(scrub_tokens("no tokens here"), "no tokens here");
     }
 

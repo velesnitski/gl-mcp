@@ -6,6 +6,7 @@ pub mod adoption;
 pub mod commits;
 pub mod dep_report;
 pub mod dependencies;
+pub(crate) mod infra;
 pub(crate) mod npm_roles;
 pub mod docs;
 pub(crate) mod encoding;
