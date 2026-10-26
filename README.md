@@ -6,7 +6,7 @@
 [![MCP](https://img.shields.io/badge/MCP-compatible-purple)](https://modelcontextprotocol.io)
 [![Rust](https://img.shields.io/badge/Rust-1.80+-orange.svg)](https://www.rust-lang.org)
 
-**GitLab MCP server with 118 tools** for projects, issues, merge requests, CI/CD, code review, team analytics, and code quality analysis.
+**GitLab MCP server with 119 tools** for projects, issues, merge requests, CI/CD, code review, team analytics, and code quality analysis.
 
 Single Rust binary. Zero runtime dependencies. Works with Claude Code, GitHub Copilot, Cursor, Windsurf, n8n, and any MCP-compatible client.
 
@@ -14,7 +14,7 @@ Single Rust binary. Zero runtime dependencies. Works with Claude Code, GitHub Co
 
 ## Highlights
 
-- **118 tools** across 9 categories — from basic CRUD to advanced analytics
+- **119 tools** across 9 categories — from basic CRUD to advanced analytics
 - **Code quality analysis** — file-level scoring (A–F), project-wide reports, 81 lint rules for Swift/PHP/Go/Kotlin/TypeScript/Ansible
 - **Team performance reports** — developer comparison, review matrix, MR turnaround, auto-detected process issues
 - **HTML reports** — dark-theme reports with Export PDF button for dev activity, team performance, and project quality
@@ -125,7 +125,7 @@ For HTTP transport: `gl-mcp --transport http --port 8000` (loopback only; see Tr
 
 ---
 
-## Tools (118)
+## Tools (119)
 
 ### Projects & Users
 | Tool | Description |
@@ -207,6 +207,7 @@ For HTTP transport: `gl-mcp --transport http --port 8000` (loopback only; see Tr
 | `analyze_pipeline_failures` | Pipeline health for a project or group, separating operator/scheduled runs from development CI |
 | `list_project_runners` | Runners that can take a project's jobs; tells "no runner can run this" apart from a busy queue |
 | `create_pipeline_schedule` | Create a schedule; the ref is validated first (GitLab silently never fires one on a missing ref) |
+| `create_pipeline` | Start a pipeline on a ref with variables; explains a pipeline GitLab refuses to create |
 | `play_pipeline_schedule` | Run a schedule now, to prove it once instead of waiting an interval |
 | `list_pipeline_schedules` | Schedules with next run and owner; flags ones that will never run (blocked or missing owner) |
 | `update_pipeline_schedule` | Change description, ref, cron, timezone, active — new ref/cron validated as on creation |

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-10-26
+
+### Added
+
+- **`create_pipeline`** (write tool): start a pipeline on a branch or tag with
+  optional pipeline variables. Values are never echoed back. A pipeline GitLab
+  refuses to create is explained: rules that leave no job, an invalid
+  configuration, or a missing ref (ADR 073).
+- **`get_pipeline` explains a pipeline that failed with zero jobs.** It shows
+  `yaml_errors`, then GraphQL `failureReason`, then, for a configuration error, CI
+  Lint run against the pipeline's own commit, naming the offending keys.
+
+### Fixed
+
+- **The runner check no longer reports an unrunnable job as queued.** The project
+  runner list omits `tag_list` and `run_untagged`, and a missing `run_untagged` was
+  taken as `true`. Both are now read from each runner's own record. When that record
+  is not readable, the verdict is "cannot tell" instead of a guess. Paused runners
+  no longer count as able to take jobs.
+
 ## [2.2.1] - 2026-10-26
 
 ### Changed

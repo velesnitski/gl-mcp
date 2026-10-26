@@ -920,6 +920,45 @@
     "name": "create_merge_request"
   },
   {
+    "description": "Start a pipeline on a branch or tag, optionally with pipeline variables (e.g. the switch a job's `rules` test for). A pipeline GitLab refuses to create — invalid configuration, or rules that leave no job — is explained instead of reported as a bare 400.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "ref_name": {
+          "description": "Branch or tag to run the pipeline on",
+          "type": "string"
+        },
+        "variables": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Pipeline variables as {KEY: value}, e.g. {\"DEPLOY_ENV\": \"staging\"}. Values are never echoed back.",
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "project_id",
+        "ref_name"
+      ],
+      "type": "object"
+    },
+    "name": "create_pipeline"
+  },
+  {
     "description": "Create a pipeline schedule. The ref is validated first: GitLab accepts a schedule pointing at a nonexistent branch or tag and then silently never fires it, so an unresolvable ref is refused instead of reported as success.",
     "input_schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",

@@ -52,6 +52,7 @@ pub const WRITE_TOOLS: &[&str] = &[
     "create_deploy_token",
     "update_project",
     "create_project_access_token",
+    "create_pipeline",
     "create_pipeline_schedule",
     "play_pipeline_schedule",
     "update_pipeline_schedule",

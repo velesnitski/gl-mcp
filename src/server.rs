@@ -510,6 +510,25 @@ impl GlMcpServer {
     }
 
     #[tool(
+        description = "Start a pipeline on a branch or tag, optionally with pipeline variables (e.g. the switch a job's `rules` test for). A pipeline GitLab refuses to create — invalid configuration, or rules that leave no job — is explained instead of reported as a bare 400."
+    )]
+    async fn create_pipeline(
+        &self,
+        Parameters(p): Parameters<CreatePipelineParams>,
+    ) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "create_pipeline");
+        simple_tool!(self, p, "create_pipeline", &p.project_id, |client| {
+            tools::pipelines::create_pipeline(
+                client,
+                &p.project_id,
+                &p.ref_name,
+                p.variables.as_ref(),
+            )
+            .await
+        })
+    }
+
+    #[tool(
         description = "Run a pipeline schedule immediately, so a new schedule can be proven once instead of waiting an interval to find out it was misconfigured."
     )]
     async fn play_pipeline_schedule(

@@ -1411,12 +1411,17 @@ pub(crate) enum RunnerVerdict {
     /// At least one online runner can take the job — a pending job here really is
     /// just queued.
     Eligible,
+    /// No runner is known to match, but some online runner's tag settings could not
+    /// be read — saying "no match" here would be a guess.
+    Unknown,
 }
 
 pub(crate) struct RunnerFacts {
+    /// Online and not paused: able to take a job right now.
     pub online: bool,
     pub tags: Vec<String>,
-    pub run_untagged: bool,
+    /// `None` when neither the list nor the runner's own record said.
+    pub run_untagged: Option<bool>,
 }
 
 /// String list from a JSON array field (`tag_list`, `scopes`); empty when absent.
@@ -1430,16 +1435,44 @@ pub(crate) fn str_list(v: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Runner facts from `GET /projects/:id/runners`.
+/// Runner facts from `GET /projects/:id/runners`, after [`with_runner_details`].
 pub(crate) fn runner_facts(raw: &[Value]) -> Vec<RunnerFacts> {
     raw.iter()
         .map(|r| RunnerFacts {
-            online: r["online"].as_bool().unwrap_or(false)
-                || r["status"].as_str() == Some("online"),
+            online: (r["online"].as_bool().unwrap_or(false)
+                || r["status"].as_str() == Some("online"))
+                && !r["paused"].as_bool().unwrap_or(false),
             tags: str_list(&r["tag_list"]),
-            run_untagged: r["run_untagged"].as_bool().unwrap_or(true),
+            run_untagged: r["run_untagged"].as_bool(),
         })
         .collect()
+}
+
+/// The project runner list omits `tag_list` and `run_untagged`, the two fields that
+/// decide whether a job can be picked up. Fill them in from each runner's own record
+/// (`GET /runners/:id`). A record the token may not read stays incomplete, and the
+/// verdict then says it cannot tell instead of assuming the defaults.
+pub(crate) async fn with_runner_details(client: &GitLabClient, mut raw: Vec<Value>) -> Vec<Value> {
+    const MAX_DETAILS: usize = 25;
+    let ids: Vec<(usize, u64)> = raw
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.get("run_untagged").is_none() || r.get("tag_list").is_none())
+        .filter_map(|(i, r)| r["id"].as_u64().map(|id| (i, id)))
+        .take(MAX_DETAILS)
+        .collect();
+    let paths: Vec<String> = ids.iter().map(|(_, id)| format!("/runners/{id}")).collect();
+    let details =
+        futures::future::join_all(paths.iter().map(|p| client.get::<Value>(p, &[]))).await;
+    for ((i, _), d) in ids.into_iter().zip(details) {
+        let Ok(d) = d else { continue };
+        for key in ["tag_list", "run_untagged", "paused"] {
+            if !d[key].is_null() {
+                raw[i][key] = d[key].clone();
+            }
+        }
+    }
+    raw
 }
 
 impl RunnerVerdict {
@@ -1452,6 +1485,9 @@ impl RunnerVerdict {
             Self::AllOffline => "every attached runner is offline",
             Self::NoTagMatch => "no online runner accepts this job's tags",
             Self::Eligible => "an online runner matches — genuinely queued",
+            Self::Unknown => {
+                "no runner is known to match, but the tag settings of some online runners are not visible to this token — cannot tell queued from unrunnable"
+            }
         }
     }
 }
@@ -1466,16 +1502,21 @@ pub(crate) fn runner_verdict(runners: &[RunnerFacts], job_tags: &[String]) -> Ru
         return RunnerVerdict::AllOffline;
     }
     // An untagged job needs a runner willing to take untagged work; a tagged job
-    // needs every one of its tags present on one runner.
-    let eligible = online.iter().any(|r| {
-        if job_tags.is_empty() {
-            r.run_untagged
-        } else {
-            job_tags.iter().all(|t| r.tags.iter().any(|rt| rt == t))
+    // needs every one of its tags present on one runner. A runner whose settings
+    // were not readable is never counted as a match, and never as a mismatch.
+    let mut unknown = false;
+    let eligible = online.iter().any(|r| match r.run_untagged {
+        None => {
+            unknown = true;
+            false
         }
+        Some(untagged) if job_tags.is_empty() => untagged,
+        Some(_) => job_tags.iter().all(|t| r.tags.iter().any(|rt| rt == t)),
     });
     if eligible {
         RunnerVerdict::Eligible
+    } else if unknown {
+        RunnerVerdict::Unknown
     } else {
         RunnerVerdict::NoTagMatch
     }
@@ -1492,6 +1533,7 @@ pub async fn list_project_runners(
     let raw: Vec<Value> = client
         .get(&format!("/projects/{enc}/runners"), &[("per_page", "100")])
         .await?;
+    let raw = with_runner_details(client, raw).await;
 
     let facts = runner_facts(&raw);
 
@@ -1521,6 +1563,9 @@ pub async fn list_project_runners(
         RunnerVerdict::Eligible => format!(
             "✅ **{scope} can be picked up** — at least one online runner matches. A pending job here is genuinely queued."
         ),
+        RunnerVerdict::Unknown => format!(
+            "❓ **Cannot tell whether {scope} can be picked up** — no runner is known to match, and the tag settings of some online runners are not visible to this token (`?` below). Check them in the runner settings before assuming the job is just queued."
+        ),
     });
     lines.push(String::new());
 
@@ -1541,7 +1586,11 @@ pub async fn list_project_runners(
         lines.push(format!(
             "| {desc} | {rtype} | {} | {tags} | {} |",
             if f.online { "✅" } else { "❌" },
-            if f.run_untagged { "yes" } else { "no" }
+            match f.run_untagged {
+                Some(true) => "yes",
+                Some(false) => "no",
+                None => "?",
+            }
         ));
     }
 
@@ -1798,12 +1847,12 @@ mod pat_tests {
         let tagged = |t: &[&str], online: bool| RunnerFacts {
             online,
             tags: t.iter().map(|s| s.to_string()).collect(),
-            run_untagged: false,
+            run_untagged: Some(false),
         };
         let untagged_ok = RunnerFacts {
             online: true,
             tags: vec![],
-            run_untagged: true,
+            run_untagged: Some(true),
         };
         let docker = vec!["docker".to_string()];
 
@@ -1930,10 +1979,25 @@ mod pat_tests {
             json!({"status": "online", "tag_list": ["docker", "linux"], "run_untagged": false}),
             json!({"online": false, "tag_list": []}),
         ]);
-        assert!(f[0].online && f[0].tags == ["docker", "linux"] && !f[0].run_untagged);
+        assert!(f[0].online && f[0].tags == ["docker", "linux"] && f[0].run_untagged == Some(false));
         assert!(
-            !f[1].online && f[1].run_untagged,
-            "run_untagged defaults to true"
+            !f[1].online && f[1].run_untagged.is_none(),
+            "an absent run_untagged is unknown, never assumed true"
         );
+        let paused = runner_facts(&[json!({"status": "online", "paused": true})]);
+        assert!(!paused[0].online, "a paused runner takes no jobs");
+    }
+
+    #[test]
+    fn unreadable_runner_settings_are_unknown_not_a_match() {
+        use serde_json::json;
+        // The project runner list as GitLab returns it: no tag_list, no run_untagged.
+        let listed = runner_facts(&[json!({"id": 2, "status": "online", "runner_type": "instance_type"})]);
+        assert_eq!(runner_verdict(&listed, &[]), RunnerVerdict::Unknown);
+        assert_eq!(runner_verdict(&listed, &["docker".to_string()]), RunnerVerdict::Unknown);
+        // Once the runner's own record is merged in, the verdict is definite.
+        let detailed = runner_facts(&[json!({"status": "online", "tag_list": ["docker", "dind"], "run_untagged": false})]);
+        assert_eq!(runner_verdict(&detailed, &[]), RunnerVerdict::NoTagMatch);
+        assert_eq!(runner_verdict(&detailed, &["docker".to_string()]), RunnerVerdict::Eligible);
     }
 }

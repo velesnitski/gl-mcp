@@ -1304,6 +1304,20 @@ pub struct CreatePipelineScheduleParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreatePipelineParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Branch or tag to run the pipeline on")]
+    pub ref_name: String,
+    #[schemars(
+        description = "Pipeline variables as {KEY: value}, e.g. {\"DEPLOY_ENV\": \"staging\"}. Values are never echoed back."
+    )]
+    pub variables: Option<std::collections::BTreeMap<String, String>>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct PlayPipelineScheduleParams {
     #[schemars(description = "Project ID or path")]
     pub project_id: String,

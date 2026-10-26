@@ -177,6 +177,23 @@ impl GitLabClient {
         Self::parse_json(&text)
     }
 
+    /// GraphQL query, for the few facts REST does not expose. Returns `data`.
+    pub async fn graphql(&self, query: &str, variables: Value) -> Result<Value> {
+        let url = format!("{}/graphql", self.base_url.trim_end_matches("/v4"));
+        let body = serde_json::json!({ "query": query, "variables": variables });
+        let text = self
+            .send_with_retry("/graphql", |h| h.post(&url).json(&body))
+            .await?;
+        let mut v: Value = Self::parse_json(&text)?;
+        if let Some(msg) = v["errors"][0]["message"].as_str() {
+            return Err(Error::GitLab {
+                status: reqwest::StatusCode::OK,
+                message: format!("GraphQL: {msg}"),
+            });
+        }
+        Ok(v["data"].take())
+    }
+
     /// PUT request with JSON body. Retries on HTTP 429.
     pub async fn put<T: DeserializeOwned>(&self, path: &str, body: &Value) -> Result<T> {
         let url = format!("{}{}", self.base_url, path);

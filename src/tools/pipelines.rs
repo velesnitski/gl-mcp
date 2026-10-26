@@ -805,6 +805,11 @@ pub async fn get_pipeline(
         format!("**Triggered by:** @{user}"),
         format!("**Duration:** {duration_str} (job time)"),
     ];
+    // A pipeline GitLab could not even build (invalid .gitlab-ci.yml) fails with
+    // zero jobs and no log anywhere — the reason lives only in this field.
+    if let Some(err) = p["yaml_errors"].as_str().filter(|e| !e.is_empty()) {
+        parts.push(format!("**Configuration error:** {err}"));
+    }
 
     // Wall clock and queue time. `duration` counts execution only, so a run that
     // waited hours for a runner looks identical to one that started at once —
@@ -834,6 +839,16 @@ pub async fn get_pipeline(
     // Fetch jobs
     let jobs_path = format!("/projects/{encoded}/pipelines/{pipeline_id}/jobs");
     let jobs: Vec<Value> = client.get(&jobs_path, &[("per_page", "100")]).await?;
+
+    // Failed before creating a single job: no log, and REST only carries
+    // `yaml_errors`. Other causes (a blocked user, missing permission, an instance
+    // or compliance policy) are recorded only as GraphQL `failureReason`.
+    if jobs.is_empty()
+        && status == "failed"
+        && p["yaml_errors"].as_str().unwrap_or("").is_empty()
+    {
+        parts.push(zero_job_reason(client, &encoded, &p).await);
+    }
 
     if !jobs.is_empty() {
         // Group by stage
@@ -899,7 +914,11 @@ pub async fn get_pipeline(
                     &[("per_page", "100")],
                 )
                 .await;
-            parts.extend(render_runner_check(&pending, runners.ok().as_deref()));
+            let runners = match runners {
+                Ok(r) => Some(crate::tools::projects::with_runner_details(client, r).await),
+                Err(_) => None,
+            };
+            parts.extend(render_runner_check(&pending, runners.as_deref()));
         }
     }
 
@@ -986,10 +1005,10 @@ pub(crate) fn render_runner_check(
     let facts = runner_facts(raw);
     for (name, tags) in pending {
         let verdict = runner_verdict(&facts, tags);
-        let icon = if verdict == crate::tools::projects::RunnerVerdict::Eligible {
-            "⏳"
-        } else {
-            "❌"
+        let icon = match verdict {
+            crate::tools::projects::RunnerVerdict::Eligible => "⏳",
+            crate::tools::projects::RunnerVerdict::Unknown => "❓",
+            _ => "❌",
         };
         let tag_str = if tags.is_empty() {
             "untagged".to_string()
@@ -1439,6 +1458,87 @@ pub async fn play_pipeline_schedule(
     ))
 }
 
+/// Start a pipeline on `ref_name` with optional pipeline variables.
+pub async fn create_pipeline(
+    client: &GitLabClient,
+    project_id: &str,
+    ref_name: &str,
+    variables: Option<&std::collections::BTreeMap<String, String>>,
+) -> Result<String> {
+    let vars = variables.cloned().unwrap_or_default();
+    if let Some(bad) = vars.keys().find(|k| !valid_variable_key(k)) {
+        return Err(Error::user_input(format!(
+            "Invalid variable key `{bad}`: use letters, digits and underscores only."
+        )));
+    }
+    let body = serde_json::json!({
+        "ref": ref_name,
+        "variables": vars
+            .iter()
+            .map(|(k, v)| serde_json::json!({"key": k, "value": v}))
+            .collect::<Vec<_>>(),
+    });
+    let enc = urlencoding::encode(project_id);
+    match client
+        .post::<Value>(&format!("/projects/{enc}/pipeline"), &body)
+        .await
+    {
+        Ok(p) => Ok(render_created_pipeline(project_id, &p, &vars)),
+        Err(Error::GitLab { status, message }) if status.as_u16() == 400 => {
+            Err(Error::user_input(explain_refused_pipeline(ref_name, &message)))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn valid_variable_key(k: &str) -> bool {
+    !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Confirmation for a created pipeline. Variable keys only: a value may be a secret.
+pub(crate) fn render_created_pipeline(
+    project_id: &str,
+    p: &Value,
+    vars: &std::collections::BTreeMap<String, String>,
+) -> String {
+    let id = p["id"].as_u64().unwrap_or(0);
+    let mut out = format!(
+        "Pipeline **#{id}** created on **{project_id}** @ `{}` — status: {}",
+        p["ref"].as_str().unwrap_or("?"),
+        p["status"].as_str().unwrap_or("?"),
+    );
+    if !vars.is_empty() {
+        let keys: Vec<&str> = vars.keys().map(String::as_str).collect();
+        let _ = write!(out, "\nVariables: `{}` (values not shown)", keys.join("`, `"));
+    }
+    if let Some(url) = p["web_url"].as_str() {
+        let _ = write!(out, "\nURL: {url}");
+    }
+    let _ = write!(
+        out,
+        "\n\n_Follow it with `get_pipeline` (pipeline_id {id}): a job that stays pending gets a runner check there._"
+    );
+    out
+}
+
+/// GitLab answers a pipeline it will not create with a 400 whose message is either
+/// the rules outcome or the configuration errors. Say which, and what to do.
+pub(crate) fn explain_refused_pipeline(ref_name: &str, message: &str) -> String {
+    let lower = message.to_lowercase();
+    let hint = if lower.contains("rules configuration prevented")
+        || lower.contains("will not run for the selected trigger")
+    {
+        "No job's `rules` matched this ref and these variables, so there was nothing to run. Check the variable names and values the rules test for."
+    } else if lower.contains("reference not found") || lower.contains("ref is invalid") {
+        "The branch or tag does not exist in this project."
+    } else if lower.contains("config") || lower.contains("yaml") || lower.contains("jobs:") {
+        "The CI configuration on this ref is invalid — fix the keys named above (a value containing `: ` in an unquoted list item is a common cause)."
+    } else {
+        "GitLab refused to create the pipeline."
+    };
+    format!("Pipeline not created on `{ref_name}`: {message}\n\n{hint}")
+}
+
 /// List pipelines for a merge request.
 pub async fn get_mr_pipelines(
     client: &GitLabClient,
@@ -1685,7 +1785,8 @@ mod tests {
     use super::{
         error_signature, failure_class, grep_lines, http_status, human_secs, is_automated_source,
         normalize_signature, pipeline_end_ts, redact_log, render_runner_check, render_schedules,
-        render_variable, strip_ansi, wall_clock_secs,
+        render_variable, strip_ansi, wall_clock_secs, render_created_pipeline, valid_variable_key,
+        explain_refused_pipeline, render_lint,
     };
 
     #[test]
@@ -2145,6 +2246,41 @@ U1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==
     }
 
     #[test]
+    fn created_pipeline_never_echoes_variable_values() {
+        use serde_json::json;
+        let vars: std::collections::BTreeMap<String, String> =
+            [("DEPLOY_ENV".to_string(), "s3cr3t-value".to_string())].into();
+        let out = render_created_pipeline(
+            "g/p",
+            &json!({"id": 7, "ref": "main", "status": "created", "web_url": "https://gitlab.example.com/g/p/-/pipelines/7"}),
+            &vars,
+        );
+        assert!(out.contains("#7") && out.contains("`DEPLOY_ENV`") && !out.contains("s3cr3t"));
+        assert!(valid_variable_key("REPORT_1") && !valid_variable_key("A-B") && !valid_variable_key(""));
+    }
+
+    #[test]
+    fn refused_pipeline_says_rules_from_config_from_ref() {
+        let rules = explain_refused_pipeline("main", "Pipeline will not run for the selected trigger. The rules configuration prevented any jobs from being added to the pipeline.");
+        assert!(rules.contains("rules") && rules.contains("variable"));
+        let cfg = explain_refused_pipeline("main", "jobs:build:script config should be a string or a nested array of strings up to 10 levels deep");
+        assert!(cfg.contains("invalid"));
+        let r = explain_refused_pipeline("nope", "Reference not found");
+        assert!(r.contains("does not exist"));
+    }
+
+    #[test]
+    fn lint_names_the_offending_keys_or_clears_the_file() {
+        use serde_json::json;
+        let bad = json!({"valid": false, "errors": ["jobs:build:script config should be a string or a nested array of strings up to 10 levels deep"], "warnings": []});
+        let out = render_lint(Some(&bad));
+        assert!(out.contains("1 error(s)") && out.contains("- jobs:build:script"));
+        let ok = render_lint(Some(&json!({"valid": true, "errors": [], "warnings": ["w1"]})));
+        assert!(ok.contains("not the cause") && ok.contains("⚠️ w1"));
+        assert!(render_lint(None).contains("unavailable"));
+    }
+
+    #[test]
     fn runner_check_tells_queued_from_unrunnable_and_unknown() {
         use serde_json::json;
         let pending = vec![("build", vec!["docker".to_string()]), ("lint", vec![])];
@@ -2179,4 +2315,67 @@ U1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==
         assert_eq!(render_variable("TIER", "gold"), "- `TIER` = `gold`");
         assert_eq!(render_variable("DEPLOY_ID", "42"), "- `DEPLOY_ID` = `42`");
     }
+}
+
+/// Why a pipeline failed without creating any job. GraphQL `failureReason` names the
+/// category; for a configuration error REST's `yaml_errors` is often empty, so CI
+/// Lint is run against the pipeline's own commit to name the offending keys.
+/// Best effort: a failed lookup is reported in the output, never fails the tool.
+async fn zero_job_reason(client: &GitLabClient, encoded: &str, p: &Value) -> String {
+    const Q: &str = "query($path: ID!, $iid: ID!) { project(fullPath: $path) { pipeline(iid: $iid) { failureReason } } }";
+    let reason = async {
+        let project: Value = client.get(&format!("/projects/{encoded}"), &[]).await?;
+        let path = project["path_with_namespace"].as_str().unwrap_or_default();
+        let iid = p["iid"].as_u64().unwrap_or_default().to_string();
+        let data = client
+            .graphql(Q, serde_json::json!({ "path": path, "iid": iid }))
+            .await?;
+        Ok::<_, crate::error::Error>(
+            data["project"]["pipeline"]["failureReason"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+        )
+    }
+    .await;
+    let mut out = match &reason {
+        Ok(r) if !r.is_empty() => format!("**Failure reason (no jobs were created):** {r}"),
+        Ok(_) => "**Failed with no jobs and no recorded reason.**".to_string(),
+        Err(e) => format!("**Failed with no jobs;** reason lookup failed: {e}"),
+    };
+    // Lint when the reason is configuration, or unknown. Skipped for causes that
+    // have nothing to do with the file (a blocked user, a missing permission).
+    let lint_worthy = match &reason {
+        Ok(r) => r.is_empty() || r.to_lowercase().contains("config"),
+        Err(_) => true,
+    };
+    if let (true, Some(sha)) = (lint_worthy, p["sha"].as_str()) {
+        let lint: Result<Value> = client
+            .get(&format!("/projects/{encoded}/ci/lint"), &[("content_ref", sha)])
+            .await;
+        out.push_str(&render_lint(lint.ok().as_ref()));
+    }
+    out
+}
+
+/// CI Lint verdict as lines appended to the zero-job reason.
+fn render_lint(lint: Option<&Value>) -> String {
+    let Some(l) = lint else {
+        return "\n_CI Lint unavailable for this commit._".into();
+    };
+    let errors = crate::tools::projects::str_list(&l["errors"]);
+    let warnings = crate::tools::projects::str_list(&l["warnings"]);
+    let mut out = String::new();
+    if l["valid"].as_bool() == Some(true) && errors.is_empty() {
+        out.push_str("\n**CI Lint at this commit:** valid — the configuration itself is not the cause.");
+    } else if !errors.is_empty() {
+        let _ = write!(out, "\n**CI Lint at this commit — {} error(s):**", errors.len());
+        for e in &errors {
+            let _ = write!(out, "\n- {e}");
+        }
+    }
+    for w in &warnings {
+        let _ = write!(out, "\n- ⚠️ {w}");
+    }
+    out
 }
