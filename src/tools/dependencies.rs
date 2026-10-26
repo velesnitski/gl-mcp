@@ -875,13 +875,19 @@ pub(crate) fn npm_roles(kind: LockKind, lock: &str, package_json: Option<&str>) 
 
 async fn scan_repo(client: &GitLabClient, path: &str, internal_host: &str) -> Result<RepoScan> {
     let enc = urlencoding::encode(path);
-    let tree: Vec<Value> = client
+    let tree: Vec<Value> = match client
         .get_all_pages(
             &format!("/projects/{enc}/repository/tree"),
             &[("recursive", "true"), ("per_page", "100")],
             TREE_PAGES,
         )
-        .await?;
+        .await
+    {
+        Ok(t) => t,
+        // An empty project has no tree: nothing to audit, not a failed scan.
+        Err(Error::GitLab { status, .. }) if status == reqwest::StatusCode::NOT_FOUND => Vec::new(),
+        Err(e) => return Err(e),
+    };
     let blobs: Vec<String> = tree
         .iter()
         .filter(|e| e["type"].as_str() == Some("blob"))
@@ -1195,27 +1201,36 @@ async fn collect_infra(client: &GitLabClient, scans: &[RepoScan]) -> Result<(Vec
                 verdict,
             });
         }
-        // Runners: listing every runner needs an admin token; without one this is skipped.
+        // Runners: listing every runner needs an admin token; without one this is
+        // skipped. Grouped per release line: one finding names every runner on it.
         if let Ok(runners) = client.get_all_pages::<Value>("/runners/all", &[("per_page", "100")], 3).await {
-            let ids: Vec<u64> = runners.iter().filter_map(|r| r["id"].as_u64()).take(50).collect();
+            let ids: Vec<u64> = runners.iter().filter_map(|r| r["id"].as_u64()).take(100).collect();
             let paths: Vec<String> = ids.iter().map(|id| format!("/runners/{id}")).collect();
             let details = join_all(paths.iter().map(|p| client.get::<Value>(p, &[]))).await;
+            let mut by_cycle: BTreeMap<String, (infra::Verdict, Vec<String>, BTreeSet<String>)> = BTreeMap::new();
             for d in details.into_iter().flatten() {
                 let rv = d["version"].as_str().unwrap_or("").to_string();
-                let name = d["description"].as_str().filter(|s| !s.is_empty()).unwrap_or("unnamed").to_string();
                 if rv.is_empty() || d["online"].as_bool() == Some(false) {
                     continue;
                 }
-                if let Some(verdict) = infra::verdict(gl, &rv, today, false) {
-                    out.push(infra::InfraFinding {
-                        repo: format!("GitLab runner \"{name}\""),
-                        files: Vec::new(),
-                        product: "gitlab-runner".into(),
-                        version: rv.clone(),
-                        what: format!("runner {rv}"),
-                        verdict,
-                    });
-                }
+                let Some(verdict) = infra::verdict(gl, &rv, today, false) else { continue };
+                let cycle = infra::match_cycle(gl, &rv).map_or(rv.clone(), |c| c.cycle.clone());
+                let name = d["description"].as_str().filter(|s| !s.is_empty()).unwrap_or("unnamed").to_string();
+                let entry = by_cycle.entry(cycle).or_insert_with(|| (verdict, Vec::new(), BTreeSet::new()));
+                entry.1.push(name);
+                entry.2.insert(rv);
+            }
+            for (cycle, (verdict, names, versions)) in by_cycle {
+                let shown: Vec<&str> = names.iter().take(4).map(String::as_str).collect();
+                let more = if names.len() > 4 { format!(" +{} more", names.len() - 4) } else { String::new() };
+                out.push(infra::InfraFinding {
+                    repo: format!("GitLab runners ({})", names.len()),
+                    files: Vec::new(),
+                    product: "gitlab-runner".into(),
+                    version: cycle,
+                    what: format!("{}{more} — {}", shown.join(", "), versions.into_iter().collect::<Vec<_>>().join(", ")),
+                    verdict,
+                });
             }
         }
     }
@@ -1605,7 +1620,10 @@ pub(crate) fn render_dependency_audit(
         ));
     }
     if scans.len() < total_repos {
-        notes.push(format!("- Only the {} most recently active of {total_repos} repos were scanned; raise `max_projects` to cover more.", scans.len()));
+        notes.push(format!(
+            "- {} of {total_repos} repos were not scanned: beyond `max_projects` (the most recently active come first) or unreadable — see any warning above.",
+            total_repos - scans.len()
+        ));
     }
     if !notes.is_empty() {
         out.push(String::new());
@@ -1997,7 +2015,7 @@ version = "0.1.0"
         assert!(out.contains("Direct dependencies only** (1): acme/android:gradle/libs.versions.toml"));
         assert!(out.contains("3 internal or non-registry dependencies"));
         assert!(out.contains("2 dependencies are pinned to a branch, commit or range"));
-        assert!(out.contains("Only the 5 most recently active of 7 repos"));
+        assert!(out.contains("2 of 7 repos were not scanned"));
     }
 
     #[test]

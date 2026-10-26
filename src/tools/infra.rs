@@ -317,6 +317,8 @@ pub(crate) struct Cycle {
     pub eol: Option<Option<NaiveDate>>,
     pub latest: Option<String>,
     pub codename: Option<String>,
+    /// Marked long-term support (a date or `true` in the data).
+    pub lts: bool,
 }
 
 pub(crate) fn parse_cycles(doc: &Value) -> Vec<Cycle> {
@@ -337,7 +339,8 @@ pub(crate) fn parse_cycles(doc: &Value) -> Vec<Cycle> {
             };
             let latest = c["latest"].as_str().map(str::to_string);
             let codename = c["codename"].as_str().map(|s| s.to_ascii_lowercase());
-            Some(Cycle { cycle, eol, latest, codename })
+            let lts = matches!(&c["lts"], Value::Bool(true) | Value::String(_));
+            Some(Cycle { cycle, eol, latest, codename, lts })
         })
         .collect()
 }
@@ -379,8 +382,14 @@ fn supported(c: &Cycle, today: NaiveDate) -> bool {
 /// security releases; noise for image tags, which usually name a minor.
 pub(crate) fn verdict(cycles: &[Cycle], version: &str, today: NaiveDate, patch_lag: bool) -> Option<Verdict> {
     let cycle = match_cycle(cycles, version)?;
-    // Cycles come newest first from endoflife.date.
-    let target = cycles.iter().find(|c| supported(c, today)).map(|c| match c.eol {
+    // Cycles come newest first. Where a product marks LTS lines, recommend the newest
+    // supported LTS: a short-lived "current"/innovation release is a poor upgrade target.
+    let any_lts = cycles.iter().any(|c| c.lts);
+    let target = cycles
+        .iter()
+        .find(|c| supported(c, today) && (!any_lts || c.lts))
+        .or_else(|| cycles.iter().find(|c| supported(c, today)))
+        .map(|c| match c.eol {
         Some(Some(d)) => format!("→ {} (supported until {d})", c.cycle),
         _ => format!("→ {} (supported)", c.cycle),
     });
@@ -561,9 +570,10 @@ mod tests {
 
     fn cycles() -> Vec<Cycle> {
         parse_cycles(&json!([
-            {"cycle": "22", "eol": "2027-04-30", "latest": "22.11.0"},
-            {"cycle": "20", "eol": "2026-04-30", "latest": "20.19.0"},
-            {"cycle": "18", "eol": "2025-04-30", "latest": "18.20.8"},
+            {"cycle": "23", "eol": "2026-06-01", "latest": "23.1.0", "lts": false},
+            {"cycle": "22", "eol": "2027-04-30", "latest": "22.11.0", "lts": "2024-10-29"},
+            {"cycle": "20", "eol": "2026-04-30", "latest": "20.19.0", "lts": true},
+            {"cycle": "18", "eol": "2025-04-30", "latest": "18.20.8", "lts": true},
             {"cycle": "3.18", "eol": true, "latest": "3.18.12"},
             {"cycle": 12, "eol": false, "latest": "12.9", "codename": "Bookworm"},
         ]))
@@ -589,7 +599,7 @@ mod tests {
         let v = verdict(&c, "18.19.1", today, false).unwrap();
         assert_eq!(v.severity, "HIGH");
         assert!(v.note.contains("2025-04-30"));
-        assert_eq!(v.fix, "→ 22 (supported until 2027-04-30)", "newest supported cycle");
+        assert_eq!(v.fix, "→ 22 (supported until 2027-04-30)", "newest supported LTS, not the newer non-LTS 23");
         assert_eq!(verdict(&c, "20", today, false).unwrap().severity, "MEDIUM", "EOL within 90 days");
         assert!(verdict(&c, "22.1.0", today, false).is_none(), "supported, no patch-lag check for images");
         let lag = verdict(&c, "22.1.0", today, true).unwrap();

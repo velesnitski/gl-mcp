@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-10-26
+
+### Changed
+
+- Runner end-of-life findings are grouped per release line, one row naming the
+  runners on it, instead of one row per runner.
+- End-of-life fixes recommend the newest supported LTS line when the product marks
+  LTS lines, not a short-lived current or innovation release.
+
+### Fixed
+
+- Empty projects are no longer counted as failed repository scans, and the coverage
+  note no longer attributes unscanned repositories to `max_projects` (ADR 072
+  addendum).
+
 ## [2.2.0] - 2026-10-26
 
 ### Added

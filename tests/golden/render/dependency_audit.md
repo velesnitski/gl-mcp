@@ -23,6 +23,6 @@ Vulnerable packages by worst advisory: CRITICAL 1 · HIGH 1 · MEDIUM 1
 - **Direct dependencies only** (1): acme/android:gradle/libs.versions.toml — a version catalog declares direct dependencies; transitive ones need a `gradle.lockfile`.
 - 3 internal or non-registry dependencies (GitLab-hosted, git or path sources) were kept out of the query and not audited.
 - 2 dependencies are pinned to a branch, commit or range rather than a release, so they could not be matched.
-- Only the 5 most recently active of 7 repos were scanned; raise `max_projects` to cover more.
+- 2 of 7 repos were not scanned: beyond `max_projects` (the most recently active come first) or unreadable — see any warning above.
 
 _Matched against OSV.dev (GitHub, RustSec, Go, PyPA and other advisory feeds). Only exact pinned versions are checked; advisories for the same issue are merged; severity is the advisory's own rating, else its CVSS v3 base score. Go is read from `go.mod` (the selected build list), not `go.sum`. Images, Terraform-declared platforms and the GitLab instance are checked against endoflife.date support dates. npm roles come from reachability: a package reached only through build tools (webpack, babel, vite…) is build tooling even when declared under `dependencies`._

@@ -66,3 +66,17 @@ security fixes, because GitLab ships them in its patch releases.
 - **A version declared through a variable or an external values file is not seen.**
   These show up as fewer findings, never as false ones.
 - **Each infrastructure file read is one more request per repository**, capped at 40.
+
+## Addendum (2026-10-26): grouping, LTS targets, empty repositories
+
+Three refinements:
+
+- **Runners are grouped by release line.** A fleet of runners on one line produced
+  one identical row per runner. Now there is one finding per line, naming the
+  runners on it.
+- **The fix names the newest supported LTS line** when the product marks LTS lines.
+  The newest supported line can be a short-lived "current" or innovation release,
+  which is a poor upgrade target.
+- **An empty project (no repository tree) is skipped,** not counted as a failed
+  scan. The coverage note no longer blames `max_projects` for repositories that were
+  not scanned for other reasons.
