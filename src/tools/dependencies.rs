@@ -20,6 +20,8 @@ use serde_json::{json, Value};
 use crate::client::GitLabClient;
 use crate::error::{Error, FanOut, Result};
 
+use super::npm_roles::{self, Role};
+
 // ─── Ecosystems and lockfiles ───
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -792,6 +794,8 @@ pub(crate) struct RepoScan {
     pub dep_lockfile: Vec<String>,
     /// Development-only, per dependency (same order as `deps`).
     pub dep_dev: Vec<bool>,
+    /// Reached only through build tooling (npm), per dependency (same order as `deps`).
+    pub dep_build: Vec<bool>,
 }
 
 /// Lockfiles worth reading, in the order to read them. A `go.sum` next to a `go.mod`
@@ -811,6 +815,19 @@ pub(crate) fn select_lockfiles(paths: &[String]) -> Vec<(String, LockKind)> {
     found.retain(|(p, k)| *k != LockKind::GoSum || !mod_dirs.contains(&dir(p)));
     found.sort_by_key(|(p, _)| (p.matches('/').count(), p.clone()));
     found
+}
+
+/// Runtime / build / dev per npm package name, from the lockfile graph and, where the
+/// lockfile doesn't record its roots, the package.json beside it.
+pub(crate) fn npm_roles(kind: LockKind, lock: &str, package_json: Option<&str>) -> Option<BTreeMap<String, Role>> {
+    let graph = match kind {
+        LockKind::PackageLock => npm_roles::graph_package_lock(lock)?,
+        LockKind::YarnLock => npm_roles::graph_yarn_lock(lock),
+        LockKind::PnpmLock => npm_roles::graph_pnpm_lock(lock),
+        _ => return None,
+    };
+    let manifest_roots = package_json.and_then(npm_roles::roots_from_package_json);
+    npm_roles::classify(&graph, manifest_roots.as_ref())
 }
 
 async fn scan_repo(client: &GitLabClient, path: &str, internal_host: &str) -> Result<RepoScan> {
@@ -842,6 +859,26 @@ async fn scan_repo(client: &GitLabClient, path: &str, internal_host: &str) -> Re
             .get_text(&format!("/projects/{enc}/repository/files/{}/raw", urlencoding::encode(&file)), &[("ref", "HEAD")])
             .await?;
         let parsed = parse_lockfile(kind, &text, internal_host);
+        // npm roles by reachability; yarn and package-lock v1 keep their roots in the
+        // package.json beside them.
+        let roles = if matches!(kind, LockKind::PackageLock | LockKind::YarnLock | LockKind::PnpmLock) {
+            let needs_manifest = kind == LockKind::YarnLock || (kind == LockKind::PackageLock && !text.contains("\"packages\""));
+            let manifest = if needs_manifest {
+                let dir = file.rsplit_once('/').map_or(String::new(), |(d, _)| format!("{d}/"));
+                client
+                    .get_text(
+                        &format!("/projects/{enc}/repository/files/{}/raw", urlencoding::encode(&format!("{dir}package.json"))),
+                        &[("ref", "HEAD")],
+                    )
+                    .await
+                    .ok()
+            } else {
+                None
+            };
+            npm_roles(kind, &text, manifest.as_deref())
+        } else {
+            None
+        };
         if kind == LockKind::GradleCatalog {
             scan.declared_only.push(file.clone());
         }
@@ -849,8 +886,10 @@ async fn scan_repo(client: &GitLabClient, path: &str, internal_host: &str) -> Re
         scan.unversioned += parsed.unversioned;
         scan.lockfiles.push((file.clone(), parsed.deps.len()));
         for (d, dev) in parsed.deps.into_iter().zip(parsed.dev) {
+            let role = roles.as_ref().and_then(|r| r.get(&d.name).copied());
             scan.dep_lockfile.push(file.clone());
-            scan.dep_dev.push(dev);
+            scan.dep_dev.push(role.map_or(dev, |r| r == Role::Dev));
+            scan.dep_build.push(role == Some(Role::Build));
             scan.deps.push(d);
         }
     }
@@ -869,6 +908,21 @@ pub(crate) struct PackageFinding {
     pub runtime: bool,
     /// Repositories that pin it as a runtime dependency.
     pub runtime_repos: BTreeSet<String>,
+    /// Repositories where only build tooling reaches it.
+    pub build_repos: BTreeSet<String>,
+}
+
+impl PackageFinding {
+    /// " · build" / " · dev" suffix for non-runtime packages.
+    pub(crate) fn role_suffix(&self) -> &'static str {
+        if self.runtime {
+            ""
+        } else if !self.build_repos.is_empty() {
+            " · build"
+        } else {
+            " · dev"
+        }
+    }
 }
 
 impl PackageFinding {
@@ -967,11 +1021,14 @@ pub(crate) async fn collect_audit(
         }
         let mut locations = BTreeSet::new();
         let mut runtime_repos = BTreeSet::new();
+        let mut build_repos = BTreeSet::new();
         for s in &scans {
-            for ((d, f), dev) in s.deps.iter().zip(&s.dep_lockfile).zip(&s.dep_dev) {
+            for (((d, f), dev), build) in s.deps.iter().zip(&s.dep_lockfile).zip(&s.dep_dev).zip(&s.dep_build) {
                 if d == dep {
                     locations.insert(format!("{}:{f}", s.path));
-                    if !dev {
+                    if *build {
+                        build_repos.insert(s.path.clone());
+                    } else if !dev {
                         runtime_repos.insert(s.path.clone());
                     }
                 }
@@ -983,6 +1040,7 @@ pub(crate) async fn collect_audit(
             locations: locations.into_iter().collect(),
             runtime: !runtime_repos.is_empty(),
             runtime_repos,
+            build_repos,
         });
     }
     Ok(Audit {
@@ -1210,14 +1268,15 @@ pub(crate) fn render_dependency_audit(
         *by_sev.entry(f.severity()).or_default() += 1;
     }
     let runtime = findings.iter().filter(|f| f.runtime).count();
+    let build = findings.iter().filter(|f| f.role_suffix() == " · build").count();
     let mut out = vec![
         format!("# Dependency vulnerability audit — {scope}"),
         String::new(),
         format!(
-            "**{} repo(s) scanned** of {total_repos} · **{lockfiles} lockfile(s)** · **{unique_deps} distinct packages** · **{} vulnerable** ({runtime} runtime, {} dev-only) · {advisories} distinct advisories",
+            "**{} repo(s) scanned** of {total_repos} · **{lockfiles} lockfile(s)** · **{unique_deps} distinct packages** · **{} vulnerable** ({runtime} runtime, {build} build tooling, {} dev-only) · {advisories} distinct advisories",
             scans.len(),
             findings.len(),
-            findings.len() - runtime
+            findings.len() - runtime - build
         ),
     ];
     if !findings.is_empty() {
@@ -1275,7 +1334,7 @@ pub(crate) fn render_dependency_audit(
                 f.dep.name,
                 f.dep.version,
                 f.dep.ecosystem.osv_name(),
-                if f.runtime { "" } else { " · dev" },
+                f.role_suffix(),
                 f.advisories.len(),
                 ids_text,
                 headline.summary.replace('|', "/"),
@@ -1351,7 +1410,7 @@ pub(crate) fn render_dependency_audit(
     }
     out.push(String::new());
     out.push(
-        "_Matched against OSV.dev (GitHub, RustSec, Go, PyPA and other advisory feeds). Only exact pinned versions are checked; advisories for the same issue are merged; severity is the advisory's own rating, else its CVSS v3 base score. Go is read from `go.mod` (the selected build list), not `go.sum`._"
+        "_Matched against OSV.dev (GitHub, RustSec, Go, PyPA and other advisory feeds). Only exact pinned versions are checked; advisories for the same issue are merged; severity is the advisory's own rating, else its CVSS v3 base score. Go is read from `go.mod` (the selected build list), not `go.sum`. npm roles come from reachability: a package reached only through build tools (webpack, babel, vite…) is build tooling even when declared under `dependencies`._"
             .to_string(),
     );
     out.join("\n")
@@ -1610,6 +1669,7 @@ version = "0.1.0"
             deps: deps.iter().map(|(n, v)| Dep { ecosystem: Ecosystem::Npm, name: (*n).into(), version: (*v).into() }).collect(),
             dep_lockfile: deps.iter().map(|_| lockfiles.first().map_or(String::new(), |l| l.0.to_string())).collect(),
             dep_dev: deps.iter().map(|_| false).collect(),
+            dep_build: deps.iter().map(|_| false).collect(),
             ..Default::default()
         }
     }
@@ -1631,6 +1691,7 @@ version = "0.1.0"
             advisories: merge_advisories(advisories),
             locations: locations.iter().map(|l| l.to_string()).collect(),
             runtime,
+            build_repos: BTreeSet::new(),
             runtime_repos: if runtime {
                 locations.iter().map(|l| l.split_once(':').map_or(*l, |(r, _)| r).to_string()).collect()
             } else {
@@ -1686,7 +1747,7 @@ version = "0.1.0"
         ];
         let out = render_dependency_audit("group `acme`", 7, &scans, 180, sample_findings(), None);
         crate::golden::assert_golden("render/dependency_audit.md", &out);
-        assert!(out.contains("**3 vulnerable** (2 runtime, 1 dev-only)"));
+        assert!(out.contains("**3 vulnerable** (2 runtime, 0 build tooling, 1 dev-only)"));
         assert!(out.contains("CRITICAL 1 · HIGH 1 · MEDIUM 1"));
         assert!(out.find("minimist").unwrap() < out.find("lodash@").unwrap(), "most severe first");
         assert!(out.contains("minimist@0.0.8 (npm) · dev"));
@@ -1852,6 +1913,23 @@ version = "0.1.0"
         let composer = json!({"packages": [{"name": "laravel/framework", "version": "v5.6.40"}], "packages-dev": [{"name": "phpunit/phpunit", "version": "7.0.0"}]}).to_string();
         let p = parse_lockfile(LockKind::ComposerLock, &composer, "");
         assert_eq!(p.dev, vec![false, true]);
+    }
+
+    #[test]
+    fn npm_roles_need_roots_from_the_lockfile_or_its_package_json() {
+        // package-lock v1 records no roots: the package.json beside it supplies them.
+        let v1 = json!({"lockfileVersion": 1, "dependencies": {
+            "webpack": {"version": "4.0.0", "requires": {"loader-utils": "^1"}},
+            "loader-utils": {"version": "1.4.0"},
+            "swiper": {"version": "6.5.0"},
+        }})
+        .to_string();
+        assert!(npm_roles(LockKind::PackageLock, &v1, None).is_none(), "no roots: lockfile flags stand");
+        let pj = json!({"dependencies": {"webpack": "^4", "swiper": "^6"}}).to_string();
+        let roles = npm_roles(LockKind::PackageLock, &v1, Some(&pj)).unwrap();
+        assert_eq!(roles["swiper"], Role::Runtime, "bundled UI library ships to the browser");
+        assert_eq!(roles["loader-utils"], Role::Build, "only webpack reaches it");
+        assert!(npm_roles(LockKind::CargoLock, "", None).is_none());
     }
 
     #[test]

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-26
+
+### Changed
+
+- **npm findings are classified runtime, build tooling or dev by reachability**,
+  not by the lockfile's `dev` flag. That flag is missing in yarn v1 and older pnpm
+  locks, and wrong when webpack, babel or vite sit under `dependencies`.
+  - Packages reached only through build tools are labelled "· build", weigh a
+    quarter in the weekly ranking, and no longer count as runtime critical/high.
+  - Packages a runtime dependency can reach stay runtime.
+  - Covers package-lock v1–v3, yarn v1 and berry, and pnpm v5–v9. yarn and
+    package-lock v1 read their roots from the `package.json` beside them (ADR 070).
+
 ## [2.0.0] - 2026-10-23
 
 ### Security

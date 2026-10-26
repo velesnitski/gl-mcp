@@ -32,6 +32,10 @@ pub(crate) struct Item {
     /// CVE ids where known, else the advisory id; sorted.
     pub advisories: Vec<String>,
     pub runtime: bool,
+    /// Reached only through build tooling in this repo (npm). Older snapshots lack
+    /// the field; for them it reads as false.
+    #[serde(default)]
+    pub build: bool,
     pub fix: String,
     /// First run that saw this item (YYYY-MM-DD).
     pub first_seen: String,
@@ -96,6 +100,7 @@ pub(crate) fn items_from(findings: &[PackageFinding], today: &str) -> Vec<Item> 
                 severity: f.severity().label().to_string(),
                 advisories: advisories.clone(),
                 runtime: f.runtime_repos.contains(repo),
+                build: !f.runtime_repos.contains(repo) && f.build_repos.contains(repo),
                 fix: fix.clone(),
                 first_seen: today.to_string(),
             });
@@ -338,7 +343,11 @@ fn package_cell(i: &Item) -> String {
         esc(&i.package),
         esc(&i.version),
         esc(&i.ecosystem),
-        if i.runtime { "" } else { " · dev" }
+        match (i.runtime, i.build) {
+            (true, _) => "",
+            (false, true) => " · build",
+            (false, false) => " · dev",
+        }
     )
 }
 
@@ -555,7 +564,7 @@ pub(crate) fn render_email(meta: &ReportMeta, d: &Diff, full: bool) -> String {
         r#"<h2 style="{H2}">Fix first — by repository</h2>"#
     ));
     h.push_str(&format!(
-        r#"<div style="{MUTED};margin-bottom:8px">Ranked by exposure: runtime findings weighted by severity (critical 10, high 4, medium 1), dev-only at ¼, test/script/template repos at 30%.</div>"#
+        r#"<div style="{MUTED};margin-bottom:8px">Ranked by exposure: runtime findings weighted by severity (critical 10, high 4, medium 1), build tooling and dev-only at ¼, test/script/template repos at 30%.</div>"#
     ));
     for r in ranks
         .iter()
@@ -730,9 +739,22 @@ mod tests {
             severity: sev.into(),
             advisories: vec![format!("CVE-2099-{pkg}")],
             runtime,
+            build: false,
             fix: "→ 9.9.9".into(),
             first_seen: first_seen.into(),
         }
+    }
+
+    #[test]
+    fn build_tooling_is_labelled_and_old_snapshots_still_load() {
+        let mut i = item("acme/web", "loader-utils", "1.4.0", "CRITICAL", false, "2024-10-26");
+        i.build = true;
+        assert!(package_cell(&i).contains("· build"));
+        assert!(!is_urgent(&i), "build tooling is not runtime exposure");
+        let mut old = serde_json::to_value(&i).unwrap();
+        old.as_object_mut().unwrap().remove("build");
+        let back: Item = serde_json::from_value(old).unwrap();
+        assert!(!back.build, "a snapshot from before the field reads as not-build");
     }
 
     fn snap(date: &str, items: Vec<Item>) -> Snapshot {
