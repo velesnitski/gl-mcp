@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-10-26
+
+### Added
+
+- Releases publish `SHA256SUMS` and a signed build-provenance attestation for every
+  binary. Consumers that sync releases into another system can verify them with
+  `gh attestation verify` (ADR 071).
+
+### Fixed
+
+- Composer branch aliases (`12.x-dev`, `1.x-dev`) are counted as unversioned instead
+  of being matched against OSV as versions. That match reported CRITICAL advisories
+  for branch names (ADR 066 addendum).
+
 ## [2.1.0] - 2026-10-26
 
 ### Changed

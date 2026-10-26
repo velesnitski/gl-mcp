@@ -293,8 +293,10 @@ pub(crate) fn parse_lockfile(kind: LockKind, text: &str, internal_host: &str) ->
                         continue;
                     }
                     let version = pkg["version"].as_str().unwrap_or("");
-                    if version.starts_with("dev-") {
-                        p.unversioned += 1; // a branch, not a release: nothing to match
+                    // Branches, not releases: `dev-main`, and branch aliases like `12.x-dev`.
+                    // OSV would match the branch name as if it were a version.
+                    if version.starts_with("dev-") || version.ends_with("-dev") {
+                        p.unversioned += 1;
                         continue;
                     }
                     p.push_dev(
@@ -1573,12 +1575,15 @@ version = "0.1.0"
                 {"name": "guzzlehttp/guzzle", "version": "7.4.0", "source": {"url": "https://github.com/guzzle/guzzle.git"}},
                 {"name": "acme/billing", "version": "v2.0.0", "source": {"url": "https://git.example.com/acme/billing.git"}},
                 {"name": "acme/wip", "version": "dev-main"},
+                {"name": "laravel/framework", "version": "12.x-dev"},
+                {"name": "league/flysystem", "version": "1.x-dev"},
             ],
             "packages-dev": [{"name": "phpunit/phpunit", "version": "v9.5.0"}]
         });
         let p = parse_lockfile(LockKind::ComposerLock, &lock.to_string(), HOST);
         assert_eq!(names(&p), vec!["guzzlehttp/guzzle@7.4.0", "phpunit/phpunit@9.5.0"]);
         assert_eq!(p.internal_skipped, 1);
+        assert_eq!(p.unversioned, 3, "dev-main and both *.x-dev branch aliases");
     }
 
     #[test]

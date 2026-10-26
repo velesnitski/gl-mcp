@@ -58,3 +58,11 @@ We wanted known-vulnerability checks across our GitLab. Two options came up:
   synthetic fixtures, and property-tested to never panic on arbitrary input. Writing
   those tests found two parser defects before release: a yarn entry was decided before
   its `resolved` line was read, and blank lines ended pnpm's `packages:` section.
+
+## Addendum (2026-10-26): Composer branch aliases are not versions
+
+Composer pins a package tracked from a branch with a version like `dev-main`, or as
+a branch alias such as `12.x-dev`. Only the first form was treated as unversioned.
+`12.x-dev` went to OSV, which matched it against version ranges and reported
+CRITICAL advisories for a branch name. Any version ending in `-dev` is now counted
+as unversioned, as point 2 always intended: a branch is not a version.

@@ -49,20 +49,32 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write      # create the release
+      id-token: write      # sign the provenance attestation (Sigstore)
+      attestations: write  # store it, verifiable with `gh attestation verify`
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-      - name: Create release
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Collect binaries
         run: |
-          # Collect all binaries
           mkdir -p release
           for dir in artifacts/*/; do
             cp "$dir"* release/ 2>/dev/null || true
           done
+      # Build provenance: proves each binary came from this workflow at this tag.
+      # A checksum next to the file only proves the download is intact.
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'release/gl-mcp-*'
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Checksums for consumers that sync releases elsewhere (ADR 071).
+          (cd release && sha256sum gl-mcp-* > SHA256SUMS && cat SHA256SUMS)
 
           # Extract changelog for this version
           VERSION=${GITHUB_REF_NAME#v}
