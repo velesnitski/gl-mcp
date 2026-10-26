@@ -1521,12 +1521,41 @@ pub(crate) fn render_created_pipeline(
     out
 }
 
+/// The refusal arrives as JSON (`{"base": ["…"]}`, or keyed by attribute); keep the
+/// human text only. Anything that is not such JSON is returned as is.
+fn refusal_text(message: &str) -> String {
+    let Ok(v) = serde_json::from_str::<Value>(message) else {
+        return message.to_string();
+    };
+    let mut parts = Vec::new();
+    match &v {
+        Value::Object(map) => {
+            for list in map.values() {
+                parts.extend(crate::tools::projects::str_list(list));
+                if let Some(s) = list.as_str() {
+                    parts.push(s.to_string());
+                }
+            }
+        }
+        Value::String(s) => parts.push(s.clone()),
+        _ => {}
+    }
+    if parts.is_empty() {
+        message.to_string()
+    } else {
+        parts.join(" ")
+    }
+}
+
 /// GitLab answers a pipeline it will not create with a 400 whose message is either
 /// the rules outcome or the configuration errors. Say which, and what to do.
 pub(crate) fn explain_refused_pipeline(ref_name: &str, message: &str) -> String {
+    let message = refusal_text(message);
     let lower = message.to_lowercase();
-    let hint = if lower.contains("rules configuration prevented")
+    // Rules first: their wording also contains "configuration".
+    let hint = if lower.contains("rules configuration")
         || lower.contains("will not run for the selected trigger")
+        || lower.contains("would have been empty")
     {
         "No job's `rules` matched this ref and these variables, so there was nothing to run. Check the variable names and values the rules test for."
     } else if lower.contains("reference not found") || lower.contains("ref is invalid") {
@@ -2267,6 +2296,10 @@ U1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==
         assert!(cfg.contains("invalid"));
         let r = explain_refused_pipeline("nope", "Reference not found");
         assert!(r.contains("does not exist"));
+        // GitLab 18 wording, as JSON: rules, not an invalid file, and no braces.
+        let empty = explain_refused_pipeline("main", r#"{"base":["The resulting pipeline would have been empty. Review the rules configuration for the relevant jobs."]}"#);
+        assert!(empty.contains("No job's `rules` matched") && !empty.contains("invalid"));
+        assert!(!empty.contains("{\"base\""), "raw JSON leaked: {empty}");
     }
 
     #[test]

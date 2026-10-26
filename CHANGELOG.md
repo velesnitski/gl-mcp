@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-10-27
+
+### Fixed
+
+- `create_pipeline`: GitLab 18's refusal for rules that leave no job ("The resulting
+  pipeline would have been empty…") was explained as an invalid configuration. It
+  now reads as a rules mismatch, and the JSON envelope is reduced to its text
+  (ADR 073 addendum).
+
 ## [2.3.0] - 2026-10-26
 
 ### Added

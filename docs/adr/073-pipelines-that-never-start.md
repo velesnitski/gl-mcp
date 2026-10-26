@@ -52,3 +52,11 @@ with variables, the usual switch for jobs whose `rules` test a variable.
   fields, only when a job is pending or `list_project_runners` is called.
 - A token that cannot read runner records now gets "cannot tell" where it used to
   get a confident, possibly wrong, "queued".
+
+## Addendum (2026-10-27): the empty-pipeline refusal
+
+GitLab 18 refuses a pipeline whose rules leave no job with "The resulting pipeline
+would have been empty. Review the rules configuration for the relevant jobs.", as
+JSON (`{"base": [...]}`). The classifier did not know that wording and, seeing
+"configuration", called the file invalid. Rules wording is now matched first and
+includes this phrasing, and the JSON envelope is reduced to its text.
