@@ -8,7 +8,10 @@ pub enum Error {
     #[error("GitLab API error ({status}): {message}")]
     GitLab { status: StatusCode, message: String },
 
-    #[error("HTTP error: {0}")]
+    /// The root cause leads: reqwest's own text ("error sending request for url
+    /// (…)") says nothing about why — DNS, refused, timeout, TLS — and analytics
+    /// truncate long messages, so the cause must come first to survive.
+    #[error("HTTP error: {}", http_message(.0))]
     Http(#[from] reqwest::Error),
 
     #[error("JSON parse error: {0}")]
@@ -28,6 +31,32 @@ pub enum Error {
 
     #[error("{0}")]
     Other(String),
+}
+
+fn http_message(e: &reqwest::Error) -> String {
+    let mut causes = Vec::new();
+    let mut src = std::error::Error::source(e);
+    while let Some(c) = src {
+        causes.push(c.to_string());
+        src = c.source();
+    }
+    chain_message(&e.to_string(), &causes)
+}
+
+/// "{deepest cause} — {top}"; repeated links (hyper often wraps one error twice)
+/// are dropped. Pure, for testing without a network.
+pub(crate) fn chain_message(top: &str, causes: &[String]) -> String {
+    let mut seen: Vec<&str> = Vec::new();
+    for c in causes.iter().rev() {
+        let c = c.trim();
+        if !c.is_empty() && !seen.iter().any(|s| s.contains(c) || c.contains(*s)) && !top.contains(c) {
+            seen.push(c);
+        }
+    }
+    match seen.first() {
+        Some(root) => format!("{root} — {top}"),
+        None => top.to_string(),
+    }
 }
 
 /// Shorthand Result type.
@@ -232,3 +261,24 @@ mod tests {
         assert_eq!(Err::<String, _>(gitlab(404)).or_default_logged(), "");
     }
 }
+
+#[cfg(test)]
+mod chain_tests {
+    use super::chain_message;
+
+    #[test]
+    fn root_cause_leads_and_repeats_collapse() {
+        let top = "error sending request for url (https://gitlab.example.com/api/v4/version)";
+        let causes = vec![
+            "client error (Connect)".to_string(),
+            "dns error".to_string(),
+            "dns error: failed to lookup address information".to_string(),
+        ];
+        assert_eq!(
+            chain_message(top, &causes),
+            format!("dns error: failed to lookup address information — {top}")
+        );
+        assert_eq!(chain_message(top, &[]), top);
+    }
+}
+

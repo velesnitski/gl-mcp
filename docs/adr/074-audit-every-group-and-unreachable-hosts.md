@@ -29,6 +29,9 @@ Accepted (2026-10-29)
 4. **"error sending request for url" is not actionable.** The request never left
    the caller's machine: DNS, a refused connection, or a VPN-only host. A server
    that was reached and then failed (timeouts, 5xx, 408, 429) still alerts.
+5. **HTTP errors name their root cause first** ("failed to lookup address
+   information — error sending request for url (…)"). reqwest's top-level text
+   carries no reason, and messages are truncated in analytics, so the cause leads.
 
 ## Consequences
 

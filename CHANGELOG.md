@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - "error sending request for url" (DNS, refused connection, VPN-only host while the
   VPN is off) is no longer reported to error tracking: the request never left the
   caller's machine.
+- HTTP errors lead with their root cause (DNS failure, refused connection,
+  timeout, TLS) instead of reqwest's bare "error sending request for url", so the
+  reason survives log truncation.
 
 ## [2.3.1] - 2026-10-27
 
