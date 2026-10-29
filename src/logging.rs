@@ -209,6 +209,13 @@ fn is_actionable_error(err: &str) -> bool {
         return false;
     }
 
+    // The request never left this machine: DNS, a refused connection, or a host
+    // only reachable over a VPN that is off. That is the caller's network, not a
+    // fault in this server, and every user on such a laptop would page the team.
+    if e.contains("error sending request for url") {
+        return false;
+    }
+
     // 4xx codes generally are user errors, except 408 (timeout) and 429
     // (rate limit — we retry).
     if e.contains("gitlab api error (4") && !e.contains("(408") && !e.contains("(429") {
@@ -342,6 +349,11 @@ mod tests {
         ));
         assert!(!is_actionable_error(
             "Nothing to update — set at least one of title, description..."
+        ));
+
+        // Unreachable from the caller's network — not a server fault.
+        assert!(!is_actionable_error(
+            "HTTP error: error sending request for url (https://gitlab.example.com/api/v4/projects/1/pipelines)"
         ));
 
         // Real errors — should be captured

@@ -380,6 +380,9 @@ snapshot, repositories ranked by exposure, and coverage gaps. The body leaves ou
 full finding list (Gmail clips bodies over ~102 KB); `--full-out` has everything, for
 the attachment. The snapshot carries the subject line and is next week's `--previous`.
 
+`GROUP` may list several groups (`a,b`), or be `*` for every top-level group the
+token can see, with `-name` to exclude one (`'*,-sandbox'`).
+
 ### Required Token Scopes
 
 | Scope | Needed for |

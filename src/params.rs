@@ -1847,7 +1847,7 @@ pub struct AuditDependenciesParams {
     #[schemars(description = "Project ID or path. Omit when using group_path.")]
     #[serde(default)]
     pub project_id: Option<String>,
-    #[schemars(description = "Group path: audit every non-archived project in the group (with subgroups). Several groups: comma-separated (\"a,b\"), one report")]
+    #[schemars(description = "Group path: audit every non-archived project in the group (with subgroups). Several groups: comma-separated (\"a,b\"), one report. \"*\" = every top-level group the token can see; \"-name\" excludes one (\"*,-sandbox\")")]
     #[serde(default)]
     pub group_path: Option<String>,
     #[schemars(description = "Group sweeps: audit at most this many most recently active projects (default: 30)")]

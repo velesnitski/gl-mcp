@@ -309,7 +309,7 @@
       "properties": {
         "group_path": {
           "default": null,
-          "description": "Group path: audit every non-archived project in the group (with subgroups). Several groups: comma-separated (\"a,b\"), one report",
+          "description": "Group path: audit every non-archived project in the group (with subgroups). Several groups: comma-separated (\"a,b\"), one report. \"*\" = every top-level group the token can see; \"-name\" excludes one (\"*,-sandbox\")",
           "type": [
             "string",
             "null"

@@ -9,7 +9,7 @@
 //!                                       # report to stdout and exit. Same engine
 //!                                       # as the generate_ai_adoption_report MCP
 //!                                       # tool — built for cron/CI consumers.
-//!   gl-mcp --dependency-audit GROUP [--previous last.json] [--snapshot-out now.json] [--full-out full.html]
+//!   gl-mcp --dependency-audit GROUP|'*' [--previous last.json] [--snapshot-out now.json] [--full-out full.html]
 //!          [--max-projects N] [--gl-instance NAME] > report.html
 //!                                       # one-shot: weekly dependency-CVE email,
 //!                                       # diffed against last week's snapshot.

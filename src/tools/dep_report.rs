@@ -734,7 +734,7 @@ pub async fn weekly_report(
         &audit.scope,
         &scanned,
     );
-    let meta = ReportMeta::from_audit(&audit, group, today);
+    let meta = ReportMeta::from_audit(&audit, &audit.name, today);
     let body = render_email(&meta, &d, false);
     let full = render_email(&meta, &d, true);
     let snapshot = Snapshot {
@@ -742,7 +742,7 @@ pub async fn weekly_report(
         date: today.to_string(),
         scope: audit.scope.clone(),
         scanned: scanned.into_iter().collect(),
-        subject: subject(group, &d),
+        subject: subject(&audit.name, &d),
         items: d.open,
     };
     let json = serde_json::to_string_pretty(&snapshot)

@@ -1016,6 +1016,9 @@ impl PackageFinding {
 #[derive(Debug, Default)]
 pub(crate) struct Audit {
     pub scope: String,
+    /// Short name for subjects and titles: the group, "first + N groups", or the
+    /// instance host when every top-level group was audited.
+    pub name: String,
     pub total_repos: usize,
     pub scans: Vec<RepoScan>,
     pub unique_deps: usize,
@@ -1028,20 +1031,99 @@ pub(crate) struct Audit {
 
 /// Scan lockfiles and match them against OSV. Shared by the MCP tool and the
 /// weekly report CLI, so both see exactly the same findings.
+/// `group_path` as given: named groups, or `*` (every top-level group) with
+/// `-name` exclusions. Pure, so the expansion rules are testable without GitLab.
+#[derive(Debug, PartialEq)]
+pub(crate) struct GroupSpec {
+    pub all: bool,
+    pub include: Vec<String>,
+    pub exclude: Vec<String>,
+}
+
+impl GroupSpec {
+    pub(crate) fn parse(spec: &str) -> Self {
+        let mut out = GroupSpec { all: false, include: Vec::new(), exclude: Vec::new() };
+        for part in spec.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+            if part == "*" {
+                out.all = true;
+            } else if let Some(x) = part.strip_prefix('-') {
+                out.exclude.push(x.trim().to_string());
+            } else {
+                out.include.push(part.to_string());
+            }
+        }
+        out
+    }
+
+    /// Groups to audit: the named ones, plus every listed top-level group when
+    /// `*`, minus exclusions; deduplicated, order kept.
+    pub(crate) fn select(&self, top_level: impl Iterator<Item = String>) -> Vec<String> {
+        let mut seen = BTreeSet::new();
+        self.include
+            .iter()
+            .cloned()
+            .chain(top_level.filter(|_| self.all))
+            .filter(|g| !self.exclude.iter().any(|x| x.eq_ignore_ascii_case(g)))
+            .filter(|g| seen.insert(g.to_lowercase()))
+            .collect()
+    }
+
+    /// Scope label (compared week to week by the email's diff) and short name.
+    /// For `*` the label does not list the groups: a group appearing later is new
+    /// coverage, reported as new findings, not a reason to restart the baseline.
+    pub(crate) fn label(&self, groups: &[String], host: &str) -> (String, String) {
+        if self.all {
+            let mut label = "all top-level groups".to_string();
+            if !self.exclude.is_empty() {
+                let mut x = self.exclude.clone();
+                x.sort();
+                label.push_str(" except ");
+                label.push_str(&x.iter().map(|g| format!("`{g}`")).collect::<Vec<_>>().join(", "));
+            }
+            let name = if host.is_empty() { "all groups".to_string() } else { host.to_string() };
+            return (label, name);
+        }
+        match groups {
+            [one] => (format!("group `{one}`"), one.clone()),
+            [first, rest @ ..] => (
+                format!("groups {}", groups.iter().map(|g| format!("`{g}`")).collect::<Vec<_>>().join(", ")),
+                format!("{first} + {} group{}", rest.len(), if rest.len() == 1 { "" } else { "s" }),
+            ),
+            [] => (String::new(), String::new()),
+        }
+    }
+}
+
 pub(crate) async fn collect_audit(
     client: &GitLabClient,
     project_id: &str,
     group_path: &str,
     max_projects: usize,
 ) -> Result<Audit> {
-    let (targets, total_repos, scope) = if !group_path.is_empty() {
+    let (targets, total_repos, scope, name) = if !group_path.is_empty() {
         // Several groups may be given, comma-separated: one instance, one report.
-        let groups: Vec<&str> = group_path.split(',').map(str::trim).filter(|g| !g.is_empty()).collect();
+        // `*` is every top-level group the token can see; `-name` excludes one.
+        let spec = GroupSpec::parse(group_path);
+        let groups: Vec<String> = if spec.all {
+            let top: Vec<Value> = client
+                .get_all_pages(
+                    "/groups",
+                    &[("top_level_only", "true"), ("all_available", "true"), ("order_by", "path")],
+                    10,
+                )
+                .await?;
+            spec.select(top.iter().filter_map(|g| g["full_path"].as_str().map(str::to_string)))
+        } else {
+            spec.select(std::iter::empty())
+        };
+        if groups.is_empty() {
+            return Err(Error::user_input(format!("no group to audit in `{group_path}`.")));
+        }
         let mut projects: Vec<Value> = Vec::new();
         for g in &groups {
             let mut page: Vec<Value> = client
                 .get_all_pages(
-                    &format!("/groups/{}/projects", urlencoding::encode(g)),
+                    &format!("/groups/{}/projects", urlencoding::encode(g.as_str())),
                     &[
                         ("include_subgroups", "true"),
                         ("archived", "false"),
@@ -1062,14 +1144,10 @@ pub(crate) async fn collect_audit(
             .take(max_projects)
             .filter_map(|p| p["path_with_namespace"].as_str().map(str::to_string))
             .collect();
-        let label = if groups.len() == 1 {
-            format!("group `{}`", groups[0])
-        } else {
-            format!("groups {}", groups.iter().map(|g| format!("`{g}`")).collect::<Vec<_>>().join(", "))
-        };
-        (targets, total, label)
+        let (label, name) = spec.label(&groups, &client.host());
+        (targets, total, label, name)
     } else if !project_id.is_empty() {
-        (vec![project_id.to_string()], 1, format!("project `{project_id}`"))
+        (vec![project_id.to_string()], 1, format!("project `{project_id}`"), project_id.to_string())
     } else {
         return Err(Error::user_input("pass project_id (one repo) or group_path (a whole group)."));
     };
@@ -1143,6 +1221,7 @@ pub(crate) async fn collect_audit(
     let (infra, infra_warning) = collect_infra(client, &scans).await?;
     Ok(Audit {
         scope,
+        name,
         total_repos,
         unique_deps: unique.len(),
         scans,
@@ -1704,6 +1783,31 @@ mod tests {
     use super::*;
 
     const HOST: &str = "git.example.com";
+
+    #[test]
+    fn group_spec_named_star_and_exclusions() {
+        let top = || ["acme", "Sandbox", "tools", "acme"].map(String::from).into_iter();
+        // Named groups: as given, no expansion.
+        let named = GroupSpec::parse("acme, tools");
+        assert_eq!(named.select(top()), vec!["acme", "tools"]);
+        assert_eq!(
+            named.label(&named.select(top()), HOST),
+            ("groups `acme`, `tools`".into(), "acme + 1 group".into())
+        );
+        let one = GroupSpec::parse("acme");
+        assert_eq!(one.label(&one.select(top()), HOST), ("group `acme`".into(), "acme".into()));
+        // `*` expands, dedupes, honours case-insensitive exclusions.
+        let all = GroupSpec::parse("*, -sandbox");
+        assert_eq!(all.select(top()), vec!["acme", "tools"]);
+        // The label is stable whatever the instance holds: new groups are new
+        // coverage, not a new baseline.
+        let (label, name) = all.label(&["acme".into()], HOST);
+        assert_eq!(label, "all top-level groups except `sandbox`");
+        assert_eq!(name, HOST);
+        assert_eq!(all.label(&["acme".into(), "x".into(), "y".into()], HOST).0, label);
+        // Exclusions only: nothing selected (the caller refuses that).
+        assert!(GroupSpec::parse("-acme").select(top()).is_empty());
+    }
 
     fn names(p: &Parsed) -> Vec<String> {
         p.deps.iter().map(|d| format!("{}@{}", d.name, d.version)).collect()

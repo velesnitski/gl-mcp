@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-10-29
+
+### Added
+
+- **`group_path = "*"` audits every top-level group the token can see**, with
+  `-name` exclusions (`"*,-sandbox"`), in `audit_dependencies` and
+  `--dependency-audit`. The scope label stays stable as groups are added, so a new
+  group's findings read as new instead of restarting the weekly baseline
+  (ADR 074).
+- Email subjects and titles use a short name: the group, "first + N groups", or the
+  instance host for `*`.
+
+### Fixed
+
+- "error sending request for url" (DNS, refused connection, VPN-only host while the
+  VPN is off) is no longer reported to error tracking: the request never left the
+  caller's machine.
+
 ## [2.3.1] - 2026-10-27
 
 ### Fixed
