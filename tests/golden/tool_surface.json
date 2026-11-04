@@ -552,6 +552,92 @@
     "name": "close_mr"
   },
   {
+    "description": "Commit several files (create, update or delete) in ONE commit on a feature branch — never a protected branch — optionally opening an MR. Create vs update is decided per file. When .gitlab-ci.yml is among them, the new branch's CI configuration is linted and the verdict returned.",
+    "input_schema": {
+      "$defs": {
+        "FileChange": {
+          "properties": {
+            "content": {
+              "default": null,
+              "description": "New file content (omit only when delete is true)",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "delete": {
+              "default": null,
+              "description": "Delete this file instead of writing it (default: false)",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "file_path": {
+              "description": "File path in the repository",
+              "type": "string"
+            }
+          },
+          "required": [
+            "file_path"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "branch": {
+          "description": "Branch to commit to (must NOT be main/master/develop/release/production); created from source_branch when missing",
+          "type": "string"
+        },
+        "commit_message": {
+          "description": "Commit message (first line becomes the MR title)",
+          "type": "string"
+        },
+        "create_mr": {
+          "description": "Create a merge request after commit (default: true)",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "files": {
+          "description": "Files to create, update or delete — all in one commit. Create vs update is decided per file.",
+          "items": {
+            "$ref": "#/$defs/FileChange"
+          },
+          "type": "array"
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project_id": {
+          "description": "Project ID or path",
+          "type": "string"
+        },
+        "source_branch": {
+          "description": "Source branch to create from (default: main)",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "project_id",
+        "branch",
+        "commit_message",
+        "files"
+      ],
+      "type": "object"
+    },
+    "name": "commit_files"
+  },
+  {
     "description": "Compare two branches/tags/SHAs. Shows commits and changed files between them.",
     "input_schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -3248,6 +3334,44 @@
     "name": "get_vulnerability"
   },
   {
+    "description": "Lint a project's CI configuration: the .gitlab-ci.yml on a branch/tag/SHA (default: the default branch), or YAML passed in before committing it. Errors name the offending keys.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "content": {
+          "description": "YAML to lint instead of a committed file — check a change before committing it",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project_id": {
+          "description": "Project ID or path (lint runs with this project's context: includes, variables)",
+          "type": "string"
+        },
+        "ref_name": {
+          "description": "Branch, tag or SHA whose .gitlab-ci.yml to lint (default: the default branch). Ignored when content is given.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "type": "object"
+    },
+    "name": "lint_ci_config"
+  },
+  {
     "description": "List branches for a project, optionally filtered by name",
     "input_schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -3778,6 +3902,37 @@
       "type": "object"
     },
     "name": "list_rules"
+  },
+  {
+    "description": "Inventory of every runner on the instance (admin token; otherwise the token's own runners): version per runner machine and how far it is behind the instance's GitLab (an older major is unsupported), platform, last contact, tags, scope; optionally jobs over the last 30 days. Oldest versions first.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "include_activity": {
+          "description": "Also count each runner's jobs over the last 30 days — one extra call per runner (default: false)",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "instance": {
+          "description": "GitLab instance name (optional)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "Filter: online, offline, stale, never_contacted (default: all)",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "list_runners"
   },
   {
     "description": "List tags (releases) for a project.",

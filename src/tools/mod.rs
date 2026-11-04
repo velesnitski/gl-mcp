@@ -37,6 +37,7 @@ pub const WRITE_TOOLS: &[&str] = &[
     "retry_pipeline",
     "cancel_pipeline",
     "save_team",
+    "commit_files",
     "update_file",
     "delete_branch",
     "update_branch_protection",

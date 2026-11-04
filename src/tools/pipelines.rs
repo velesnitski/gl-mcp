@@ -1359,10 +1359,14 @@ pub async fn update_pipeline_schedule(
             &Value::Object(body),
         )
         .await?;
+    // One row, without render_schedules' "schedules on project: N" heading, which
+    // read as the project's total.
+    let table = render_schedules(project_id, std::slice::from_ref(&sc));
+    let rows: Vec<&str> = table.lines().skip_while(|l| !l.starts_with('|')).collect();
     Ok(format!(
         "Schedule **{schedule_id}** on **{project_id}** updated ({}).\n\n{}",
         changed.join(", "),
-        render_schedules(project_id, std::slice::from_ref(&sc))
+        rows.join("\n")
     ))
 }
 
@@ -1815,7 +1819,7 @@ mod tests {
         error_signature, failure_class, grep_lines, http_status, human_secs, is_automated_source,
         normalize_signature, pipeline_end_ts, redact_log, render_runner_check, render_schedules,
         render_variable, strip_ansi, wall_clock_secs, render_created_pipeline, valid_variable_key,
-        explain_refused_pipeline, render_lint,
+        explain_refused_pipeline, render_lint, render_ci_lint,
     };
 
     #[test]
@@ -1873,13 +1877,13 @@ mod tests {
 
     #[test]
     fn redact_log_masks_key_material() {
-        let log = "\
-+ export 'ENVIRONMENT=prod'
------BEGIN PRIVATE KEY-----
-U1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==
------END PRIVATE KEY-----
-{\"SERVICE_CA_CRT\":\"U1lOVEhFVElDQ0VSVEJPRFlGT1JURVNUU09OTFlOT1RSRUFMTk9UUkVBTE5PVFJFQUxOT1RSRUFMTk9UUkVBTA==\"}
-";
+        // PEM armour is assembled at runtime too, for the same reason as the token.
+        let armour = |edge: &str| format!("-----{edge} {}{}-----", "PRIVATE ", "KEY");
+        let log = format!(
+            "+ export 'ENVIRONMENT=prod'\n{}\nU1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==\n{}\n{{\"SERVICE_CA_CRT\":\"U1lOVEhFVElDQ0VSVEJPRFlGT1JURVNUU09OTFlOT1RSRUFMTk9UUkVBTE5PVFJFQUxOT1RSRUFMTk9UUkVBTA==\"}}\n",
+            armour("BEGIN"),
+            armour("END"),
+        );
         // The token shape is assembled at runtime: a key-shaped literal must never
         // sit in the repo, not even a fake one — it trips secret scanners and
         // teaches the pattern by example.
@@ -2303,6 +2307,17 @@ U1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==
     }
 
     #[test]
+    fn ci_lint_report_verdict_errors_and_quoting_hint() {
+        use serde_json::json;
+        let bad = json!({"valid": false, "errors": ["jobs:build:script config should be a string or a nested array of strings up to 10 levels deep"], "warnings": ["w"], "includes": []});
+        let out = render_ci_lint("`feature`", &bad);
+        assert!(out.starts_with("**CI Lint — `feature`:** ❌ 1 error(s)"));
+        assert!(out.contains("- jobs:build:script") && out.contains("⚠️ w") && out.contains("quote the whole line"));
+        let ok = render_ci_lint("`main`", &json!({"valid": true, "errors": [], "warnings": [], "includes": [{}, {}]}));
+        assert_eq!(ok, "**CI Lint — `main`:** valid ✅\n_2 included file(s) resolved._");
+    }
+
+    #[test]
     fn lint_names_the_offending_keys_or_clears_the_file() {
         use serde_json::json;
         let bad = json!({"valid": false, "errors": ["jobs:build:script config should be a string or a nested array of strings up to 10 levels deep"], "warnings": []});
@@ -2387,6 +2402,61 @@ async fn zero_job_reason(client: &GitLabClient, encoded: &str, p: &Value) -> Str
             .get(&format!("/projects/{encoded}/ci/lint"), &[("content_ref", sha)])
             .await;
         out.push_str(&render_lint(lint.ok().as_ref()));
+    }
+    out
+}
+
+/// Lint a project's CI configuration: a committed ref, or YAML not yet committed.
+pub async fn lint_ci_config(
+    client: &GitLabClient,
+    project_id: &str,
+    ref_name: Option<&str>,
+    content: Option<&str>,
+) -> Result<String> {
+    let enc = urlencoding::encode(project_id);
+    if let Some(yaml) = content.filter(|c| !c.trim().is_empty()) {
+        let l: Value = client
+            .post(
+                &format!("/projects/{enc}/ci/lint"),
+                &serde_json::json!({ "content": yaml, "dry_run": false }),
+            )
+            .await?;
+        return Ok(render_ci_lint("the given YAML", &l));
+    }
+    let r = match ref_name.filter(|r| !r.is_empty()) {
+        Some(r) => r.to_string(),
+        None => {
+            let p: Value = client.get(&format!("/projects/{enc}"), &[]).await?;
+            p["default_branch"].as_str().unwrap_or("main").to_string()
+        }
+    };
+    let l: Value = client
+        .get(&format!("/projects/{enc}/ci/lint"), &[("content_ref", r.as_str())])
+        .await?;
+    Ok(render_ci_lint(&format!("`{r}`"), &l))
+}
+
+/// CI Lint result as a short report: verdict, errors (they name the keys), warnings.
+pub(crate) fn render_ci_lint(target: &str, l: &Value) -> String {
+    let errors = crate::tools::projects::str_list(&l["errors"]);
+    let warnings = crate::tools::projects::str_list(&l["warnings"]);
+    let valid = l["valid"].as_bool() == Some(true) && errors.is_empty();
+    let mut out = if valid {
+        format!("**CI Lint — {target}:** valid ✅")
+    } else {
+        format!("**CI Lint — {target}:** ❌ {} error(s)", errors.len())
+    };
+    for e in &errors {
+        let _ = write!(out, "\n- {e}");
+    }
+    for w in &warnings {
+        let _ = write!(out, "\n- ⚠️ {w}");
+    }
+    if let Some(n) = l["includes"].as_array().map(Vec::len).filter(|n| *n > 0) {
+        let _ = write!(out, "\n_{n} included file(s) resolved._");
+    }
+    if !valid && errors.iter().any(|e| e.contains("should be a string or a nested array")) {
+        out.push_str("\n_Hint: an unquoted script line containing `: ` (e.g. a `KEY: value` header) is read as a YAML mapping — quote the whole line._");
     }
     out
 }

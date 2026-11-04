@@ -94,6 +94,12 @@ pub(crate) struct RepoMarkers {
     /// Distinct non-bot authors of ANY commit in the window (the denominator
     /// for the developer-adoption rate).
     pub all_author_set: Vec<String>,
+    /// Commits in the window stamped with an `AI-Cost:` trailer (ai-spend /
+    /// claude-token-trailers convention), and what they add up to.
+    pub ai_spend_commits: usize,
+    pub ai_spend_cost: f64,
+    pub ai_spend_output: u64,
+    pub ai_spend_cache_read: u64,
     /// AI-marked MRs merged in the window.
     pub ai_mr_merged: usize,
     /// Of those, merged with no reviewer or by their own author.
@@ -987,6 +993,15 @@ async fn scan_repo(
 
     m.total_commits = commits.len();
     m.ai_commits = count_ai_commits(&commits);
+    for (cost, output, cache_read) in commits
+        .iter()
+        .filter_map(|c| parse_ai_spend(c["message"].as_str().unwrap_or("")))
+    {
+        m.ai_spend_commits += 1;
+        m.ai_spend_cost += cost;
+        m.ai_spend_output += output;
+        m.ai_spend_cache_read += cache_read;
+    }
     let (ai_set, all_set) = collect_author_sets(&commits);
     m.ai_author_set = ai_set;
     m.all_author_set = all_set;
@@ -1193,6 +1208,115 @@ pub(crate) fn unreviewed_ai_merges(mrs: &[Value]) -> (usize, usize) {
 }
 
 /// Count commits whose message carries an AI co-author trailer.
+/// `(cost USD, output tokens, cache-read tokens)` from a commit message's
+/// `AI-Cost:` / `AI-Tokens:` trailers, e.g. `AI-Cost: 13.81 USD (API list price)`
+/// and `AI-Tokens: in=54 out=32.7k cache-read=9.8M cache-write=1.4M`.
+pub(crate) fn parse_ai_spend(msg: &str) -> Option<(f64, u64, u64)> {
+    let field = |key: &str| {
+        msg.lines()
+            .rev()
+            .find_map(|l| l.trim().strip_prefix(key).map(str::trim))
+    };
+    let cost: f64 = field("AI-Cost:")?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()?;
+    let tokens = field("AI-Tokens:").unwrap_or("");
+    let count = |name: &str| -> u64 {
+        tokens
+            .split_whitespace()
+            .find_map(|kv| kv.strip_prefix(name))
+            .and_then(|v| {
+                let (num, mult) = match v.chars().last() {
+                    Some('k') => (&v[..v.len() - 1], 1e3),
+                    Some('M') => (&v[..v.len() - 1], 1e6),
+                    Some('B') => (&v[..v.len() - 1], 1e9),
+                    _ => (v, 1.0),
+                };
+                num.parse::<f64>().ok().map(|n| (n * mult).round() as u64)
+            })
+            .unwrap_or(0)
+    };
+    Some((cost, count("out="), count("cache-read=")))
+}
+
+fn spend_tokens(n: u64) -> String {
+    match n {
+        n if n >= 1_000_000_000 => format!("{:.1}B", n as f64 / 1e9),
+        n if n >= 1_000_000 => format!("{:.1}M", n as f64 / 1e6),
+        n if n >= 1_000 => format!("{:.0}k", n as f64 / 1e3),
+        n => n.to_string(),
+    }
+}
+
+/// Repos whose commits carry `AI-Cost:` trailers, most expensive first.
+fn spend_sorted(results: &[RepoResult]) -> Vec<&RepoResult> {
+    let mut v: Vec<&RepoResult> = results.iter().filter(|r| r.markers.ai_spend_commits > 0).collect();
+    v.sort_by(|a, b| b.markers.ai_spend_cost.total_cmp(&a.markers.ai_spend_cost));
+    v
+}
+
+const SPEND_NOTE: &str = "From `AI-Cost` commit trailers (ai-spend / claude-token-trailers convention) on commits in the window; API list price, so on a subscription plan a measure of use rather than of billing. Only repos that stamp commits appear. Read per change, not as a per-person target.";
+
+fn md_ai_spend(results: &[RepoResult], group_path: &str) -> Vec<String> {
+    let repos = spend_sorted(results);
+    if repos.is_empty() {
+        return Vec::new();
+    }
+    let total: f64 = repos.iter().map(|r| r.markers.ai_spend_cost).sum();
+    let commits: usize = repos.iter().map(|r| r.markers.ai_spend_commits).sum();
+    let mut out = vec![
+        String::new(),
+        format!("### AI Spend — ${total:.2} over {commits} stamped commits"),
+        String::new(),
+        "| Repo | Stamped commits | USD | per commit | Output | Cache read |".to_string(),
+        "|------|-----------------|-----|------------|--------|------------|".to_string(),
+    ];
+    for r in repos {
+        let m = &r.markers;
+        out.push(format!(
+            "| {} | {} | {:.2} | {:.2} | {} | {} |",
+            short_path(&r.path, group_path),
+            m.ai_spend_commits,
+            m.ai_spend_cost,
+            m.ai_spend_cost / m.ai_spend_commits as f64,
+            spend_tokens(m.ai_spend_output),
+            spend_tokens(m.ai_spend_cache_read),
+        ));
+    }
+    out.push(String::new());
+    out.push(format!("_{SPEND_NOTE}_"));
+    out
+}
+
+fn html_ai_spend(results: &[RepoResult], group_path: &str) -> String {
+    let repos = spend_sorted(results);
+    if repos.is_empty() {
+        return String::new();
+    }
+    let total: f64 = repos.iter().map(|r| r.markers.ai_spend_cost).sum();
+    let commits: usize = repos.iter().map(|r| r.markers.ai_spend_commits).sum();
+    let mut html = format!(
+        "<h2 id=\"ai-spend\">AI Spend — ${total:.2} over {commits} stamped commits</h2>\n<table>\n<tr><th>Repo</th><th>Stamped commits</th><th>USD</th><th>per commit</th><th>Output</th><th>Cache read</th></tr>\n"
+    );
+    for r in repos {
+        let m = &r.markers;
+        let _ = writeln!(
+            html,
+            "<tr><td><b>{}</b></td><td>{}</td><td>{:.2}</td><td>{:.2}</td><td>{}</td><td>{}</td></tr>",
+            link(&r.web_url, &esc(short_path(&r.path, group_path))),
+            m.ai_spend_commits,
+            m.ai_spend_cost,
+            m.ai_spend_cost / m.ai_spend_commits as f64,
+            spend_tokens(m.ai_spend_output),
+            spend_tokens(m.ai_spend_cache_read),
+        );
+    }
+    let _ = writeln!(html, "</table>\n<p class=\"sub\">{}</p>", esc(&SPEND_NOTE.replace('`', "")));
+    html
+}
+
 fn count_ai_commits(commits: &[Value]) -> usize {
     commits
         .iter()
@@ -1764,6 +1888,7 @@ pub(crate) fn render_ai_adoption(summary_only: bool, scan: AdoptionScan) -> Stri
 
     out.extend(md_team_table(&teams));
     out.extend(md_adopting(&results, group_path));
+    out.extend(md_ai_spend(&results, group_path));
     out.extend(md_in_flight(&in_flight, group_path));
     out.extend(md_invisible(&invisible, group_path));
     out.extend(md_quality_flags(&results, days));
@@ -2430,6 +2555,7 @@ window.addEventListener('hashchange',openTarget);openTarget();
         group_path,
     ));
     html.push_str(&html_adopting(results, group_path));
+    html.push_str(&html_ai_spend(results, group_path));
     html.push_str(&html_in_flight(&in_flight, group_path));
     html.push_str(&html_invisible(&invisible, group_path));
     html.push_str(&html_quality_flags(results, days));
@@ -2938,6 +3064,33 @@ fn html_methodology(days: u32, dormant_days: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ai_cost_trailers_are_summed_per_repo_and_rendered_only_when_present() {
+        let msg = "feat: x (ADR 74)\n\nbody\n\nAI-Model: claude-opus-5-5\nAI-Tokens: in=54 out=32.7k cache-read=9.8M cache-write=1.4M\nAI-Cost: 13.81 USD (API list price, 12 responses)\nCo-Authored-By: Claude <noreply@anthropic.com>";
+        assert_eq!(parse_ai_spend(msg), Some((13.81, 32_700, 9_800_000)));
+        assert_eq!(parse_ai_spend("chore: no trailers"), None);
+        assert_eq!(parse_ai_spend("AI-Cost: n/a"), None);
+
+        let none = repo("acme/a", "t", RepoMarkers::default());
+        assert!(html_ai_spend(std::slice::from_ref(&none), "acme").is_empty());
+        assert!(md_ai_spend(std::slice::from_ref(&none), "acme").is_empty());
+
+        let mk = |cost: f64, n: usize| RepoMarkers {
+            ai_spend_commits: n,
+            ai_spend_cost: cost,
+            ai_spend_output: 32_700,
+            ai_spend_cache_read: 9_800_000,
+            ..Default::default()
+        };
+        let rs = vec![repo("acme/cheap", "t", mk(2.0, 1)), repo("acme/dear", "t", mk(30.0, 3)), none];
+        let md = md_ai_spend(&rs, "acme").join("\n");
+        assert!(md.contains("### AI Spend — $32.00 over 4 stamped commits"));
+        assert!(md.find("| dear |").unwrap() < md.find("| cheap |").unwrap(), "most expensive first");
+        assert!(md.contains("| dear | 3 | 30.00 | 10.00 | 33k | 9.8M |"));
+        let html = html_ai_spend(&rs, "acme");
+        assert!(html.contains("id=\"ai-spend\"") && html.contains("<td>10.00</td>") && !html.contains('`'));
+    }
 
     // ─── Report renderers: exercised on a synthetic scan, no network ───
 

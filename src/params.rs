@@ -796,6 +796,58 @@ pub struct UpdateFileParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct FileChange {
+    #[schemars(description = "File path in the repository")]
+    pub file_path: String,
+    #[schemars(description = "New file content (omit only when delete is true)")]
+    #[serde(default)]
+    pub content: Option<String>,
+    #[schemars(description = "Delete this file instead of writing it (default: false)")]
+    #[serde(default)]
+    pub delete: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CommitFilesParams {
+    #[schemars(description = "Project ID or path")]
+    pub project_id: String,
+    #[schemars(description = "Branch to commit to (must NOT be main/master/develop/release/production); created from source_branch when missing")]
+    pub branch: String,
+    #[schemars(description = "Commit message (first line becomes the MR title)")]
+    pub commit_message: String,
+    #[schemars(description = "Files to create, update or delete — all in one commit. Create vs update is decided per file.")]
+    pub files: Vec<FileChange>,
+    #[schemars(description = "Source branch to create from (default: main)")]
+    pub source_branch: Option<String>,
+    #[schemars(description = "Create a merge request after commit (default: true)")]
+    pub create_mr: Option<bool>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LintCiConfigParams {
+    #[schemars(description = "Project ID or path (lint runs with this project's context: includes, variables)")]
+    pub project_id: String,
+    #[schemars(description = "Branch, tag or SHA whose .gitlab-ci.yml to lint (default: the default branch). Ignored when content is given.")]
+    pub ref_name: Option<String>,
+    #[schemars(description = "YAML to lint instead of a committed file — check a change before committing it")]
+    pub content: Option<String>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListRunnersParams {
+    #[schemars(description = "Filter: online, offline, stale, never_contacted (default: all)")]
+    pub status: Option<String>,
+    #[schemars(description = "Also count each runner's jobs over the last 30 days — one extra call per runner (default: false)")]
+    pub include_activity: Option<bool>,
+    #[schemars(description = "GitLab instance name (optional)")]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListEnvironmentsParams {
     #[schemars(description = "Project ID or path")]
     pub project_id: String,

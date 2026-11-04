@@ -1522,6 +1522,197 @@ pub(crate) fn runner_verdict(runners: &[RunnerFacts], job_tags: &[String]) -> Ru
     }
 }
 
+/// One runner (or runner machine) for the instance-wide inventory.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct RunnerRow {
+    pub id: u64,
+    pub description: String,
+    pub kind: String,
+    pub state: String,
+    pub version: String,
+    pub platform: String,
+    pub contacted: String,
+    pub tags: Vec<String>,
+    pub scope: String,
+    pub jobs_30d: Option<usize>,
+}
+
+/// "N.M" from a version string.
+fn minor_of(v: &str) -> Option<(u32, u32)> {
+    let mut it = v.split('.');
+    Some((it.next()?.trim_start_matches('v').parse().ok()?, it.next()?.parse().ok()?))
+}
+
+/// How far a runner is behind the instance: GitLab supports runners on the
+/// instance's own major.minor; a runner on an older major is unsupported.
+pub(crate) fn runner_lag(runner: &str, instance: &str) -> String {
+    match (minor_of(runner), minor_of(instance)) {
+        (Some((rm, rn)), Some((im, inn))) if (rm, rn) == (im, inn) => "current".into(),
+        (Some((rm, _)), Some((im, _))) if rm < im => format!("⚠️ {} major behind", im - rm),
+        (Some((rm, rn)), Some((im, inn))) if rm == im && rn < inn => format!("{} minor behind", inn - rn),
+        (Some(_), Some(_)) => "ahead".into(),
+        _ => "?".into(),
+    }
+}
+
+/// Inventory of every runner on the instance, oldest version first.
+pub(crate) fn render_runner_inventory(
+    instance_version: &str,
+    rows: &[RunnerRow],
+    owned_only: bool,
+    activity: bool,
+) -> String {
+    let mut sorted: Vec<&RunnerRow> = rows.iter().collect();
+    sorted.sort_by_key(|r| (minor_of(&r.version).unwrap_or((0, 0)), r.id));
+    let online = rows.iter().filter(|r| r.state == "online").count();
+    let unsupported = rows
+        .iter()
+        .filter(|r| runner_lag(&r.version, instance_version).contains("major"))
+        .count();
+    let mut out = vec![format!(
+        "**Runners: {}** ({online} online) · instance GitLab {instance_version}{}",
+        rows.len(),
+        if unsupported > 0 { format!(" · ⚠️ {unsupported} on an older major (unsupported)") } else { String::new() }
+    )];
+    if owned_only {
+        out.push("_Not an admin token: only runners this token owns are listed._".into());
+    }
+    out.push(String::new());
+    let jobs_col = if activity { " Jobs 30d |" } else { "" };
+    out.push(format!("| ID | Description | Type | State | Version | vs instance | Platform | Last contact | Tags | Scope |{jobs_col}"));
+    out.push(format!("|----|-------------|------|-------|---------|-------------|----------|--------------|------|-------|{}", if activity { "----------|" } else { "" }));
+    for r in sorted {
+        let jobs = match (activity, r.jobs_30d) {
+            (true, Some(n)) if n >= 100 => " 100+ |".to_string(),
+            (true, Some(n)) => format!(" {n} |"),
+            (true, None) => " ? |".to_string(),
+            (false, _) => String::new(),
+        };
+        out.push(format!(
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |{jobs}",
+            r.id,
+            if r.description.is_empty() { "—" } else { &r.description },
+            r.kind.trim_end_matches("_type"),
+            r.state,
+            if r.version.is_empty() { "?" } else { &r.version },
+            runner_lag(&r.version, instance_version),
+            if r.platform.is_empty() { "?" } else { &r.platform },
+            if r.contacted.is_empty() { "never" } else { &r.contacted },
+            if r.tags.is_empty() { "_untagged only_".to_string() } else { r.tags.join(", ") },
+            if r.scope.is_empty() { "—" } else { &r.scope },
+        ));
+    }
+    out.join("\n")
+}
+
+/// Every runner on the instance (admin token), or the token's own runners
+/// otherwise, with version per runner machine, lag behind the instance, platform,
+/// last contact, tags and scope; optionally jobs over the last 30 days.
+pub async fn list_runners(
+    client: &GitLabClient,
+    status: Option<&str>,
+    include_activity: bool,
+) -> Result<String> {
+    const MAX_RUNNERS: usize = 200;
+    let mut params: Vec<(&str, &str)> = Vec::new();
+    if let Some(st) = status.filter(|s| !s.is_empty()) {
+        params.push(("status", st));
+    }
+    let (runners, owned_only): (Vec<Value>, bool) = match client.get_all_pages("/runners/all", &params, 4).await {
+        Ok(r) => (r, false),
+        Err(Error::GitLab { status, .. }) if status.as_u16() == 403 => {
+            (client.get_all_pages("/runners", &params, 4).await?, true)
+        }
+        Err(e) => return Err(e),
+    };
+    let version: Value = client.get("/version", &[]).await.unwrap_or(Value::Null);
+    let instance_version = version["version"].as_str().unwrap_or("?").split('-').next().unwrap_or("?").to_string();
+    let cutoff = (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
+    let cutoff = cutoff.as_str();
+
+    let mut rows = Vec::new();
+    for chunk in runners.iter().take(MAX_RUNNERS).collect::<Vec<_>>().chunks(8) {
+        let fetched = futures::future::join_all(chunk.iter().map(|r| async move {
+            let id = r["id"].as_u64().unwrap_or(0);
+            let detail: Value = client.get(&format!("/runners/{id}"), &[]).await.unwrap_or(Value::Null);
+            let managers: Vec<Value> = client.get(&format!("/runners/{id}/managers"), &[]).await.unwrap_or_default();
+            let jobs = if include_activity {
+                client
+                    .get::<Vec<Value>>(&format!("/runners/{id}/jobs"), &[("per_page", "100"), ("order_by", "id"), ("sort", "desc")])
+                    .await
+                    .ok()
+                    .map(|j| j.iter().filter(|x| x["created_at"].as_str().unwrap_or("") >= cutoff).count())
+            } else {
+                None
+            };
+            (r, detail, managers, jobs)
+        }))
+        .await;
+        for (r, d, managers, jobs) in fetched {
+            let paused = d["paused"].as_bool().or(r["paused"].as_bool()).unwrap_or(false);
+            let state = if paused { "paused".to_string() } else { r["status"].as_str().unwrap_or("?").to_string() };
+            let mut scope: Vec<String> = str_list_paths(&d["projects"], "path_with_namespace");
+            scope.extend(str_list_paths(&d["groups"], "full_path"));
+            let scope = match scope.len() {
+                0 => String::new(),
+                1..=2 => scope.join(", "),
+                n => format!("{}, {} +{}", scope[0], scope[1], n - 2),
+            };
+            let base = RunnerRow {
+                id: r["id"].as_u64().unwrap_or(0),
+                description: r["description"].as_str().unwrap_or("").to_string(),
+                kind: r["runner_type"].as_str().unwrap_or("?").to_string(),
+                state,
+                tags: str_list(&d["tag_list"]),
+                scope,
+                jobs_30d: jobs,
+                ..Default::default()
+            };
+            if managers.is_empty() {
+                rows.push(RunnerRow {
+                    version: d["version"].as_str().unwrap_or("").to_string(),
+                    platform: d["platform"].as_str().unwrap_or("").to_string(),
+                    contacted: d["contacted_at"].as_str().unwrap_or("").get(..10).unwrap_or("").to_string(),
+                    ..base.clone()
+                });
+            }
+            for m in &managers {
+                rows.push(RunnerRow {
+                    version: m["version"].as_str().unwrap_or("").to_string(),
+                    platform: format!(
+                        "{} {}",
+                        m["platform"].as_str().unwrap_or(""),
+                        m["architecture"].as_str().unwrap_or("")
+                    )
+                    .trim()
+                    .to_string(),
+                    contacted: m["contacted_at"].as_str().unwrap_or("").get(..10).unwrap_or("").to_string(),
+                    ..base.clone()
+                });
+            }
+        }
+    }
+    if rows.is_empty() {
+        return Ok(if owned_only {
+            "No runners visible to this token (not an admin token: only its own runners are listed).".into()
+        } else {
+            "No runners on this instance.".into()
+        });
+    }
+    let mut out = render_runner_inventory(&instance_version, &rows, owned_only, include_activity);
+    if runners.len() > MAX_RUNNERS {
+        let _ = write!(out, "\n\n_Showing the first {MAX_RUNNERS} of {} runners._", runners.len());
+    }
+    Ok(out)
+}
+
+/// Values of `key` in an array of objects (runner projects/groups).
+fn str_list_paths(v: &Value, key: &str) -> Vec<String> {
+    v.as_array()
+        .map(|a| a.iter().filter_map(|x| x[key].as_str().map(str::to_string)).collect())
+        .unwrap_or_default()
+}
+
 /// List the runners that can take this project's jobs, and answer the question that
 /// actually gets asked: *can anything here run my job?*
 pub async fn list_project_runners(
@@ -1785,7 +1976,7 @@ pub async fn revoke_project_access_token(
 mod pat_tests {
     use super::{
         CredentialDelivery, RunnerFacts, RunnerVerdict, pat_request_error, render_access_tokens,
-        render_credential, runner_facts, runner_verdict,
+        render_credential, render_runner_inventory, runner_facts, runner_lag, runner_verdict, RunnerRow,
     };
 
     /// Key-shaped literals never live in the repo, not even fake ones — assembled here.
@@ -1986,6 +2177,31 @@ mod pat_tests {
         );
         let paused = runner_facts(&[json!({"status": "online", "paused": true})]);
         assert!(!paused[0].online, "a paused runner takes no jobs");
+    }
+
+    #[test]
+    fn runner_inventory_orders_by_version_and_flags_unsupported_majors() {
+        assert_eq!(runner_lag("19.2.4", "19.2.9"), "current");
+        assert_eq!(runner_lag("19.0.1", "19.2.9"), "2 minor behind");
+        assert_eq!(runner_lag("15.9.1", "19.2.9"), "⚠️ 4 major behind");
+        assert_eq!(runner_lag("", "19.2.9"), "?");
+        let row = |id, v: &str, state: &str| RunnerRow {
+            id,
+            version: v.into(),
+            state: state.into(),
+            kind: "instance_type".into(),
+            ..Default::default()
+        };
+        let out = render_runner_inventory(
+            "19.2.9",
+            &[row(2, "19.2.4", "online"), row(1, "15.9.1", "online"), row(3, "18.11.3", "paused")],
+            false,
+            false,
+        );
+        assert!(out.starts_with("**Runners: 3** (2 online) · instance GitLab 19.2.9 · ⚠️ 2 on an older major"));
+        let ids: Vec<&str> = out.lines().filter(|l| l.starts_with("| ") && !l.starts_with("| ID")).map(|l| l.split('|').nth(1).unwrap().trim()).collect();
+        assert_eq!(ids, ["1", "3", "2"], "oldest version first");
+        assert!(out.contains("| instance |") && out.contains("_untagged only_"));
     }
 
     #[test]

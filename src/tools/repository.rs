@@ -893,6 +893,153 @@ pub async fn update_file(
     Ok(lines.join("\n"))
 }
 
+/// Several file changes in ONE commit on a feature branch (never a protected
+/// branch), with an optional MR. Create vs update is decided per file against the
+/// branch being committed to. When `.gitlab-ci.yml` is among the files, the new
+/// branch's CI configuration is linted, so a broken pipeline shows up here rather
+/// than as a failed pipeline after the merge.
+pub async fn commit_files(
+    client: &GitLabClient,
+    project_id: &str,
+    branch: &str,
+    commit_message: &str,
+    files: &[(String, Option<String>, bool)],
+    source_branch: &str,
+    create_mr: bool,
+) -> Result<String> {
+    const MAX_FILES: usize = 100;
+    if files.is_empty() {
+        return Err(Error::user_input("files is empty: nothing to commit."));
+    }
+    if files.len() > MAX_FILES {
+        return Err(Error::user_input(format!(
+            "{} files in one commit; the limit is {MAX_FILES}.",
+            files.len()
+        )));
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for (path, content, delete) in files {
+        if !seen.insert(path.as_str()) {
+            return Err(Error::user_input(format!("`{path}` is listed twice.")));
+        }
+        if content.is_none() && !delete {
+            return Err(Error::user_input(format!(
+                "`{path}` has no content (set delete: true to remove it)."
+            )));
+        }
+    }
+    let protected = ["main", "master", "develop", "release", "production"];
+    if protected.iter().any(|p| branch.eq_ignore_ascii_case(p)) {
+        return Err(Error::user_input(format!(
+            "Cannot write directly to protected branch '{branch}'. Use a feature branch."
+        )));
+    }
+    let enc = urlencoding::encode(project_id);
+    let from_branch = if source_branch.is_empty() { "main" } else { source_branch };
+    let branch_exists = client
+        .get::<Value>(
+            &format!("/projects/{enc}/repository/branches/{}", urlencoding::encode(branch)),
+            &[],
+        )
+        .await
+        .is_ok();
+    let check_ref = if branch_exists { branch } else { from_branch };
+
+    let mut actions = Vec::new();
+    let mut summary = Vec::new();
+    for (path, content, delete) in files {
+        let exists = client
+            .get::<Value>(
+                &format!("/projects/{enc}/repository/files/{}", urlencoding::encode(path)),
+                &[("ref", check_ref)],
+            )
+            .await
+            .is_ok();
+        let action = match (*delete, exists) {
+            (true, true) => "delete",
+            (true, false) => {
+                return Err(Error::user_input(format!(
+                    "`{path}` does not exist on `{check_ref}`: nothing to delete."
+                )))
+            }
+            (false, true) => "update",
+            (false, false) => "create",
+        };
+        let mut a = serde_json::json!({ "action": action, "file_path": path });
+        if let Some(c) = content.as_ref().filter(|_| !delete) {
+            a["content"] = serde_json::json!(c);
+        }
+        actions.push(a);
+        summary.push(format!("- {action} `{path}`"));
+    }
+
+    let mut payload = serde_json::json!({
+        "branch": branch,
+        "commit_message": commit_message,
+        "actions": actions,
+    });
+    if !branch_exists {
+        payload["start_branch"] = serde_json::json!(from_branch);
+    }
+    let result: Value = client
+        .post(&format!("/projects/{enc}/repository/commits"), &payload)
+        .await?;
+    let sha = result["id"].as_str().unwrap_or("?");
+    let short_sha = sha.get(..8).unwrap_or(sha);
+
+    let origin = if branch_exists { String::new() } else { format!(" (new, from `{from_branch}`)") };
+    let mut lines = vec![
+        format!(
+            "**Committed {} file{}** on branch `{branch}`{origin}",
+            files.len(),
+            if files.len() == 1 { "" } else { "s" },
+        ),
+        format!("**Commit:** `{short_sha}` — {}", commit_message.lines().next().unwrap_or("")),
+    ];
+    lines.extend(summary);
+    if let Some(url) = result["web_url"].as_str() {
+        lines.push(format!("**URL:** {url}"));
+    }
+
+    if files.iter().any(|(p, _, d)| p == ".gitlab-ci.yml" && !d) {
+        let lint: Result<Value> = client
+            .get(&format!("/projects/{enc}/ci/lint"), &[("content_ref", branch)])
+            .await;
+        lines.push(match lint {
+            Ok(l) => crate::tools::pipelines::render_ci_lint(&format!("`{branch}`"), &l),
+            Err(e) => format!("**CI Lint:** unavailable ({e})"),
+        });
+    }
+
+    if create_mr {
+        let (mut title, description) = split_commit_message(commit_message);
+        if title.is_empty() {
+            title = format!("Update {} files", files.len());
+        }
+        let mut mr_payload = serde_json::json!({
+            "source_branch": branch,
+            "target_branch": from_branch,
+            "title": title,
+            "remove_source_branch": true,
+        });
+        if let Some(desc) = description {
+            mr_payload["description"] = serde_json::json!(desc);
+        }
+        match client
+            .post::<Value>(&format!("/projects/{enc}/merge_requests"), &mr_payload)
+            .await
+        {
+            Ok(mr) => lines.push(format!(
+                "**MR:** !{} — {}",
+                mr["iid"].as_u64().unwrap_or(0),
+                mr["web_url"].as_str().unwrap_or("")
+            )),
+            Err(e) => lines.push(format!("**MR creation failed:** {e}")),
+        }
+    }
+    Ok(lines.join("\n"))
+}
+
 /// List project environments (deployments).
 pub async fn list_environments(
     client: &GitLabClient,

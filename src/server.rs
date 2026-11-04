@@ -690,6 +690,41 @@ impl GlMcpServer {
     }
 
     #[tool(
+        description = "Inventory of every runner on the instance (admin token; otherwise the token's own runners): version per runner machine and how far it is behind the instance's GitLab (an older major is unsupported), platform, last contact, tags, scope; optionally jobs over the last 30 days. Oldest versions first."
+    )]
+    async fn list_runners(
+        &self,
+        Parameters(p): Parameters<ListRunnersParams>,
+    ) -> Result<CallToolResult, McpError> {
+        simple_tool!(self, p, "list_runners", "", |client| {
+            tools::projects::list_runners(
+                client,
+                p.status.as_deref(),
+                p.include_activity.unwrap_or(false),
+            )
+            .await
+        })
+    }
+
+    #[tool(
+        description = "Lint a project's CI configuration: the .gitlab-ci.yml on a branch/tag/SHA (default: the default branch), or YAML passed in before committing it. Errors name the offending keys."
+    )]
+    async fn lint_ci_config(
+        &self,
+        Parameters(p): Parameters<LintCiConfigParams>,
+    ) -> Result<CallToolResult, McpError> {
+        simple_tool!(self, p, "lint_ci_config", &p.project_id, |client| {
+            tools::pipelines::lint_ci_config(
+                client,
+                &p.project_id,
+                p.ref_name.as_deref(),
+                p.content.as_deref(),
+            )
+            .await
+        })
+    }
+
+    #[tool(
         description = "List the runners that can take a project's jobs, and say whether anything can actually run a given job. A job no runner can accept sits `pending (0s)` — output identical to a job in a busy queue — so the verdict distinguishes: no runners attached, all offline, no tag match, or genuinely queued."
     )]
     async fn list_project_runners(
@@ -2382,6 +2417,33 @@ impl GlMcpServer {
     ) -> Result<CallToolResult, McpError> {
         simple_tool!(self, p, "get_mr_approvals", "", |client| {
             tools::repository::get_mr_approvals(client, &p.project_id, p.mr_iid).await
+        })
+    }
+
+    #[tool(
+        description = "Commit several files (create, update or delete) in ONE commit on a feature branch — never a protected branch — optionally opening an MR. Create vs update is decided per file. When .gitlab-ci.yml is among them, the new branch's CI configuration is linted and the verdict returned."
+    )]
+    async fn commit_files(
+        &self,
+        Parameters(p): Parameters<CommitFilesParams>,
+    ) -> Result<CallToolResult, McpError> {
+        write_guard!(self, "commit_files");
+        let files: Vec<(String, Option<String>, bool)> = p
+            .files
+            .iter()
+            .map(|f| (f.file_path.clone(), f.content.clone(), f.delete.unwrap_or(false)))
+            .collect();
+        simple_tool!(self, p, "commit_files", &p.project_id, |client| {
+            tools::repository::commit_files(
+                client,
+                &p.project_id,
+                &p.branch,
+                &p.commit_message,
+                &files,
+                p.source_branch.as_deref().unwrap_or(""),
+                p.create_mr.unwrap_or(true),
+            )
+            .await
         })
     }
 

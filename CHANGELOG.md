@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-11-04
+
+### Added
+
+- **`commit_files`** (write): several files created, updated or deleted in one
+  commit on a feature branch, optional MR; a commit touching `.gitlab-ci.yml` comes
+  back with the new branch's CI Lint verdict (ADR 075).
+- **`lint_ci_config`**: CI Lint for a ref, or for YAML before it is committed.
+- **`list_runners`**: instance-wide runner inventory — version per runner machine
+  and its lag behind the instance (older major flagged unsupported), state,
+  platform, last contact, tags, scope, optional 30-day job counts.
+- **AI spend in the adoption report**: `AI-Cost` / `AI-Tokens` commit trailers
+  (claude-token-trailers convention) are summed per repository into an "AI Spend"
+  section, shown only when present.
+
+### Fixed
+
+- `create_merge_request` no longer reports "0 files" right after creation: diff
+  stats come from the compare endpoint.
+- `update_pipeline_schedule` no longer heads its answer with a count that read as
+  the project's total.
+
 ## [2.4.0] - 2026-10-29
 
 ### Added

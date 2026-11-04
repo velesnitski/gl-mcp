@@ -404,39 +404,18 @@ pub async fn create_merge_request(
     let src = mr["source_branch"].as_str().unwrap_or("?");
     let tgt = mr["target_branch"].as_str().unwrap_or("?");
 
-    // 8. Get diff stats for summary
-    let changes: std::result::Result<Value, _> = client
+    // 8. Diff stats. The MR's own /changes is filled in asynchronously and reads
+    // as "0 files" right after creation; compare (merge base → source) is
+    // computed on request, so it is right the first time.
+    let compare: std::result::Result<Value, _> = client
         .get(
-            &format!("/projects/{enc}/merge_requests/{iid}/changes"),
-            &[("access_raw_diffs", "false")],
+            &format!("/projects/{enc}/repository/compare"),
+            &[("from", tgt), ("to", src), ("straight", "false")],
         )
         .await;
-
-    let diff_stats = if let Ok(ch) = changes {
-        let files = ch["changes"].as_array().map(|a| a.len()).unwrap_or(0);
-        let adds: i64 = ch["changes"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|f| f["diff"].as_str())
-                    .flat_map(|d| d.lines())
-                    .filter(|l| l.starts_with('+') && !l.starts_with("+++"))
-                    .count() as i64
-            })
-            .unwrap_or(0);
-        let dels: i64 = ch["changes"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|f| f["diff"].as_str())
-                    .flat_map(|d| d.lines())
-                    .filter(|l| l.starts_with('-') && !l.starts_with("---"))
-                    .count() as i64
-            })
-            .unwrap_or(0);
-        format!("{files} files (+{adds}, -{dels})")
-    } else {
-        "unknown".to_string()
+    let diff_stats = match compare {
+        Ok(c) => render_diff_stats(c["diffs"].as_array().map(Vec::as_slice).unwrap_or(&[])),
+        Err(_) => "unknown".to_string(),
     };
 
     Ok(format!(
@@ -445,6 +424,28 @@ pub async fn create_merge_request(
          **Changes:** {diff_stats}\n\
          **URL:** {web_url}"
     ))
+}
+
+/// "N files (+a, -d)" from compare/changes diff entries.
+pub(crate) fn render_diff_stats(diffs: &[Value]) -> String {
+    let count = |prefix: char, header: &str| {
+        diffs
+            .iter()
+            .filter_map(|f| f["diff"].as_str())
+            .flat_map(str::lines)
+            .filter(|l| l.starts_with(prefix) && !l.starts_with(header))
+            .count()
+    };
+    let files = diffs.len();
+    if files == 0 {
+        return "no changes against the target branch".to_string();
+    }
+    format!(
+        "{files} file{} (+{}, -{})",
+        if files == 1 { "" } else { "s" },
+        count('+', "+++"),
+        count('-', "---")
+    )
 }
 
 /// Get a single merge request with details.
@@ -2467,6 +2468,18 @@ fn format_week_range(
 #[cfg(test)]
 mod tests {
     use crate::golden::assert_golden;
+
+    #[test]
+    fn diff_stats_count_lines_not_headers_and_say_when_empty() {
+        use serde_json::json;
+        let diffs = vec![
+            json!({"diff": "--- a/x\n+++ b/x\n@@ -1 +1,2 @@\n-old\n+new\n+more"}),
+            json!({"diff": "+only"}),
+        ];
+        assert_eq!(super::render_diff_stats(&diffs), "2 files (+3, -1)");
+        assert_eq!(super::render_diff_stats(&diffs[1..]), "1 file (+1, -0)");
+        assert_eq!(super::render_diff_stats(&[]), "no changes against the target branch");
+    }
 
     /// Fixed clock so ages and staleness are reproducible.
     fn now() -> chrono::DateTime<chrono::Utc> {
