@@ -1879,8 +1879,12 @@ mod tests {
     fn redact_log_masks_key_material() {
         // PEM armour is assembled at runtime too, for the same reason as the token.
         let armour = |edge: &str| format!("-----{edge} {}{}-----", "PRIVATE ", "KEY");
+        // Bodies are encoded at run time as well: no key- or cert-shaped blob in the tree.
+        use base64::Engine as _;
+        let b64 = |s: &str| base64::engine::general_purpose::STANDARD.encode(s);
+        let (key_body, cert_body) = (b64(&"fixture key body ".repeat(4)), b64(&"fixture cert body ".repeat(4)));
         let log = format!(
-            "+ export 'ENVIRONMENT=prod'\n{}\nU1lOVEhFVElDIEZJWFRVUkUgLSBOT1QgQSBSRUFMIEtFWSAtIGdsLW1jcCB0ZXN0IGRhdGEgb25seQ==\n{}\n{{\"SERVICE_CA_CRT\":\"U1lOVEhFVElDQ0VSVEJPRFlGT1JURVNUU09OTFlOT1RSRUFMTk9UUkVBTE5PVFJFQUxOT1RSRUFMTk9UUkVBTA==\"}}\n",
+            "+ export 'ENVIRONMENT=prod'\n{}\n{key_body}\n{}\n{{\"SERVICE_CA_CRT\":\"{cert_body}\"}}\n",
             armour("BEGIN"),
             armour("END"),
         );
@@ -1895,11 +1899,11 @@ mod tests {
             "PEM body must not survive"
         );
         assert!(
-            !out.contains("U1lOVEhFVElDIEZJWFRVUkUg"),
+            !out.contains(&key_body[..24]),
             "key body leaked: {out}"
         );
         assert!(
-            !out.contains("U1lOVEhFVElDQ0VSVEJPRFlGT1I"),
+            !out.contains(&cert_body[..24]),
             "cert body leaked: {out}"
         );
         assert!(!out.contains(&fake_pat), "PAT shape leaked: {out}");

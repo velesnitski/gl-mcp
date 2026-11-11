@@ -64,3 +64,9 @@ feeding it to a duration median would widen the sample with a different quantity
   redacted" and "wall clock is always available" were each true where they were
   written and false where they were relied on. Live output disagreed with both; the
   unit tests could not, because they exercised the path the rule was written for.
+
+## Addendum (2026-11-11): encoded test bodies built at run time
+
+The redaction tests now encode their key and certificate bodies at run time, as
+they already did for the PEM armour and the token prefix, so no base64 blob of
+that shape sits in the source tree for a scanner to match.
