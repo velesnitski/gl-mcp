@@ -14,6 +14,7 @@
 //!                                       # headless: call one tool, print the result,
 //!                                       # exit 0 ok / 1 tool error / 2 usage error
 //!   gl-mcp --dependency-audit GROUP|'*' [--previous last.json] [--snapshot-out now.json] [--full-out full.html]
+//!          [--ci-out ci.html] [--ci-previous last_ci.json] [--ci-snapshot-out now_ci.json]
 //!          [--max-projects N] [--gl-instance NAME] > report.html
 //!                                       # one-shot: weekly dependency-CVE email,
 //!                                       # diffed against last week's snapshot.
@@ -138,6 +139,7 @@ async fn main() -> anyhow::Result<()> {
         let instance = flag("--gl-instance").unwrap_or_default();
         // A missing previous snapshot is the first run, not an error.
         let previous = flag("--previous").and_then(|p| std::fs::read_to_string(p).ok());
+        let ci_previous = flag("--ci-previous").and_then(|p| std::fs::read_to_string(p).ok());
         let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
 
         let resolver = gl_mcp::resolver::Resolver::new(&config);
@@ -149,6 +151,7 @@ async fn main() -> anyhow::Result<()> {
             group,
             max_projects,
             previous.as_deref(),
+            ci_previous.as_deref(),
             &today,
         )
         .await
@@ -158,6 +161,13 @@ async fn main() -> anyhow::Result<()> {
         }
         if let Some(out) = flag("--full-out") {
             std::fs::write(&out, &report.full)?;
+        }
+        // CI-file literals: a separate email for a restricted list (ADR 079).
+        if let Some(out) = flag("--ci-out") {
+            std::fs::write(&out, &report.ci_body)?;
+        }
+        if let Some(out) = flag("--ci-snapshot-out") {
+            std::fs::write(&out, &report.ci_snapshot)?;
         }
         println!("{}", report.body);
         return Ok(());

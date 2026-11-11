@@ -137,6 +137,10 @@ pub(crate) fn items_from_infra(infra: &[super::infra::InfraFinding], today: &str
 /// fixed / open-for-N-weeks treatment as packages. The key omits the line number, so
 /// an edit above the secret does not make it "new"; commenting it out does change
 /// it (active → commented), which reads as one fixed and one new, lower item.
+/// Ecosystem label of CI-file literals. They have their own email and snapshot
+/// (ADR 079) and never appear in the dependency email.
+pub(crate) const CI_LITERAL: &str = "CI secret";
+
 pub(crate) fn items_from_ci_exposure(scans: &[super::dependencies::RepoScan], today: &str) -> Vec<Item> {
     let mut out: Vec<Item> = Vec::new();
     for s in scans {
@@ -149,7 +153,7 @@ pub(crate) fn items_from_ci_exposure(scans: &[super::dependencies::RepoScan], to
             }
             out.push(Item {
                 repo: s.path.clone(),
-                ecosystem: "CI secret".into(),
+                ecosystem: CI_LITERAL.into(),
                 package,
                 version,
                 severity: if h.high() { "HIGH" } else { "MEDIUM" }.into(),
@@ -336,6 +340,25 @@ pub(crate) fn subject(scope_name: &str, d: &Diff) -> String {
     format!(
         "Dependency CVEs — {scope_name}: {change} · {urgent_open} open runtime critical/high{fixed}"
     )
+}
+
+/// Subject of the CI-literal email. Same three forms as the dependency subject
+/// ("baseline", "N new live", "nothing new live"), so a mid-week gate can read it.
+pub(crate) fn ci_subject(scope_name: &str, d: &Diff, live_distinct: usize) -> String {
+    let new_live = d.new.iter().filter(|i| is_urgent(i)).count();
+    let change = if d.baseline {
+        "baseline".to_string()
+    } else if new_live > 0 {
+        format!("{new_live} new live")
+    } else {
+        "nothing new live".to_string()
+    };
+    let removed = if d.fixed.is_empty() {
+        String::new()
+    } else {
+        format!(" · {} removed", d.fixed.len())
+    };
+    format!("CI credentials — {scope_name}: {change} · {live_distinct} live{removed}")
 }
 
 /// Whole weeks between two YYYY-MM-DD dates.
@@ -651,10 +674,6 @@ pub(crate) fn render_email(meta: &ReportMeta, d: &Diff, full: bool) -> String {
             let mut by_repo: BTreeMap<&str, Vec<String>> = BTreeMap::new();
             for (i, still) in &d.fixed {
                 let what = match still {
-                    _ if i.ecosystem == "CI secret" => format!(
-                        "{} no longer in the file — rotate it if that has not been done: git history still has it",
-                        esc(&i.package)
-                    ),
                     Some(v) => format!(
                         "{} {} → {} (still vulnerable)",
                         esc(&i.package),
@@ -680,10 +699,6 @@ pub(crate) fn render_email(meta: &ReportMeta, d: &Diff, full: bool) -> String {
                 d.carried.len()
             ));
         }
-    }
-
-    if !meta.ci_credentials.is_empty() {
-        h.push_str(&ci_credentials_section(&meta.ci_credentials, g));
     }
 
     // Fix first
@@ -768,12 +783,6 @@ pub(crate) fn render_email(meta: &ReportMeta, d: &Diff, full: bool) -> String {
             meta.infra_files, meta.internal_images
         ));
     }
-    if meta.ci_files > 0 {
-        h.push_str(&format!(
-            "<li><b>CI definitions</b>: {} files read for credentials written into them. Secrets kept in CI variables are not visible here; their masking is checked by the CI security audit.</li>",
-            meta.ci_files
-        ));
-    }
     h.push_str("<li>Packages: only versions pinned in lockfiles are checked. Infrastructure: end of life, not individual image CVEs — OS packages inside images need an image scanner. Code you wrote is out of scope.</li></ul>");
 
     // Appendix
@@ -818,6 +827,91 @@ pub(crate) fn render_email(meta: &ReportMeta, d: &Diff, full: bool) -> String {
     h
 }
 
+/// The CI-literal email (ADR 079): credentials written into CI files, for the people
+/// who rotate them. Names and places only. Pure, like `render_email`.
+pub(crate) fn render_ci_email(meta: &ReportMeta, d: &Diff) -> String {
+    let g = meta.group;
+    let creds = &meta.ci_credentials;
+    let live = creds.iter().filter(|c| c.live).count();
+    let new_live: Vec<&Item> = d.new.iter().filter(|i| is_urgent(i)).collect();
+    let mut h = format!(
+        r#"<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CI credentials — {ge} — {today}</title></head>
+<body style="margin:0;padding:16px;background-color:#ffffff;color:#111827;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+<div style="max-width:820px;margin:0 auto">
+<h1 style="font-size:22px;margin:0 0 4px">CI credentials — {ge}</h1>
+<div style="{MUTED}">{today} · {files} CI files read in {scanned} repos · {since}</div>
+"#,
+        ge = esc(g),
+        today = esc(meta.today),
+        files = meta.ci_files,
+        scanned = meta.repos_scanned,
+        since = match (&d.previous_date, d.baseline) {
+            (Some(p), false) => format!("compared with {}", esc(p)),
+            _ => "first run — this list is the baseline".to_string(),
+        },
+    );
+    let dash = |n: usize| if d.baseline { "–".to_string() } else { n.to_string() };
+    h.push_str(r#"<table role="presentation" style="width:100%;border-collapse:separate;border-spacing:6px;margin:14px -6px 0"><tr>"#);
+    h.push_str(&kpi("Live credentials", live.to_string(), "#b91c1c", "distinct values in CI files"));
+    h.push_str(&kpi("New live", dash(new_live.len()), "#c2410c", "since last report"));
+    h.push_str(&kpi("Removed", dash(d.fixed.len()), "#15803d", "rotate if not done"));
+    h.push_str(&kpi("Places", creds.iter().map(|c| c.places.len()).sum::<usize>().to_string(), "#1d4ed8", "lines holding them"));
+    h.push_str("</tr></table>\n");
+    if !d.baseline && !d.new.is_empty() {
+        h.push_str(&format!(
+            r#"<h2 style="{H2}">New since {}</h2><ul style="font-size:13px;padding-left:18px;margin:0">"#,
+            esc(d.previous_date.as_deref().unwrap_or(""))
+        ));
+        for i in &d.new {
+            h.push_str(&format!(
+                "<li>{} <b>{}</b>: {} ({})</li>",
+                badge(&i.severity),
+                esc(&short_repo(&i.repo, g)),
+                esc(&i.package),
+                esc(&i.version)
+            ));
+        }
+        h.push_str("</ul>");
+    }
+    if !d.baseline && !d.fixed.is_empty() {
+        h.push_str(&format!(
+            r#"<h2 style="{H2}">No longer in the file</h2><div style="{MUTED};margin-bottom:6px">Removing the line does not retire the credential: git history still has it. Rotate it if that has not been done.</div><ul style="font-size:13px;padding-left:18px;margin:0">"#
+        ));
+        for (i, _) in &d.fixed {
+            h.push_str(&format!(
+                "<li><b>{}</b>: {} ({})</li>",
+                esc(&short_repo(&i.repo, g)),
+                esc(&i.package),
+                esc(&i.version)
+            ));
+        }
+        h.push_str("</ul>");
+    }
+    if creds.is_empty() {
+        h.push_str(r#"<p style="font-size:14px;margin-top:16px">No credentials written into CI files. 👍</p>"#);
+    } else {
+        h.push_str(&ci_credentials_section(creds, g));
+    }
+    h.push_str(&format!(
+        r#"<p style="{MUTED};margin-top:20px">Covers <code>.gitlab-ci.yml</code>, the CI YAML under <code>.gitlab/</code> or <code>ci/</code>, and local includes: assignments, auth headers, password flags, credentials in URLs and well-known key formats. Secrets kept in CI variables are not visible here. Values are never read into this report. Restricted distribution: do not forward. Generated by gl-mcp v{}.</p>
+</div></body></html>
+"#,
+        env!("CARGO_PKG_VERSION")
+    ));
+    h
+}
+
+/// Last run's dependency snapshot. Snapshots from before the split (ADR 079) carry
+/// CI literals: kept, they would read as fixed in the dependency email.
+fn dependency_previous(json: Option<&str>) -> Option<Snapshot> {
+    json.and_then(|j| serde_json::from_str::<Snapshot>(j).ok()).map(|mut p| {
+        p.items.retain(|i| i.ecosystem != CI_LITERAL);
+        p
+    })
+}
+
 /// The weekly run: audit the group, diff against the previous snapshot (raw JSON,
 /// if any), and return the email plus the snapshot to keep for next week.
 pub async fn weekly_report(
@@ -825,17 +919,20 @@ pub async fn weekly_report(
     group: &str,
     max_projects: usize,
     previous_json: Option<&str>,
+    ci_previous_json: Option<&str>,
     today: &str,
 ) -> crate::error::Result<WeeklyReport> {
     let audit = super::dependencies::collect_audit(client, "", group, max_projects).await?;
     // An unreadable previous snapshot means a baseline week, not a failed report.
-    let previous: Option<Snapshot> = previous_json.and_then(|j| serde_json::from_str(j).ok());
+    let previous = dependency_previous(previous_json);
+    let ci_previous: Option<Snapshot> = ci_previous_json.and_then(|j| serde_json::from_str(j).ok());
     let mut scanned: BTreeSet<String> = audit.scans.iter().map(|s| s.path.clone()).collect();
     // The platform answers every run, so its findings can always be judged fixed.
     scanned.extend(audit.infra.iter().filter(|f| f.files.is_empty()).map(|f| f.repo.clone()));
     let mut items = items_from(&audit.findings, today);
     items.extend(items_from_infra(&audit.infra, today));
-    items.extend(items_from_ci_exposure(&audit.scans, today));
+    let ci_scanned: BTreeSet<String> = audit.scans.iter().map(|s| s.path.clone()).collect();
+    let cd = diff(ci_previous.as_ref(), items_from_ci_exposure(&audit.scans, today), &audit.scope, &ci_scanned);
     let d = diff(
         previous.as_ref(),
         items,
@@ -853,12 +950,24 @@ pub async fn weekly_report(
         subject: subject(&audit.name, &d),
         items: d.open,
     };
-    let json = serde_json::to_string_pretty(&snapshot)
-        .map_err(|e| crate::error::Error::other(format!("snapshot: {e}")))?;
+    let ci_body = render_ci_email(&meta, &cd);
+    let ci_snapshot = Snapshot {
+        schema: SNAPSHOT_SCHEMA,
+        date: today.to_string(),
+        scope: audit.scope.clone(),
+        scanned: ci_scanned.into_iter().collect(),
+        subject: ci_subject(&audit.name, &cd, meta.ci_credentials.iter().filter(|c| c.live).count()),
+        items: cd.open,
+    };
+    let to_json = |s: &Snapshot| {
+        serde_json::to_string_pretty(s).map_err(|e| crate::error::Error::other(format!("snapshot: {e}")))
+    };
     Ok(WeeklyReport {
         body,
         full,
-        snapshot: json,
+        snapshot: to_json(&snapshot)?,
+        ci_body,
+        ci_snapshot: to_json(&ci_snapshot)?,
     })
 }
 
@@ -868,6 +977,9 @@ pub struct WeeklyReport {
     /// The same report with every open finding, for the attachment.
     pub full: String,
     pub snapshot: String,
+    /// The separate CI-literal email and its snapshot (ADR 079).
+    pub ci_body: String,
+    pub ci_snapshot: String,
 }
 
 #[cfg(test)]
@@ -1234,7 +1346,7 @@ mod tests {
     }
 
     #[test]
-    fn email_groups_ci_credentials_by_value_and_never_shows_one() {
+    fn ci_email_groups_credentials_by_value_and_never_shows_one() {
         use super::super::ci_exposure::{credentials, find_secrets};
         let value: String = "k9".repeat(10);
         let a = find_secrets(".gitlab-ci.yml", &format!("variables:\n  STORE_PASSWORD: {value}\n"));
@@ -1244,12 +1356,24 @@ mod tests {
         let mut gone = item("acme/web", ".gitlab-ci.yml · WEBHOOK_TOKEN", "active", "HIGH", true, "2024-10-07");
         gone.ecosystem = "CI secret".into();
         let d = Diff { previous_date: Some("2024-10-14".into()), fixed: vec![(gone, None)], ..Default::default() };
-        let html = render_email(&m, &d, true);
+        let html = render_ci_email(&m, &d);
+        assert!(!render_email(&m, &d, true).contains("STORE_PASSWORD"), "the dependency email carries none of it");
         assert!(html.contains("1 distinct credentials in 2 places, 1 of them live"));
         assert!(html.contains("STORE_PASSWORD, UPLOAD_PASSWORD"));
         assert!(html.contains("same value in 2 places across 2 repos — one rotation"));
-        assert!(html.contains("WEBHOOK_TOKEN no longer in the file — rotate it"));
+        assert!(html.contains("No longer in the file") && html.contains("WEBHOOK_TOKEN"));
+        assert_eq!(ci_subject("acme", &d, 1), "CI credentials — acme: nothing new live · 1 live · 1 removed");
         assert!(!html.contains(&value), "no credential value reaches the email");
+    }
+
+    #[test]
+    fn snapshots_from_before_the_split_do_not_report_ci_literals_as_fixed() {
+        let mut ci = item("acme/app", ".gitlab-ci.yml · DEPLOY_PASSWORD", "active", "HIGH", true, "2024-10-07");
+        ci.ecosystem = CI_LITERAL.into();
+        let old = snap("2024-10-14", vec![ci, item("acme/app", "x", "1", "HIGH", true, "2024-10-07")]);
+        let prev = dependency_previous(Some(&serde_json::to_string(&old).unwrap())).unwrap();
+        let d = diff(Some(&prev), vec![item("acme/app", "x", "1", "HIGH", true, "2024-10-21")], &old.scope, &scanned(&["acme/app"]));
+        assert!(d.fixed.is_empty(), "a CI literal moved to its own email is not a fix");
     }
 
     #[test]

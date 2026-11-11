@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.9.0] - 2026-11-11
+
+### Changed
+
+- Credentials written into CI files are a separate email, no longer part of the
+  dependency email: `--ci-out`, `--ci-previous` and `--ci-snapshot-out` on
+  `--dependency-audit`, with their own snapshot and subject (`CI credentials — …:
+  baseline | N new live | nothing new live · N live`). A previous dependency
+  snapshot that still holds them does not report them as fixed (ADR 079).
+
 ## [2.8.0] - 2026-11-11
 
 ### Added

@@ -410,13 +410,20 @@ snapshot, repositories ranked by exposure, and coverage gaps. The body leaves ou
 full finding list (Gmail clips bodies over ~102 KB); `--full-out` has everything, for
 the attachment. The snapshot carries the subject line and is next week's `--previous`.
 
-Besides package advisories and end-of-life infrastructure, the email reports
-**credentials written into CI files** (ADR 077): literal passwords and tokens in
+Besides package advisories and end-of-life infrastructure, the same run reports
+**credentials written into CI files** (ADR 077) as a **separate email** (ADR 079):
+`--ci-out ci.html` writes it, `--ci-previous` / `--ci-snapshot-out` give it its own
+week-over-week memory, and its subject sits in that snapshot. It is meant for the
+few people who rotate credentials, not the dependency list, so the dependency email
+carries none of it. It covers literal passwords and tokens in
 `.gitlab-ci.yml` and the CI YAML under `.gitlab/` or `ci/` — assignments, auth
 headers, `--password` flags, `user:password@` URLs and well-known key formats. Values
 are never shown: file, line, key and length only. A live one is HIGH and counts as
 new and urgent the week it appears; a commented-out one is MEDIUM (it is still in
 history). The remedy is rotation first, then a masked, protected CI variable.
+Its subject has the same three forms as the dependency one (`baseline`,
+`N new live`, `nothing new live`), so a mid-week job can send it only when a new
+live one appears.
 
 They are listed **one row per credential, not per line** (ADR 078): a value copied
 into several files or repositories is one rotation, so the email names it once with
