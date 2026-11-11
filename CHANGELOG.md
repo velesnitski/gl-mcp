@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-11-11
+
+### Added
+
+- **Secrets written into CI files** (ADR 077). `audit_ci_security` now reads the
+  root CI file and its local includes for literal credentials: secret-named
+  assignments, auth headers, `--password`-style flags, `user:password@` URLs and
+  well-known key formats; commented-out ones count, one level lower. References
+  (`$NAME`, `Bearer $TOKEN`), placeholders and paths are not reported. Values are
+  never shown — file, line, key and length only.
+- The same check runs in `audit_dependencies` and the weekly email: each credential
+  is an item tracked as new / fixed / open; a live one is urgent, so it trips
+  mid-week alerts.
+
 ## [2.6.0] - 2026-11-11
 
 ### Added

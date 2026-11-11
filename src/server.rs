@@ -2336,7 +2336,7 @@ impl GlMcpServer {
     }
 
     #[tool(
-        description = "Audit CI configuration for exposure across a project or group: secret-shaped CI variables GitLab would not redact from a job log, CI_DEBUG_TRACE left on, floating image tags that change the build environment with no diff, and unpinned remote downloads executed inside CI. Reports variable NAMES and locations only — values are never read or returned."
+        description = "Audit CI configuration for exposure across a project or group: credentials written into CI files (the root file and its local includes — passwords, tokens, auth headers, URL credentials, known key formats; commented-out ones too), secret-shaped CI variables GitLab would not redact from a job log, CI_DEBUG_TRACE left on, floating image tags that change the build environment with no diff, and unpinned remote downloads executed inside CI. Reports names, locations and value lengths only — values are never returned."
     )]
     async fn audit_ci_security(
         &self,

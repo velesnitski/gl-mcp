@@ -3,6 +3,7 @@
 //! Mirrors yt-mcp: WRITE_TOOLS frozenset, read-only mode, disabled tools.
 
 pub mod adoption;
+pub mod ci_exposure;
 pub mod commits;
 pub mod dep_report;
 pub mod dependencies;

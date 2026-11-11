@@ -133,6 +133,37 @@ pub(crate) fn items_from_infra(infra: &[super::infra::InfraFinding], today: &str
         .collect()
 }
 
+/// Credentials written into CI files (ADR 077), as items: they get the same new /
+/// fixed / open-for-N-weeks treatment as packages. The key omits the line number, so
+/// an edit above the secret does not make it "new"; commenting it out does change
+/// it (active → commented), which reads as one fixed and one new, lower item.
+pub(crate) fn items_from_ci_exposure(scans: &[super::dependencies::RepoScan], today: &str) -> Vec<Item> {
+    let mut out: Vec<Item> = Vec::new();
+    for s in scans {
+        for h in &s.ci_exposure {
+            let key = if h.key == "-" { h.kind.describe() } else { h.key.clone() };
+            let package = format!("{} · {key}", h.path);
+            let version = if h.commented { "commented out" } else { "active" }.to_string();
+            if out.iter().any(|i| i.repo == s.path && i.package == package && i.version == version) {
+                continue;
+            }
+            out.push(Item {
+                repo: s.path.clone(),
+                ecosystem: "CI secret".into(),
+                package,
+                version,
+                severity: if h.commented { "MEDIUM" } else { "HIGH" }.into(),
+                advisories: vec!["credential written into a CI file".into()],
+                runtime: true,
+                build: false,
+                fix: format!("line {}: rotate it, then use a masked, protected CI variable", h.line),
+                first_seen: today.to_string(),
+            });
+        }
+    }
+    out
+}
+
 /// What changed since the previous run.
 #[derive(Debug, Default)]
 pub(crate) struct Diff {
@@ -391,6 +422,8 @@ pub(crate) struct ReportMeta<'a> {
     /// Infrastructure files read, and private-registry images not checked.
     pub infra_files: usize,
     pub internal_images: usize,
+    /// CI definition files read for credentials written into them (ADR 077).
+    pub ci_files: usize,
     pub warnings: &'a str,
 }
 
@@ -416,6 +449,7 @@ impl<'a> ReportMeta<'a> {
             unsupported,
             declared_only,
             infra_files: audit.scans.iter().map(|s| s.infra_files).sum(),
+            ci_files: audit.scans.iter().map(|s| s.ci_files).sum(),
             internal_images: audit.scans.iter().map(|s| s.internal_images).sum(),
             warnings: &audit.warnings,
         }
@@ -667,6 +701,12 @@ pub(crate) fn render_email(meta: &ReportMeta, d: &Diff, full: bool) -> String {
             meta.infra_files, meta.internal_images
         ));
     }
+    if meta.ci_files > 0 {
+        h.push_str(&format!(
+            "<li><b>CI definitions</b>: {} files read for credentials written into them. Secrets kept in CI variables are not visible here; their masking is checked by the CI security audit.</li>",
+            meta.ci_files
+        ));
+    }
     h.push_str("<li>Packages: only versions pinned in lockfiles are checked. Infrastructure: end of life, not individual image CVEs — OS packages inside images need an image scanner. Code you wrote is out of scope.</li></ul>");
 
     // Appendix
@@ -728,6 +768,7 @@ pub async fn weekly_report(
     scanned.extend(audit.infra.iter().filter(|f| f.files.is_empty()).map(|f| f.repo.clone()));
     let mut items = items_from(&audit.findings, today);
     items.extend(items_from_infra(&audit.infra, today));
+    items.extend(items_from_ci_exposure(&audit.scans, today));
     let d = diff(
         previous.as_ref(),
         items,
@@ -975,6 +1016,7 @@ mod tests {
             unsupported: vec!["acme/ios".into()],
             declared_only: vec!["acme/android".into()],
             infra_files: 3,
+            ci_files: 0,
             internal_images: 1,
             warnings: "",
         }
@@ -1093,6 +1135,33 @@ mod tests {
         let prev = snap("2024-10-26", items);
         let d = diff(Some(&prev), vec![], "group `acme`", &scanned(&["acme/web"]));
         assert_eq!(d.fixed.len(), 1);
+    }
+
+    #[test]
+    fn ci_exposure_become_items_keyed_without_the_line() {
+        use super::super::ci_exposure::{SecretHit, SecretKind};
+        let hit = |line: usize, commented: bool| SecretHit {
+            path: ".gitlab-ci.yml".into(),
+            line,
+            key: "DEPLOY_PASSWORD".into(),
+            kind: SecretKind::Assignment,
+            commented,
+            len: 12,
+        };
+        let scan = |hits: Vec<SecretHit>| super::super::dependencies::RepoScan {
+            path: "acme/app".into(),
+            ci_exposure: hits,
+            ..Default::default()
+        };
+        let items = items_from_ci_exposure(&[scan(vec![hit(30, false), hit(30, false)])], "2024-10-07");
+        assert_eq!(items.len(), 1, "one key, one item");
+        assert_eq!((items[0].ecosystem.as_str(), items[0].package.as_str(), items[0].version.as_str()), ("CI secret", ".gitlab-ci.yml · DEPLOY_PASSWORD", "active"));
+        assert!(is_urgent(&items[0]), "a live secret in CI is urgent: it trips the mid-week alert");
+        // Moving the line keeps the key; commenting it out lowers it.
+        assert_eq!(items_from_ci_exposure(&[scan(vec![hit(44, false)])], "x")[0].key(), items[0].key());
+        let c = &items_from_ci_exposure(&[scan(vec![hit(30, true)])], "x")[0];
+        assert_eq!((c.version.as_str(), c.severity.as_str()), ("commented out", "MEDIUM"));
+        assert!(!is_urgent(c));
     }
 
     #[test]

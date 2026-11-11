@@ -806,6 +806,8 @@ impl Osv {
 /// Lockfiles read per repository at most; monorepos beyond this are reported as capped.
 const MAX_LOCKFILES_PER_REPO: usize = 12;
 /// Infrastructure files read per repository at most.
+/// CI definition files read per repository for secrets (ADR 077).
+const MAX_CI_FILES_PER_REPO: usize = 10;
 const MAX_INFRA_FILES_PER_REPO: usize = 40;
 /// Tree pages (100 entries each) walked per repository.
 const TREE_PAGES: usize = 20;
@@ -839,6 +841,10 @@ pub(crate) struct RepoScan {
     pub unpinned_images: Vec<(String, String)>,
     /// Images from private registries: covered through their own Dockerfiles.
     pub internal_images: usize,
+    /// CI definition files read for secrets written into them (ADR 077).
+    pub ci_files: usize,
+    /// Literal credentials in those files: location, key and length, never a value.
+    pub ci_exposure: Vec<super::ci_exposure::SecretHit>,
 }
 
 /// Lockfiles worth reading, in the order to read them. A `go.sum` next to a `go.mod`
@@ -909,6 +915,10 @@ async fn scan_repo(client: &GitLabClient, path: &str, internal_host: &str) -> Re
             continue;
         };
         scan.infra_files += 1;
+        if super::ci_exposure::is_ci_file(file) {
+            scan.ci_files += 1;
+            scan.ci_exposure.extend(super::ci_exposure::find_secrets(file, &text));
+        }
         let images = match kind {
             infra::InfraKind::Dockerfile => infra::dockerfile_images(&text),
             infra::InfraKind::Yaml => infra::yaml_images(&text),
@@ -924,6 +934,22 @@ async fn scan_repo(client: &GitLabClient, path: &str, internal_host: &str) -> Re
                 infra::ImageRef::Internal => scan.internal_images += 1,
                 infra::ImageRef::Unknown => {}
             }
+        }
+    }
+    // CI files the infrastructure pass did not read (included files under ci/ or
+    // .gitlab/, or a root file beyond its cap): read for secrets only.
+    let read: BTreeSet<&str> = infra_files.iter().map(|(p, _)| p.as_str()).collect();
+    for file in blobs
+        .iter()
+        .filter(|b| super::ci_exposure::is_ci_file(b) && !read.contains(b.as_str()))
+        .take(MAX_CI_FILES_PER_REPO.saturating_sub(scan.ci_files))
+    {
+        if let Ok(text) = client
+            .get_text(&format!("/projects/{enc}/repository/files/{}/raw", urlencoding::encode(file)), &[("ref", "HEAD")])
+            .await
+        {
+            scan.ci_files += 1;
+            scan.ci_exposure.extend(super::ci_exposure::find_secrets(file, &text));
         }
     }
     let mut found = select_lockfiles(&blobs);
@@ -1632,6 +1658,30 @@ pub(crate) fn render_dependency_audit(
                 f.version,
                 f.verdict.note.replace('|', "/"),
                 f.verdict.fix
+            ));
+        }
+    }
+
+    let secrets: Vec<(&str, &super::ci_exposure::SecretHit)> =
+        scans.iter().flat_map(|s| s.ci_exposure.iter().map(move |h| (s.path.as_str(), h))).collect();
+    if !secrets.is_empty() {
+        out.push(String::new());
+        out.push("## Secrets in CI files".to_string());
+        out.push(String::new());
+        out.push("Credentials written into CI definitions: readable by everyone with access to the repository and kept in git history. Values are never shown. Rotate first, then move each to a masked, protected CI variable.".to_string());
+        out.push(String::new());
+        out.push("| Severity | Where | Key | How | Length |".to_string());
+        out.push("|----------|-------|-----|-----|--------|".to_string());
+        for (repo, h) in secrets {
+            out.push(format!(
+                "| {} | {repo}:{}:{} | {} | {}{} | {} |",
+                if h.commented { "MEDIUM" } else { "HIGH" },
+                h.path,
+                h.line,
+                if h.key == "-" { "—" } else { &h.key },
+                h.kind.describe(),
+                if h.commented { " (commented out)" } else { "" },
+                h.len
             ));
         }
     }

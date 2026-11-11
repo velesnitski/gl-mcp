@@ -216,7 +216,7 @@ For HTTP transport: `gl-mcp --transport http --port 8000` (loopback only; see Tr
 | `delete_pipeline_schedule` | Delete a schedule |
 | `set_pipeline_schedule_variable` | Create or update a schedule variable (value never echoed) |
 | `delete_pipeline_schedule_variable` | Delete a schedule variable |
-| `audit_ci_security` | CI exposure audit: unredactable secret-shaped variables, debug tracing, floating images, unpinned remote scripts — names only, never values |
+| `audit_ci_security` | CI exposure audit: credentials written into CI files (root + local includes, commented-out ones too), unredactable secret-shaped variables, debug tracing, floating images, unpinned remote scripts — names, locations and lengths only, never values |
 | `audit_dependencies` | Known vulnerabilities in pinned dependencies across a project or group: lockfiles (incl. `go.mod`, Swift `Package.resolved`, Gradle catalogs) read over the API, matched against OSV.dev; one row per package with worst severity, merged advisories, the version that fixes them all, runtime vs dev, and what could not be audited. `min_severity`, `summary_only` |
 | `get_vulnerability` | One advisory by id (CVE, GHSA, RUSTSEC, GO, PYSEC): severity, affected packages, fixed versions, references |
 
@@ -409,6 +409,14 @@ gl-mcp --dependency-audit GROUP [--previous last.json] [--snapshot-out now.json]
 snapshot, repositories ranked by exposure, and coverage gaps. The body leaves out the
 full finding list (Gmail clips bodies over ~102 KB); `--full-out` has everything, for
 the attachment. The snapshot carries the subject line and is next week's `--previous`.
+
+Besides package advisories and end-of-life infrastructure, the email reports
+**credentials written into CI files** (ADR 077): literal passwords and tokens in
+`.gitlab-ci.yml` and the CI YAML under `.gitlab/` or `ci/` — assignments, auth
+headers, `--password` flags, `user:password@` URLs and well-known key formats. Values
+are never shown: file, line, key and length only. A live one is HIGH and counts as
+new and urgent the week it appears; a commented-out one is MEDIUM (it is still in
+history). The remedy is rotation first, then a masked, protected CI variable.
 
 `GROUP` may list several groups (`a,b`), or be `*` for every top-level group the
 token can see, with `-name` to exclude one (`'*,-sandbox'`).

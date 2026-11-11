@@ -202,6 +202,33 @@ pub(crate) fn audit_ci_file(project: &str, path: &str, content: &str) -> Vec<Fin
     out
 }
 
+/// D4 — a credential written into a CI file (ADR 077).
+///
+/// Not a CI variable at all, so the variable checks never see it: anyone who can read
+/// the repository has it, so does every clone, and deleting the line leaves it in git
+/// history. The finding names the key and the line; the value is never read out.
+pub(crate) fn secret_findings(project: &str, hits: &[super::ci_exposure::SecretHit]) -> Vec<Finding> {
+    hits.iter()
+        .map(|h| {
+            let what = if h.key == "-" { h.kind.describe() } else { format!("`{}`: {}", h.key, h.kind.describe()) };
+            Finding {
+                severity: if h.commented { Severity::Medium } else { Severity::High },
+                code: "CI-SECRET",
+                where_: format!("{project} → {}:{}", h.path, h.line),
+                detail: if h.commented {
+                    format!("{what} ({} chars), commented out — no longer used, but still in the file and in git history.", h.len)
+                } else {
+                    format!("{what} ({} chars) — readable by everyone with access to the repository, and kept in its history.", h.len)
+                },
+                fix: "Rotate it first: deleting the line does not remove it from history or from clones. Then keep it in a masked, protected CI variable (file-type if multi-line) and reference it as $NAME.".to_string(),
+            }
+        })
+        .collect()
+}
+
+/// Local includes followed from the root CI file, at most this many.
+const MAX_CI_INCLUDES: usize = 10;
+
 /// One project's audit: its findings, and whether its CI variables could be read.
 struct ProjectAudit {
     findings: Vec<Finding>,
@@ -229,17 +256,29 @@ async fn audit_project(client: &GitLabClient, path: &str) -> Result<ProjectAudit
         findings.extend(audit_variables(path, vars));
     }
 
-    // The CI definition is read raw; a missing file simply means nothing to check.
-    match client
-        .get_text(
-            &format!("/projects/{enc}/repository/files/.gitlab-ci.yml/raw"),
-            &[("ref", "HEAD")],
-        )
-        .await
-    {
-        Ok(text) => findings.extend(audit_ci_file(path, ".gitlab-ci.yml", &text)),
-        Err(e) if e.is_user_error() => {}
-        Err(e) => return Err(e),
+    // The CI definition is read raw, with the local files it includes; a missing
+    // file simply means nothing to check.
+    let mut queue = vec![".gitlab-ci.yml".to_string()];
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(file) = queue.pop() {
+        if !seen.insert(file.clone()) || seen.len() > MAX_CI_INCLUDES + 1 {
+            continue;
+        }
+        match client
+            .get_text(
+                &format!("/projects/{enc}/repository/files/{}/raw", urlencoding::encode(&file)),
+                &[("ref", "HEAD")],
+            )
+            .await
+        {
+            Ok(text) => {
+                findings.extend(audit_ci_file(path, &file, &text));
+                findings.extend(secret_findings(path, &super::ci_exposure::find_secrets(&file, &text)));
+                queue.extend(super::ci_exposure::local_includes(&text));
+            }
+            Err(e) if e.is_user_error() => {}
+            Err(e) => return Err(e),
+        }
     }
     Ok(ProjectAudit { findings, variables_readable: vars.is_some() })
 }

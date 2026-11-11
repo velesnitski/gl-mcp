@@ -39,6 +39,7 @@ src/
     ├── reports.rs       # HTML reports: dev, team, project (with auto-observations, print CSS)
     ├── lint.rs          # validate_commit/mr/mr_changes, analyze_file/project, validate_project_commits
     ├── dependencies.rs  # audit_dependencies / get_vulnerability: lockfile parsers, advisory merge, upgrade targets, OSV.dev
+    ├── ci_exposure.rs    # literal credentials in CI files (ADR 077): pure detector, never keeps a value
     ├── infra.rs         # infrastructure end of life: image/Terraform parsers, endoflife.date, GitLab self-check
     ├── dep_report.rs    # weekly dependency-CVE email (--dependency-audit CLI): snapshot, diff, exposure ranking
     ├── encoding.rs      # base64 file payload decoding (base64 crate; malformed = error)
