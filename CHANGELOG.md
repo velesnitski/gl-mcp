@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.2] - 2026-11-11
+
+### Fixed
+
+- Release builds: the Intel macOS binary is cross-compiled on the current macOS
+  runner. The previous runner image was retired, which left 2.7.0 and 2.7.1 without
+  published binaries; 2.7.2 carries their changes (ADR 071 addendum).
+
 ## [2.7.1] - 2026-11-11
 
 ### Fixed

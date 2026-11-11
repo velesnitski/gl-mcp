@@ -19,7 +19,9 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: gl-mcp-aarch64-macos
-          - os: macos-14
+          # Intel macOS is cross-compiled on the Apple-silicon runner: GitHub
+          # retires the older Intel-capable images (ADR 071 addendum).
+          - os: macos-latest
             target: x86_64-apple-darwin
             artifact: gl-mcp-x86_64-macos
           - os: windows-latest

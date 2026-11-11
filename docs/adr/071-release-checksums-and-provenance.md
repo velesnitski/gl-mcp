@@ -39,3 +39,12 @@ Releases had neither.
 - Syncing consumers should verify the checksum always, and the attestation where
   the `gh` CLI and Sigstore are reachable.
 - Releases before v2.1.1 have neither file. Consumers start at v2.1.1.
+
+## Addendum (2026-11-11): Intel macOS built on the Apple-silicon runner
+
+The Intel macOS binary was built on a runner image GitHub has since retired; its
+job was cancelled before starting, the release step was skipped, and two tags
+(2.7.0, 2.7.1) were left without published binaries. It is now cross-compiled for
+`x86_64-apple-darwin` on `macos-latest`, which the Apple toolchain supports
+natively. No other target changes. A tagged release that publishes nothing should
+be noticed: the `release` job is skipped, not failed, when a build is cancelled.
