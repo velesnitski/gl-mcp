@@ -9,6 +9,10 @@
 //!                                       # report to stdout and exit. Same engine
 //!                                       # as the generate_ai_adoption_report MCP
 //!                                       # tool — built for cron/CI consumers.
+//!   gl-mcp tools [--json]               # headless (ADR 076): list the tools
+//!   gl-mcp run <tool> [key=value ...] [--args JSON|-] [--json] [--timeout 5m]
+//!                                       # headless: call one tool, print the result,
+//!                                       # exit 0 ok / 1 tool error / 2 usage error
 //!   gl-mcp --dependency-audit GROUP|'*' [--previous last.json] [--snapshot-out now.json] [--full-out full.html]
 //!          [--max-projects N] [--gl-instance NAME] > report.html
 //!                                       # one-shot: weekly dependency-CVE email,
@@ -29,6 +33,30 @@ async fn main() -> anyhow::Result<()> {
     if std::env::args().any(|a| a == "--version" || a == "-V") {
         println!("{}", env!("CARGO_PKG_VERSION"));
         return Ok(());
+    }
+
+    // Headless mode (ADR 076): `gl-mcp tools` / `gl-mcp run <tool> ...` call one
+    // tool through the in-process server and exit 0 / 1 (tool error) / 2 (usage).
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    if gl_mcp::headless::is_headless(&argv) {
+        logging::setup_logging_at("gl_mcp=warn");
+        logging::setup_sentry();
+        let config = match Config::from_env() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("gl-mcp: configuration error: {e} (set GITLAB_URL and GITLAB_TOKEN)");
+                std::process::exit(gl_mcp::headless::EXIT_USAGE);
+            }
+        };
+        let code = gl_mcp::headless::run(
+            &argv,
+            config,
+            &mut std::io::stdin(),
+            &mut std::io::stdout(),
+            &mut std::io::stderr(),
+        )
+        .await;
+        std::process::exit(code);
     }
 
     logging::setup_logging();

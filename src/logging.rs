@@ -55,11 +55,16 @@ pub fn instance_id() -> &'static str {
 
 /// Initialize tracing subscriber (JSON to stderr).
 pub fn setup_logging() {
+    setup_logging_at("gl_mcp=info");
+}
+
+/// Logging to stderr with `default` when `RUST_LOG` is unset. Headless runs use
+/// a quieter default: a scheduler wants only the result, on stdout.
+pub fn setup_logging_at(default: &str) {
     use tracing_subscriber::EnvFilter;
     use tracing_subscriber::fmt;
 
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("gl_mcp=info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default));
 
     fmt()
         .json()

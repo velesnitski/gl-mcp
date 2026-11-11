@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-11-11
+
+### Added
+
+- **Headless mode** (ADR 076): `gl-mcp tools [--json]` and
+  `gl-mcp run <tool> [key=value ...] [--args JSON|-] [--json] [--timeout 5m]` call
+  any tool once from the command line, through the real server and MCP protocol
+  in-process — same gating (`GITLAB_READ_ONLY`, `DISABLED_TOOLS`,
+  `GITLAB_TOOLSET`), no per-tool wiring. Arguments are typed by each tool's schema;
+  unknown or missing keys are refused with the valid ones listed. `--json` prints
+  `{tool, args, ok, text}`. Exit codes 0 / 1 (tool error) / 2 (usage).
+
 ## [2.5.0] - 2026-11-04
 
 ### Added

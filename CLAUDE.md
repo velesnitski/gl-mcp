@@ -14,7 +14,8 @@ UPDATE_GOLDEN=1 cargo test --lib  # regenerate tests/golden/ after an intended r
 
 ```
 src/
-├── main.rs          # Entry point: stdio (default) or HTTP transport
+├── main.rs          # Entry point: stdio (default) or HTTP transport; `run`/`tools` → headless
+├── headless.rs      # Headless mode (ADR 076): `gl-mcp run <tool> key=value…` via in-process MCP
 ├── lib.rs           # Library crate (for tests)
 ├── server.rs        # rmcp tool registration, tool_call! + write_guard! macros
 ├── params.rs        # All parameter structs (serde + schemars)
@@ -70,6 +71,12 @@ src/
 | `ENDOFLIFE_API_URL` | no | endoflife.date mirror for infrastructure end-of-life checks (default public endoflife.date/api) |
 | `GL_MCP_HTTP_TOKEN` | HTTP off loopback | Bearer token for `--transport http`; mandatory unless `--host` is loopback (default) |
 | `GL_MCP_ALLOWED_HOSTS` | no | HTTP off loopback: comma-separated `Host` values to accept |
+
+## Headless mode
+
+`gl-mcp tools [--json]` and `gl-mcp run <tool> [key=value ...] [--args JSON|-] [--json] [--timeout 5m]`
+call the real server through an in-process MCP client (ADR 076): no per-tool wiring,
+same gating. Exit 0 ok / 1 tool error / 2 usage error. Tests: `tests/headless.rs`.
 
 ## Adding a New Tool
 

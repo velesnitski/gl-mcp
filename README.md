@@ -370,6 +370,33 @@ listener is guarded:
 
 ### One-shot CLI reports (cron/CI)
 
+### Headless: any tool from the command line
+
+For cron jobs, CI steps and bots: call one tool and exit, without an MCP client.
+
+```bash
+gl-mcp tools                                   # every tool, one per line (--json: full schemas)
+gl-mcp run list_pipelines project_id=g/p status=failed per_page=5
+gl-mcp run get_pipeline project_id=g/p pipeline_id=1234 --json
+echo '{"project_id":"g/p","ref_name":"main"}' | gl-mcp run lint_ci_config --args -
+```
+
+- `key=value` pairs are typed by the tool's schema (integers, booleans, JSON for
+  arrays and objects); an unknown key or a missing required one is refused, with the
+  valid keys listed.
+- `--json` prints one object: `{"tool", "args", "ok", "text"}`. `--timeout` (default
+  `5m`) bounds the call.
+- Exit codes: `0` success, `1` the tool reported an error, `2` usage or configuration
+  error. Logs go to stderr; stdout holds only the result.
+- The same gating as a session applies: with `GITLAB_READ_ONLY=1` write tools do not
+  exist, and `DISABLED_TOOLS` / `GITLAB_TOOLSET` prune the list.
+
+The call goes through the real server and MCP protocol in-process, so a tool is
+available headless the day it is added. Same interface as the Slack MCP server's
+headless mode.
+
+### Report flags
+
 Same engines as the MCP tools, printed to stdout for scheduled email jobs:
 
 ```bash
