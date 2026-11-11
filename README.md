@@ -418,6 +418,13 @@ are never shown: file, line, key and length only. A live one is HIGH and counts 
 new and urgent the week it appears; a commented-out one is MEDIUM (it is still in
 history). The remedy is rotation first, then a masked, protected CI variable.
 
+They are listed **one row per credential, not per line** (ADR 078): a value copied
+into several files or repositories is one rotation, so the email names it once with
+every place it is written. Copies are matched within a single run by hashing each
+value with a key drawn at random when the process starts and never stored, so no
+fingerprint outlives the run or can be compared with anything else. When a line
+disappears the email says so and asks for rotation: git history still has the value.
+
 `GROUP` may list several groups (`a,b`), or be `*` for every top-level group the
 token can see, with `-name` to exclude one (`'*,-sandbox'`).
 

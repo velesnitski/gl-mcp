@@ -1670,11 +1670,24 @@ pub(crate) fn render_dependency_audit(
         out.push(String::new());
         out.push("Credentials written into CI definitions: readable by everyone with access to the repository and kept in git history. Values are never shown. Rotate first, then move each to a masked, protected CI variable.".to_string());
         out.push(String::new());
-        out.push("| Severity | Where | Key | How | Length |".to_string());
-        out.push("|----------|-------|-----|-----|--------|".to_string());
+        let creds = super::ci_exposure::credentials(secrets.iter().copied());
+        let shared = creds.iter().filter(|c| c.places.len() > 1).count();
+        out.push(format!(
+            "{} distinct credentials in {} places{}. Rows with the same # hold the same value: one rotation covers them all.",
+            creds.len(),
+            secrets.len(),
+            if shared > 0 { format!(", {shared} copied into more than one place") } else { String::new() }
+        ));
+        out.push(String::new());
+        out.push("| # | Severity | Where | Key | How | Length |".to_string());
+        out.push("|---|----------|-------|-----|-----|--------|".to_string());
         for (repo, h) in secrets {
+            let n = creds
+                .iter()
+                .position(|c| c.places.iter().any(|p| p.0 == repo && p.1 == h.path && p.2 == h.line))
+                .map_or(0, |i| i + 1);
             out.push(format!(
-                "| {} | {repo}:{}:{} | {} | {}{} | {} |",
+                "| {n} | {} | {repo}:{}:{} | {} | {}{} | {} |",
                 if h.high() { "HIGH" } else { "MEDIUM" },
                 h.path,
                 h.line,

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-11-11
+
+### Added
+
+- Credentials written into CI files are grouped by value: the weekly email lists
+  each distinct credential once, with every place it is written and whether any copy
+  is live, so a value copied into several repositories is one rotation. The
+  `audit_dependencies` table numbers rows so copies share a number. Copies are
+  matched with a per-process random hash key that is never stored (ADR 078).
+- A CI credential that disappears is reported as "no longer in the file — rotate it
+  if that has not been done", not as fixed: git history keeps the value.
+
 ## [2.7.2] - 2026-11-11
 
 ### Fixed

@@ -8,7 +8,13 @@
 //! was assigned to, how it was written, whether the line is commented out, and the
 //! value's length. A scanner that prints the secrets it finds into a report or a
 //! logged transcript has reproduced the leak it reports.
+//!
+//! To tell one credential copied into several files from several credentials, a hit
+//! also carries a fingerprint: the value hashed with a key drawn at random when the
+//! process starts. Equal values compare equal within one run; the key dies with the
+//! process, so a fingerprint means nothing outside it and is never written anywhere.
 
+use std::hash::{BuildHasher, RandomState};
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -55,6 +61,8 @@ pub(crate) struct SecretHit {
     pub commented: bool,
     /// Length of the value. The value itself is never kept.
     pub len: usize,
+    /// Equal for equal values within this process only (see the module docs).
+    pub fingerprint: u64,
 }
 
 /// CI definition files: the root file and the conventional homes of included files.
@@ -132,8 +140,12 @@ fn unquote(value: &str) -> &str {
 /// else is part of a literal (a password may contain one), not a reference.
 static REFERENCE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\$(?:\{?[A-Za-z_]|\()").unwrap());
 
-fn value_len(value: &str) -> usize {
-    unquote(value).chars().count()
+/// Drawn once per process and never stored: fingerprints cannot be compared across
+/// runs or reversed by anyone who sees one.
+static RUN_KEY: LazyLock<RandomState> = LazyLock::new(RandomState::new);
+
+fn fingerprint(value: &str) -> u64 {
+    RUN_KEY.hash_one(unquote(value))
 }
 
 /// A value: double-quoted (escapes allowed, `\"…\"` too), single-quoted, or bare.
@@ -187,40 +199,86 @@ pub(crate) fn find_secrets(path: &str, content: &str) -> Vec<SecretHit> {
         let commented = trimmed.starts_with('#');
         let line = trimmed.trim_start_matches('#').trim_start();
         let n = i + 1;
-        let mut push = |key: &str, kind: SecretKind, len: usize| {
+        let mut push = |key: &str, kind: SecretKind, value: &str| {
             if !out.iter().any(|h| h.line == n && h.key == key) {
-                out.push(SecretHit { path: path.to_string(), line: n, key: key.to_string(), kind, commented, len });
+                let (len, fingerprint) = (unquote(value).chars().count(), fingerprint(value));
+                out.push(SecretHit { path: path.to_string(), line: n, key: key.to_string(), kind, commented, len, fingerprint });
             }
         };
-        for c in KNOWN.iter().filter_map(|(what, re)| re.find(line).map(|m| (*what, m.len()))) {
-            push("-", SecretKind::KnownFormat(c.0), c.1);
+        for (what, m) in KNOWN.iter().filter_map(|(what, re)| re.find(line).map(|m| (*what, m))) {
+            push("-", SecretKind::KnownFormat(what), m.as_str());
         }
         for c in HEADER.captures_iter(line) {
             if !harmless(&c[2]) {
-                push(&c[1], SecretKind::Header, value_len(&c[2]));
+                push(&c[1], SecretKind::Header, &c[2]);
             }
         }
         for c in FLAG.captures_iter(line) {
             if !harmless(&c[2]) {
-                push(&c[1], SecretKind::Flag, value_len(&c[2]));
+                push(&c[1], SecretKind::Flag, &c[2]);
             }
         }
         for c in URL_CRED.captures_iter(line) {
             if !harmless(&c[2]) {
-                push("url", SecretKind::UrlCredential, value_len(&c[2]));
+                push("url", SecretKind::UrlCredential, &c[2]);
             }
         }
         for c in YAML_KV.captures_iter(line).chain(SHELL_KV.captures_iter(line)) {
             // A header written as `Authorization: …` is reported once, as a header.
             if secret_key(&c[1]) && !harmless(&c[2]) && !HEADER.is_match(line) {
                 let kind = if service_database_key(&c[1]) { SecretKind::ServiceDatabase } else { SecretKind::Assignment };
-                push(&c[1], kind, value_len(&c[2]));
+                push(&c[1], kind, &c[2]);
             }
         }
     }
     // A bare credential on a line already reported under its key adds nothing.
     let keyed: Vec<usize> = out.iter().filter(|h| h.key != "-").map(|h| h.line).collect();
     out.retain(|h| h.key != "-" || !keyed.contains(&h.line));
+    out
+}
+
+/// One credential and every place it is written: the same value in several files is
+/// one rotation, not several.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Credential {
+    /// Names it was assigned to, sorted; "-" never appears (a bare credential is
+    /// named by how it was recognised).
+    pub keys: Vec<String>,
+    /// (repository, file, line, commented out), sorted.
+    pub places: Vec<(String, String, usize, bool)>,
+    /// At least one copy is a live (HIGH) line.
+    pub live: bool,
+}
+
+/// Group hits by value within this run: live credentials first, then the most copied.
+pub(crate) fn credentials<'a>(hits: impl IntoIterator<Item = (&'a str, &'a SecretHit)>) -> Vec<Credential> {
+    let mut by_value: Vec<(u64, Credential)> = Vec::new();
+    for (repo, h) in hits {
+        let key = if h.key == "-" { h.kind.describe() } else { h.key.clone() };
+        let i = match by_value.iter().position(|(f, _)| *f == h.fingerprint) {
+            Some(i) => i,
+            None => {
+                by_value.push((h.fingerprint, Credential { keys: Vec::new(), places: Vec::new(), live: false }));
+                by_value.len() - 1
+            }
+        };
+        let c = &mut by_value[i].1;
+        if !c.keys.contains(&key) {
+            c.keys.push(key);
+        }
+        c.places.push((repo.to_string(), h.path.clone(), h.line, h.commented));
+        c.live |= h.high();
+    }
+    let mut out: Vec<Credential> = by_value
+        .into_iter()
+        .map(|(_, mut c)| {
+            c.keys.sort();
+            c.places.sort();
+            c.places.dedup();
+            c
+        })
+        .collect();
+    out.sort_by(|a, b| (!a.live, std::cmp::Reverse(a.places.len()), &a.places).cmp(&(!b.live, std::cmp::Reverse(b.places.len()), &b.places)));
     out
 }
 
@@ -262,6 +320,20 @@ mod tests {
         assert!(hits.iter().all(|h| h.len == 19), "length is reported, the value is not");
         let debug = format!("{hits:?}");
         assert!(!debug.contains(&pw), "no value is kept anywhere in a hit");
+    }
+
+    #[test]
+    fn one_value_copied_into_several_files_is_one_credential() {
+        let (a, b) = (word(19), "q7".repeat(9));
+        let one = find_secrets(".gitlab-ci.yml", &format!("variables:\n  STORE_PASSWORD: {a}\n  WEBHOOK_TOKEN: {b}\n"));
+        let two = find_secrets("ci/release.yml", &format!("  - export UPLOAD_PASSWORD={a}\n# STORE_PASSWORD: {a}\n"));
+        let creds = credentials(one.iter().map(|h| ("acme/desktop", h)).chain(two.iter().map(|h| ("acme/netkit", h))));
+        assert_eq!(creds.len(), 2, "two distinct values");
+        assert_eq!(creds[0].keys, vec!["STORE_PASSWORD", "UPLOAD_PASSWORD"]);
+        assert_eq!(creds[0].places.len(), 3, "copied three times, rotated once");
+        assert!(creds[0].live && creds[1].live);
+        assert_eq!(creds[1].keys, vec!["WEBHOOK_TOKEN"]);
+        assert!(!format!("{creds:?}").contains(&a), "grouping keeps no value either");
     }
 
     #[test]

@@ -424,6 +424,8 @@ pub(crate) struct ReportMeta<'a> {
     pub internal_images: usize,
     /// CI definition files read for credentials written into them (ADR 077).
     pub ci_files: usize,
+    /// Credentials written into those files, grouped by value (ADR 078).
+    pub ci_credentials: Vec<super::ci_exposure::Credential>,
     pub warnings: &'a str,
 }
 
@@ -450,6 +452,9 @@ impl<'a> ReportMeta<'a> {
             declared_only,
             infra_files: audit.scans.iter().map(|s| s.infra_files).sum(),
             ci_files: audit.scans.iter().map(|s| s.ci_files).sum(),
+            ci_credentials: super::ci_exposure::credentials(
+                audit.scans.iter().flat_map(|s| s.ci_exposure.iter().map(move |h| (s.path.as_str(), h))),
+            ),
             internal_images: audit.scans.iter().map(|s| s.internal_images).sum(),
             warnings: &audit.warnings,
         }
@@ -465,6 +470,60 @@ fn list_short(names: &[String], group: &str, limit: usize) -> String {
     } else {
         shown.join(", ")
     }
+}
+
+/// Credentials written into CI files, one row per value: a value copied into several
+/// files is one rotation. Names and places only; values never reach the report.
+fn ci_credentials_section(creds: &[super::ci_exposure::Credential], g: &str) -> String {
+    const SHOWN: usize = 15;
+    let live = creds.iter().filter(|c| c.live).count();
+    let places: usize = creds.iter().map(|c| c.places.len()).sum();
+    let mut h = format!(
+        r#"<h2 style="{H2}">Credentials written into CI files</h2><div style="{MUTED};margin-bottom:8px">{} distinct credentials in {places} places, {live} of them live. A value copied into several files is one credential: rotate it once at its service, then replace every copy with a masked, protected CI variable. Deleting the line does not retire it — git history keeps it until it is rotated. Values are never read into this report.</div><table style="width:100%;border-collapse:collapse"><tr><th style="{TH}">State</th><th style="{TH}">Name</th><th style="{TH}">Written in</th></tr>"#,
+        creds.len()
+    );
+    for c in creds.iter().take(SHOWN) {
+        let state = if c.live { badge("HIGH") } else { badge("MEDIUM") };
+        let repos: BTreeSet<&str> = c.places.iter().map(|p| p.0.as_str()).collect();
+        let mut where_: Vec<String> = c
+            .places
+            .iter()
+            .take(6)
+            .map(|(repo, path, line, commented)| {
+                format!(
+                    "{} · {}:{line}{}",
+                    esc(&short_repo(repo, g)),
+                    esc(path),
+                    if *commented { " (commented out)" } else { "" }
+                )
+            })
+            .collect();
+        if c.places.len() > 6 {
+            where_.push(format!("and {} more", c.places.len() - 6));
+        }
+        let copies = if c.places.len() > 1 {
+            format!(
+                r#"<div style="{MUTED}">same value in {} places across {} repos — one rotation</div>"#,
+                c.places.len(),
+                repos.len()
+            )
+        } else {
+            String::new()
+        };
+        h.push_str(&format!(
+            r#"<tr><td style="{TD};width:80px">{state}</td><td style="{TD}">{}{copies}</td><td style="{TD}">{}</td></tr>"#,
+            esc(&c.keys.join(", ")),
+            where_.join("<br>")
+        ));
+    }
+    h.push_str("</table>");
+    if creds.len() > SHOWN {
+        h.push_str(&format!(
+            r#"<div style="{MUTED};margin-top:4px">{} more distinct credentials; every location is in the attached list.</div>"#,
+            creds.len() - SHOWN
+        ));
+    }
+    h
 }
 
 /// The email. Pure: the date, the diff and the scan metadata are all inputs.
@@ -592,6 +651,10 @@ pub(crate) fn render_email(meta: &ReportMeta, d: &Diff, full: bool) -> String {
             let mut by_repo: BTreeMap<&str, Vec<String>> = BTreeMap::new();
             for (i, still) in &d.fixed {
                 let what = match still {
+                    _ if i.ecosystem == "CI secret" => format!(
+                        "{} no longer in the file — rotate it if that has not been done: git history still has it",
+                        esc(&i.package)
+                    ),
                     Some(v) => format!(
                         "{} {} → {} (still vulnerable)",
                         esc(&i.package),
@@ -617,6 +680,10 @@ pub(crate) fn render_email(meta: &ReportMeta, d: &Diff, full: bool) -> String {
                 d.carried.len()
             ));
         }
+    }
+
+    if !meta.ci_credentials.is_empty() {
+        h.push_str(&ci_credentials_section(&meta.ci_credentials, g));
     }
 
     // Fix first
@@ -1017,6 +1084,7 @@ mod tests {
             declared_only: vec!["acme/android".into()],
             infra_files: 3,
             ci_files: 0,
+            ci_credentials: Vec::new(),
             internal_images: 1,
             warnings: "",
         }
@@ -1147,6 +1215,7 @@ mod tests {
             kind: SecretKind::Assignment,
             commented,
             len: 12,
+            fingerprint: 1,
         };
         let scan = |hits: Vec<SecretHit>| super::super::dependencies::RepoScan {
             path: "acme/app".into(),
@@ -1162,6 +1231,25 @@ mod tests {
         let c = &items_from_ci_exposure(&[scan(vec![hit(30, true)])], "x")[0];
         assert_eq!((c.version.as_str(), c.severity.as_str()), ("commented out", "MEDIUM"));
         assert!(!is_urgent(c));
+    }
+
+    #[test]
+    fn email_groups_ci_credentials_by_value_and_never_shows_one() {
+        use super::super::ci_exposure::{credentials, find_secrets};
+        let value: String = "k9".repeat(10);
+        let a = find_secrets(".gitlab-ci.yml", &format!("variables:\n  STORE_PASSWORD: {value}\n"));
+        let b = find_secrets("ci/release.yml", &format!("  - export UPLOAD_PASSWORD={value}\n"));
+        let mut m = meta("2024-10-21");
+        m.ci_credentials = credentials(a.iter().map(|h| ("acme/desktop", h)).chain(b.iter().map(|h| ("acme/netkit", h))));
+        let mut gone = item("acme/web", ".gitlab-ci.yml · WEBHOOK_TOKEN", "active", "HIGH", true, "2024-10-07");
+        gone.ecosystem = "CI secret".into();
+        let d = Diff { previous_date: Some("2024-10-14".into()), fixed: vec![(gone, None)], ..Default::default() };
+        let html = render_email(&m, &d, true);
+        assert!(html.contains("1 distinct credentials in 2 places, 1 of them live"));
+        assert!(html.contains("STORE_PASSWORD, UPLOAD_PASSWORD"));
+        assert!(html.contains("same value in 2 places across 2 repos — one rotation"));
+        assert!(html.contains("WEBHOOK_TOKEN no longer in the file — rotate it"));
+        assert!(!html.contains(&value), "no credential value reaches the email");
     }
 
     #[test]
