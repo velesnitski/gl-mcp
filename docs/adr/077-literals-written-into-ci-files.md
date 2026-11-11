@@ -55,3 +55,20 @@ The weekly dependency email did not cover it either.
 - Included files from other projects (`include: project:`) are not followed.
 - Commenting a secret out reads as one fixed item and one new, lower one; rotating
   and removing it reads as fixed.
+
+## Addendum (2026-11-11): precision from a first wide sweep
+
+A first run across many repositories showed four false-positive shapes,
+now handled:
+
+- an escaped reference inside an `echo` (`KEY=\"${VAR}\"`) was cut at the
+  backslash — escaped quotes are now part of the value;
+- `key: value` in prose (an `echo` message, a comment sentence) — the YAML form
+  must now be the whole line; the shell `KEY=value` form still counts anywhere;
+- variables that hold a path to a key file (`.config/key.json`) — file-like values
+  are paths;
+- values shorter than three characters are not credentials.
+
+Initial passwords of database service containers (`MYSQL_*`, `POSTGRES_*`,
+`MARIADB_*`, `MONGO_INITDB_*`) are reported one level lower: they usually belong
+to a throwaway test database, and the advice is not to reuse them.

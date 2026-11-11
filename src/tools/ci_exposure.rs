@@ -26,6 +26,9 @@ pub(crate) enum SecretKind {
     UrlCredential,
     /// A credential recognisable by its own format, whatever it is assigned to.
     KnownFormat(&'static str),
+    /// The initial password of a database service container (`MYSQL_ROOT_PASSWORD`,
+    /// `POSTGRES_PASSWORD`, …): usually a throwaway test database, so one level lower.
+    ServiceDatabase,
 }
 
 impl SecretKind {
@@ -36,6 +39,7 @@ impl SecretKind {
             Self::Flag => "literal value passed on the command line".into(),
             Self::UrlCredential => "password embedded in a URL".into(),
             Self::KnownFormat(what) => format!("{what} in the file"),
+            Self::ServiceDatabase => "literal password for a database service container (fine for a throwaway test database; never reuse it)".into(),
         }
     }
 }
@@ -76,6 +80,21 @@ const NOT_SECRET: &[&str] = &[
     "_TTL", "_EXPIR", "_HEADER", "_SCOPE", "_ENABLED", "_DISABLED", "_REQUIRED",
 ];
 
+/// Initialisation variables of the official database images: they set the password
+/// of the service container the job starts, not of a real database.
+fn service_database_key(key: &str) -> bool {
+    let k = key.to_ascii_uppercase();
+    ["MYSQL_", "MARIADB_", "POSTGRES_", "MONGO_INITDB_"].iter().any(|p| k.starts_with(p))
+}
+
+impl SecretHit {
+    /// HIGH for a live credential; MEDIUM when commented out or a service-container
+    /// password.
+    pub(crate) fn high(&self) -> bool {
+        !self.commented && self.kind != SecretKind::ServiceDatabase
+    }
+}
+
 pub(crate) fn secret_key(key: &str) -> bool {
     let k = key.to_ascii_uppercase().replace(['-', '.'], "_");
     SECRET_KEY.iter().any(|m| k.contains(m)) && !NOT_SECRET.iter().any(|m| k.contains(m))
@@ -84,7 +103,7 @@ pub(crate) fn secret_key(key: &str) -> bool {
 /// A value that holds no credential: a reference resolved at run time, a
 /// placeholder, a flag value or a path.
 fn harmless(value: &str) -> bool {
-    let v = value.trim().trim_matches(|c| c == '"' || c == '\'').trim();
+    let v = unquote(value);
     if v.is_empty() || REFERENCE.is_match(v) {
         return true; // `$VAR`, `${VAR}`, `Bearer $TOKEN`, `$(cat file)`
     }
@@ -96,8 +115,17 @@ fn harmless(value: &str) -> bool {
             .iter()
             .any(|p| lower == *p || lower.starts_with(p));
     let flag = ["true", "false", "yes", "no", "on", "off", "|", ">", "|-", ">-"].contains(&lower.as_str());
-    let path = v.starts_with('/') || v.starts_with("./") || v.starts_with("~/");
-    placeholder || flag || path
+    let file_like = [".json", ".pem", ".key", ".p12", ".pfx", ".crt", ".cer", ".jks", ".keystore", ".env", ".txt", ".yml", ".yaml"]
+        .iter()
+        .any(|ext| lower.ends_with(ext));
+    let path = v.starts_with('/') || v.starts_with("./") || v.starts_with("~/") || v.starts_with('.') || (file_like && !v.contains("://"));
+    let too_short = v.chars().count() < 3; // no real credential is this short
+    placeholder || flag || path || too_short
+}
+
+/// The value without its quotes, escaped quotes (`\"…\"` inside an `echo`) included.
+fn unquote(value: &str) -> &str {
+    value.trim().trim_matches(|c| matches!(c, '"' | '\'' | '\\')).trim()
 }
 
 /// A run-time reference: `$NAME`, `${NAME}`, `$(command)`. A `$` followed by anything
@@ -105,12 +133,20 @@ fn harmless(value: &str) -> bool {
 static REFERENCE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\$(?:\{?[A-Za-z_]|\()").unwrap());
 
 fn value_len(value: &str) -> usize {
-    value.trim().trim_matches(|c| c == '"' || c == '\'').trim().chars().count()
+    unquote(value).chars().count()
 }
 
-static ASSIGN: LazyLock<Regex> = LazyLock::new(|| {
-    // `KEY: value` (YAML) or `KEY=value` (shell), the key optionally quoted or exported.
-    Regex::new(r#"(?:^|[\s;&(])(?:export\s+)?["']?([A-Za-z_][A-Za-z0-9_.-]*)["']?\s*(?::\s+|=)("[^"]*"|'[^']*'|[^\s"'#;]+)"#).unwrap()
+/// A value: double-quoted (escapes allowed, `\"…\"` too), single-quoted, or bare.
+const VALUE: &str = r#"(\\?"(?:[^"\\]|\\.)*\\?"|\\?'[^']*'|[^\s"'#;]+)"#;
+
+/// YAML `KEY: value` — the whole line, so `token: …` inside a sentence in an `echo`
+/// or a comment is prose, not an assignment.
+static YAML_KV: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(r#"^(?:-\s+)?["']?([A-Za-z_][A-Za-z0-9_.-]*)["']?\s*:\s+{VALUE}\s*(?:#.*)?$"#)).unwrap()
+});
+/// Shell `KEY=value`, anywhere on the line (`export`, inline env, form fields).
+static SHELL_KV: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(r#"(?:^|[\s;&("'])(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)={VALUE}"#)).unwrap()
 });
 static HEADER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)\b(private-token|job-token|deploy-token|x-api-key|api-key|authorization)\s*:\s*(?:(?:bearer|basic|token)\s+)?([^\s"'\\]+)"#).unwrap()
@@ -174,10 +210,11 @@ pub(crate) fn find_secrets(path: &str, content: &str) -> Vec<SecretHit> {
                 push("url", SecretKind::UrlCredential, value_len(&c[2]));
             }
         }
-        for c in ASSIGN.captures_iter(line) {
+        for c in YAML_KV.captures_iter(line).chain(SHELL_KV.captures_iter(line)) {
             // A header written as `Authorization: …` is reported once, as a header.
             if secret_key(&c[1]) && !harmless(&c[2]) && !HEADER.is_match(line) {
-                push(&c[1], SecretKind::Assignment, value_len(&c[2]));
+                let kind = if service_database_key(&c[1]) { SecretKind::ServiceDatabase } else { SecretKind::Assignment };
+                push(&c[1], kind, value_len(&c[2]));
             }
         }
     }
@@ -262,6 +299,27 @@ mod tests {
         }
         assert!(!secret_key("SECRET_DETECTION_DISABLED") && !secret_key("TOKEN_TTL") && !secret_key("key"));
         assert!(secret_key("registry.password") && secret_key("SIGNING_PASSWORD"));
+    }
+
+    #[test]
+    fn shapes_seen_in_real_pipelines_are_judged_right() {
+        let tok = word(30);
+        let ci = [
+            r#"  - echo "CLOUD_SECRET_ACCESS_KEY=\"${CLOUD_KEY}\"" > .env"#.to_string(),
+            r#"  - echo "Missing token: set it in the CI/CD settings?"; exit 1"#.to_string(),
+            "  GOOGLE_APPLICATION_CREDENTIALS: .config/service_account.json".to_string(),
+            format!("  MYSQL_ROOT_PASSWORD: {}", word(6)),
+            format!(r#"  - upload -F token={tok} -F "mode=upload" https://api.example.com/v1/files"#),
+            "# secret: don't commit it".to_string(),
+        ]
+        .join("\n");
+        let hits = find_secrets(".gitlab-ci.yml", &ci);
+        let got: Vec<(usize, &str, SecretKind, bool)> = hits.iter().map(|h| (h.line, h.key.as_str(), h.kind, h.high())).collect();
+        assert_eq!(
+            got,
+            vec![(4, "MYSQL_ROOT_PASSWORD", SecretKind::ServiceDatabase, false), (5, "token", SecretKind::Assignment, true)],
+            "an escaped reference, prose, a key-file path and a commented sentence are not secrets"
+        );
     }
 
     #[test]

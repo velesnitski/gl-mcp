@@ -212,7 +212,7 @@ pub(crate) fn secret_findings(project: &str, hits: &[super::ci_exposure::SecretH
         .map(|h| {
             let what = if h.key == "-" { h.kind.describe() } else { format!("`{}`: {}", h.key, h.kind.describe()) };
             Finding {
-                severity: if h.commented { Severity::Medium } else { Severity::High },
+                severity: if h.high() { Severity::High } else { Severity::Medium },
                 code: "CI-SECRET",
                 where_: format!("{project} → {}:{}", h.path, h.line),
                 detail: if h.commented {

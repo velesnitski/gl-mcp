@@ -152,7 +152,7 @@ pub(crate) fn items_from_ci_exposure(scans: &[super::dependencies::RepoScan], to
                 ecosystem: "CI secret".into(),
                 package,
                 version,
-                severity: if h.commented { "MEDIUM" } else { "HIGH" }.into(),
+                severity: if h.high() { "HIGH" } else { "MEDIUM" }.into(),
                 advisories: vec!["credential written into a CI file".into()],
                 runtime: true,
                 build: false,

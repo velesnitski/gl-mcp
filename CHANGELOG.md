@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.1] - 2026-11-11
+
+### Fixed
+
+- CI-file literal check: an escaped reference inside an `echo`, `key: value` in
+  prose, key-file paths and values under three characters are no longer reported;
+  database service-container passwords are reported as MEDIUM (ADR 077 addendum).
+
 ## [2.7.0] - 2026-11-11
 
 ### Added

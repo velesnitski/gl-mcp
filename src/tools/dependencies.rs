@@ -1675,7 +1675,7 @@ pub(crate) fn render_dependency_audit(
         for (repo, h) in secrets {
             out.push(format!(
                 "| {} | {repo}:{}:{} | {} | {}{} | {} |",
-                if h.commented { "MEDIUM" } else { "HIGH" },
+                if h.high() { "HIGH" } else { "MEDIUM" },
                 h.path,
                 h.line,
                 if h.key == "-" { "—" } else { &h.key },
