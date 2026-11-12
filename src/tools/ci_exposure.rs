@@ -35,6 +35,9 @@ pub(crate) enum SecretKind {
     /// The initial password of a database service container (`MYSQL_ROOT_PASSWORD`,
     /// `POSTGRES_PASSWORD`, …): usually a throwaway test database, so one level lower.
     ServiceDatabase,
+    /// The public half of a key pair: an access key ID (`S3_ACCESS_KEY`, `AKIA…`).
+    /// It names the key and signs nothing alone, so it is MEDIUM, not a live secret.
+    Identifier,
 }
 
 impl SecretKind {
@@ -46,6 +49,7 @@ impl SecretKind {
             Self::UrlCredential => "password embedded in a URL".into(),
             Self::KnownFormat(what) => format!("{what} in the file"),
             Self::ServiceDatabase => "literal password for a database service container (fine for a throwaway test database; never reuse it)".into(),
+            Self::Identifier => "access key ID in the file (names the key, signs nothing alone; keep it next to its secret in CI variables)".into(),
         }
     }
 }
@@ -99,8 +103,19 @@ impl SecretHit {
     /// HIGH for a live credential; MEDIUM when commented out or a service-container
     /// password.
     pub(crate) fn high(&self) -> bool {
-        !self.commented && self.kind != SecretKind::ServiceDatabase
+        !self.commented && !matches!(self.kind, SecretKind::ServiceDatabase | SecretKind::Identifier)
     }
+}
+
+/// Names of the public half of a key pair: an access key ID, a public or publishable
+/// key, a client ID. They identify a key; on their own they sign nothing. A name that
+/// says SECRET or PRIVATE is never one.
+pub(crate) fn identifier_key(key: &str) -> bool {
+    let k = key.to_ascii_uppercase().replace(['-', '.'], "_");
+    if k.contains("SECRET") || k.contains("PRIVATE") {
+        return false;
+    }
+    ["ACCESS_KEY", "ACCESSKEY", "KEY_ID", "PUBLIC_KEY", "PUBLISHABLE"].iter().any(|m| k.contains(m)) || k.ends_with("_ID")
 }
 
 pub(crate) fn secret_key(key: &str) -> bool {
@@ -206,7 +221,8 @@ pub(crate) fn find_secrets(path: &str, content: &str) -> Vec<SecretHit> {
             }
         };
         for (what, m) in KNOWN.iter().filter_map(|(what, re)| re.find(line).map(|m| (*what, m))) {
-            push("-", SecretKind::KnownFormat(what), m.as_str());
+            let kind = if what.contains("access key id") { SecretKind::Identifier } else { SecretKind::KnownFormat(what) };
+            push("-", kind, m.as_str());
         }
         for c in HEADER.captures_iter(line) {
             if !harmless(&c[2]) {
@@ -226,10 +242,22 @@ pub(crate) fn find_secrets(path: &str, content: &str) -> Vec<SecretHit> {
         for c in YAML_KV.captures_iter(line).chain(SHELL_KV.captures_iter(line)) {
             // A header written as `Authorization: …` is reported once, as a header.
             if secret_key(&c[1]) && !harmless(&c[2]) && !HEADER.is_match(line) {
-                let kind = if service_database_key(&c[1]) { SecretKind::ServiceDatabase } else { SecretKind::Assignment };
+                let kind = if service_database_key(&c[1]) {
+                    SecretKind::ServiceDatabase
+                } else if identifier_key(&c[1]) {
+                    SecretKind::Identifier
+                } else {
+                    SecretKind::Assignment
+                };
                 push(&c[1], kind, &c[2]);
             }
         }
+    }
+    // The job's own connection to its service container (`DB_PASSWORD` equal to
+    // `MYSQL_ROOT_PASSWORD` in the same file) is that throwaway password too.
+    let service: Vec<u64> = out.iter().filter(|h| h.kind == SecretKind::ServiceDatabase).map(|h| h.fingerprint).collect();
+    for h in out.iter_mut().filter(|h| h.kind == SecretKind::Assignment && service.contains(&h.fingerprint)) {
+        h.kind = SecretKind::ServiceDatabase;
     }
     // A bare credential on a line already reported under its key adds nothing.
     let keyed: Vec<usize> = out.iter().filter(|h| h.key != "-").map(|h| h.line).collect();
@@ -320,6 +348,28 @@ mod tests {
         assert!(hits.iter().all(|h| h.len == 19), "length is reported, the value is not");
         let debug = format!("{hits:?}");
         assert!(!debug.contains(&pw), "no value is kept anywhere in a hit");
+    }
+
+    #[test]
+    fn the_jobs_connection_to_its_service_database_is_not_a_live_secret() {
+        let (test_pw, real_pw) = (word(9), "z8".repeat(8));
+        let ci = format!(
+            "test:\n  variables:\n    MYSQL_ROOT_PASSWORD: {test_pw}\n    DB_PASSWORD: {test_pw}\n    MAIL_PASSWORD: {real_pw}\n"
+        );
+        let hits = find_secrets(".gitlab-ci.yml", &ci);
+        let got: Vec<(&str, bool)> = hits.iter().map(|h| (h.key.as_str(), h.high())).collect();
+        assert_eq!(got, vec![("MYSQL_ROOT_PASSWORD", false), ("DB_PASSWORD", false), ("MAIL_PASSWORD", true)]);
+    }
+
+    #[test]
+    fn an_access_key_id_is_listed_but_not_a_live_secret() {
+        let (id, secret) = (format!("{}{}", "AKIA", "Q7".repeat(8)), word(40));
+        let ci = format!("variables:\n  S3_ACCESS_KEY: {}\n  S3_SECRET_KEY: {secret}\n  - echo {id}\n", "m1n10".repeat(4));
+        let hits = find_secrets(".gitlab-ci.yml", &ci);
+        let got: Vec<(usize, SecretKind, bool)> = hits.iter().map(|h| (h.line, h.kind, h.high())).collect();
+        assert_eq!(got, vec![(2, SecretKind::Identifier, false), (3, SecretKind::Assignment, true), (4, SecretKind::Identifier, false)]);
+        assert!(identifier_key("AWS_ACCESS_KEY_ID") && identifier_key("STRIPE_PUBLISHABLE_KEY") && identifier_key("OAUTH_CLIENT_ID"));
+        assert!(!identifier_key("AWS_SECRET_ACCESS_KEY") && !identifier_key("DEPLOY_PRIVATE_KEY") && !identifier_key("API_KEY"));
     }
 
     #[test]

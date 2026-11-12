@@ -118,7 +118,8 @@ pub(crate) fn audit_variables(project: &str, vars: &[Value]) -> Vec<Finding> {
             .any(|m| key.to_ascii_uppercase().contains(m));
         // A file-type variable is never interpolated into a command line, so the
         // masking question does not arise for it.
-        if !secretish || masked || vtype == "file" {
+        // An access key ID or public key names a key and signs nothing: unmasked is fine.
+        if !secretish || masked || vtype == "file" || super::ci_exposure::identifier_key(key) {
             continue;
         }
         let unmaskable = is_structurally_unmaskable(key);

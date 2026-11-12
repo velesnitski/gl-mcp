@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.9.1] - 2026-11-11
+
+### Fixed
+
+- Access key IDs, public and publishable keys and client IDs are identifiers, not
+  secrets: written into a CI file they are MEDIUM and not counted as live; unmasked
+  as CI variables they are not reported (ADR 077 addendum).
+- A password equal to a database service container's password in the same CI file
+  is the job's connection to that test database: MEDIUM, like the container's own.
+
 ## [2.9.0] - 2026-11-11
 
 ### Changed

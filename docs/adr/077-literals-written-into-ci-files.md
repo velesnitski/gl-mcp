@@ -72,3 +72,16 @@ now handled:
 Initial passwords of database service containers (`MYSQL_*`, `POSTGRES_*`,
 `MARIADB_*`, `MONGO_INITDB_*`) are reported one level lower: they usually belong
 to a throwaway test database, and the advice is not to reuse them.
+
+## Addendum (2026-11-11): access key IDs are identifiers
+
+An access key ID (`S3_ACCESS_KEY`, `AWS_ACCESS_KEY_ID`, an `AKIA…` value), a
+public or publishable key and a client ID name a key; on their own they sign
+nothing. Written into a CI file they are now reported as MEDIUM ("keep it next to
+its secret in CI variables", so the pair rotates together) and do not count as
+live credentials. An unmasked CI variable with such a name is no longer reported.
+A name containing SECRET or PRIVATE is never treated as an identifier.
+
+A literal password equal to a database service container's password in the same
+file (`DB_PASSWORD` set to the value of `MYSQL_ROOT_PASSWORD`) is the job's own
+connection to that throwaway database and is reported as one too: MEDIUM.
