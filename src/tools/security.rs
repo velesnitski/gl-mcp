@@ -83,12 +83,116 @@ pub(crate) struct Finding {
 ///
 /// This is the mechanism, not a hypothetical: an unmasked variable echoed by a script
 /// running under `set -x` lands in the trace in cleartext and stays there.
+/// Names whose last word says what they describe, not that they hold a secret:
+/// where (`STORAGE_PRIVATE_BUCKET`), who (`REGISTRY_TOKEN_USER`), or a setting
+/// (`TOKEN_TTL`). The last word decides, so `DB_USER_PASSWORD` is still a password.
+fn descriptive_key(key: &str) -> bool {
+    let k = key.to_ascii_uppercase().replace(['-', '.'], "_");
+    let last = k.rsplit('_').find(|w| !w.is_empty()).unwrap_or("");
+    [
+        "BUCKET", "ENDPOINT", "REGION", "HOST", "HOSTNAME", "PORT", "DIR", "USER", "USERNAME", "LOGIN", "EMAIL",
+        "NAME", "TYPE", "TTL", "EXPIRES", "EXPIRY", "LENGTH", "HEADER", "SCOPE", "SCOPES", "FILE", "PATH",
+        "VERSION", "ENABLED", "DISABLED", "MODE", "FORMAT", "PREFIX",
+    ]
+    .contains(&last)
+}
+
+/// How an unmasked secret variable holds its value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VarKind {
+    /// A single-line secret GitLab could mask.
+    Secret,
+    /// Multi-line or PEM-armoured: masking is refused, file type is the answer.
+    KeyMaterial,
+    /// JSON (`DOCKER_AUTH_CONFIG`): GitLab cannot mask it at all.
+    Json,
+}
+
+/// A CI/CD variable that holds a secret and is not masked. Like a CI-file hit, it
+/// keeps no value: name, scope, protection, kind, length and a per-run fingerprint
+/// (ADR 077) so one token stored in many projects reads as one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct VarHit {
+    pub key: String,
+    pub scope: String,
+    pub protected: bool,
+    pub kind: VarKind,
+    pub len: usize,
+    pub fingerprint: u64,
+}
+
+impl VarHit {
+    pub(crate) fn high(&self) -> bool {
+        self.kind == VarKind::KeyMaterial
+    }
+}
+
+/// The variable when it holds a secret GitLab would print in a job log. The value is
+/// looked at, never kept: empty values, references to other variables, booleans and
+/// paths are not secrets whatever the name says. Without a value (a token that may
+/// list variables but not read them) the name decides.
+/// A secret-named, unmasked variable whose value is not a secret, and why: shown in
+/// the audit so a skip can be checked without anyone seeing the value.
+pub(crate) fn skipped_by_value(v: &Value) -> Option<(String, &'static str)> {
+    let key = v["key"].as_str().unwrap_or("");
+    let masked = v["masked"].as_bool().unwrap_or(false) || v["hidden"].as_bool().unwrap_or(false);
+    let upper = key.to_ascii_uppercase();
+    if masked || v["variable_type"].as_str() == Some("file") || !SECRETISH.iter().any(|m| upper.contains(m)) {
+        return None;
+    }
+    if super::ci_exposure::identifier_key(key) {
+        return Some((key.to_string(), "names a key, signs nothing"));
+    }
+    if descriptive_key(key) {
+        return Some((key.to_string(), "name describes, does not hold, a secret"));
+    }
+    let t = v["value"].as_str()?.trim();
+    if super::ci_exposure::public_keys_only(t) {
+        return Some((key.to_string(), "public keys or certificates only"));
+    }
+    if t.starts_with('{') || t.starts_with('[') || t.contains('\n') {
+        return None;
+    }
+    super::ci_exposure::harmless_reason(t).map(|r| (key.to_string(), r))
+}
+
+pub(crate) fn unmasked_secret(v: &Value) -> Option<VarHit> {
+    let key = v["key"].as_str().unwrap_or("");
+    let masked = v["masked"].as_bool().unwrap_or(false) || v["hidden"].as_bool().unwrap_or(false);
+    if masked || v["variable_type"].as_str() == Some("file") || key.eq_ignore_ascii_case("CI_DEBUG_TRACE") {
+        return None;
+    }
+    let upper = key.to_ascii_uppercase();
+    let secretish = SECRETISH.iter().any(|m| upper.contains(m));
+    if !secretish || super::ci_exposure::identifier_key(key) || descriptive_key(key) {
+        return None;
+    }
+    let value = v["value"].as_str();
+    if value.is_some_and(super::ci_exposure::public_keys_only) {
+        return None;
+    }
+    let kind = match value.map(str::trim) {
+        Some(t) if t.starts_with('{') || t.starts_with('[') => VarKind::Json,
+        Some(t) if t.contains('\n') || t.contains("-----BEGIN") => VarKind::KeyMaterial,
+        Some(t) if super::ci_exposure::harmless(t) => return None,
+        Some(_) => VarKind::Secret,
+        None if is_structurally_unmaskable(key) => VarKind::KeyMaterial,
+        None => VarKind::Secret,
+    };
+    Some(VarHit {
+        key: key.to_string(),
+        scope: v["environment_scope"].as_str().unwrap_or("*").to_string(),
+        protected: v["protected"].as_bool().unwrap_or(false),
+        kind,
+        len: value.map_or(0, |t| t.trim().chars().count()),
+        fingerprint: value.map_or(0, |t| super::ci_exposure::fingerprint(t)),
+    })
+}
+
 pub(crate) fn audit_variables(project: &str, vars: &[Value]) -> Vec<Finding> {
     let mut out = Vec::new();
     for v in vars {
         let key = v["key"].as_str().unwrap_or("");
-        let masked = v["masked"].as_bool().unwrap_or(false);
-        let vtype = v["variable_type"].as_str().unwrap_or("env_var");
         let scope = v["environment_scope"].as_str().unwrap_or("*");
 
         if key.eq_ignore_ascii_case("CI_DEBUG_TRACE") {
@@ -113,34 +217,35 @@ pub(crate) fn audit_variables(project: &str, vars: &[Value]) -> Vec<Finding> {
             continue;
         }
 
-        let secretish = SECRETISH
-            .iter()
-            .any(|m| key.to_ascii_uppercase().contains(m));
-        // A file-type variable is never interpolated into a command line, so the
-        // masking question does not arise for it.
-        // An access key ID or public key names a key and signs nothing: unmasked is fine.
-        if !secretish || masked || vtype == "file" || super::ci_exposure::identifier_key(key) {
-            continue;
-        }
-        let unmaskable = is_structurally_unmaskable(key);
+        let Some(h) = unmasked_secret(v) else { continue };
+        let unprotected = if h.protected {
+            ""
+        } else {
+            " Not protected: the pipeline of every branch can read it."
+        };
+        let (severity, detail, fix) = match h.kind {
+            VarKind::KeyMaterial => (
+                Severity::High,
+                "Holds key material and is neither masked nor file-type: if any job echoes it, the value is written to the log in full.",
+                "Set variable_type=file. Masking cannot apply — GitLab rejects multi-line values, so enabling it will fail with 400.",
+            ),
+            VarKind::Json => (
+                Severity::Medium,
+                "Holds JSON, which GitLab cannot mask: if a job prints it, the credentials inside appear in the log.",
+                "Keep it protected and environment-scoped, and put a read-only robot credential in it rather than a person's.",
+            ),
+            VarKind::Secret => (
+                Severity::Medium,
+                "Secret-shaped variable is not masked: GitLab will not redact it if a job prints it.",
+                "Enable masking. If the API refuses it, the value breaks GitLab's masking rules (single line, ≥8 chars, restricted alphabet) — use variable_type=file instead.",
+            ),
+        };
         out.push(Finding {
-            severity: if unmaskable { Severity::High } else { Severity::Medium },
+            severity,
             code: "VAR-UNMASKED",
             where_: format!("{project} → {key} (scope={scope})"),
-            detail: if unmaskable {
-                "Holds key material and is neither masked nor file-type: if any job echoes it, the value is written to the log in full."
-                    .to_string()
-            } else {
-                "Secret-shaped variable is not masked: GitLab will not redact it if a job prints it."
-                    .to_string()
-            },
-            fix: if unmaskable {
-                "Set variable_type=file. Masking cannot apply — GitLab rejects multi-line values, so enabling it will fail with 400."
-                    .to_string()
-            } else {
-                "Enable masking. If the API refuses it, the value breaks GitLab's masking rules (single line, ≥8 chars, restricted alphabet) — use variable_type=file instead."
-                    .to_string()
-            },
+            detail: format!("{detail}{unprotected}"),
+            fix: fix.to_string(),
         });
     }
     out
@@ -234,6 +339,8 @@ const MAX_CI_INCLUDES: usize = 10;
 struct ProjectAudit {
     findings: Vec<Finding>,
     variables_readable: bool,
+    /// (key, reason) for secret-named variables whose value is not a secret.
+    skipped: Vec<(String, &'static str)>,
 }
 
 /// Run the configuration audit over one project.
@@ -253,8 +360,10 @@ async fn audit_project(client: &GitLabClient, path: &str) -> Result<ProjectAudit
         Err(e) if e.is_user_error() => None,
         Err(e) => return Err(e),
     };
+    let mut skipped = Vec::new();
     if let Some(vars) = &vars {
         findings.extend(audit_variables(path, vars));
+        skipped.extend(vars.iter().filter_map(skipped_by_value));
     }
 
     // The CI definition is read raw, with the local files it includes; a missing
@@ -281,7 +390,7 @@ async fn audit_project(client: &GitLabClient, path: &str) -> Result<ProjectAudit
             Err(e) => return Err(e),
         }
     }
-    Ok(ProjectAudit { findings, variables_readable: vars.is_some() })
+    Ok(ProjectAudit { findings, variables_readable: vars.is_some(), skipped })
 }
 
 /// Audit CI configuration for exposure, across one project or a whole group.
@@ -291,38 +400,14 @@ pub async fn audit_ci_security(
     group_path: &str,
     max_projects: usize,
 ) -> Result<String> {
-    let mut targets: Vec<String> = Vec::new();
-    let scope_label;
-    let total_repos: usize;
-
-    if !group_path.is_empty() {
-        let projects: Vec<Value> = client
-            .get_all_pages(
-                &format!("/groups/{}/projects", urlencoding::encode(group_path)),
-                &[
-                    ("include_subgroups", "true"),
-                    ("archived", "false"),
-                    ("order_by", "last_activity_at"),
-                    ("sort", "desc"),
-                ],
-                3,
-            )
-            .await?;
-        total_repos = projects.len();
-        targets = projects
-            .iter()
-            .take(max_projects)
-            .filter_map(|p| p["path_with_namespace"].as_str().map(str::to_string))
-            .collect();
-        scope_label = format!("group `{group_path}`");
-    } else {
-        targets.push(project_id.to_string());
-        total_repos = 1;
-        scope_label = format!("project `{project_id}`");
-    }
+    // Same selection as the dependency audit: one group, several (`a,b`), or `*`
+    // for every top-level group with `-name` exclusions.
+    let (targets, total_repos, scope_label, _) =
+        super::dependencies::resolve_targets(client, project_id, group_path, max_projects).await?;
 
     let mut all: Vec<Finding> = Vec::new();
     let mut unreadable_vars: Vec<&str> = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
     let mut fan = crate::error::FanOut::default();
     for chunk in targets.chunks(8) {
         let futs = chunk.iter().map(|p| async move { (p.as_str(), audit_project(client, p).await) });
@@ -332,12 +417,20 @@ pub async fn audit_ci_security(
                     unreadable_vars.push(path);
                 }
                 all.extend(audit.findings);
+                skipped.extend(audit.skipped.into_iter().map(|(k, why)| format!("{path} → {k} ({why})")));
             }
         }
     }
     let warning = fan.finish("project audits")?.unwrap_or_default();
 
     let mut report = render_audit_report(&scope_label, targets.len(), total_repos, all);
+    if !skipped.is_empty() {
+        let _ = write!(
+            report,
+            "\n\nSecret-named variables not reported, by what their value is (value not shown): {}",
+            skipped.join("; ")
+        );
+    }
     if !unreadable_vars.is_empty() {
         let _ = write!(
             report,
@@ -398,7 +491,7 @@ pub(crate) fn render_audit_report(
 
     out.push(String::new());
     out.push(
-        "_Scope: CI configuration only. This cannot tell whether a secret was actually printed — only that nothing would stop it. Job-log contents are not scanned. Variable **values are never read or reported**._"
+        "_Scope: CI configuration only. This cannot tell whether a secret was actually printed — only that nothing would stop it. Job-log contents are not scanned. Variable **values are inspected to classify them, never kept or reported**._"
             .to_string(),
     );
     out.join("\n")
@@ -512,7 +605,7 @@ job:
         assert!(rows[2].starts_with("| MEDIUM | IMG-FLOATING | g/a"));
         assert!(rows[3].starts_with("| MEDIUM | IMG-FLOATING | g/b"));
         assert!(!out.contains("Partial"), "full coverage must not warn");
-        assert!(out.contains("values are never read or reported"));
+        assert!(out.contains("never kept or reported"));
     }
 
     #[test]
@@ -557,6 +650,43 @@ job:
         assert_eq!(f.len(), 1, "only the unmasked env_var secret: {f:?}");
         assert_eq!(f[0].severity, Severity::Medium);
         assert!(f[0].fix.starts_with("Enable masking"));
+    }
+
+    #[test]
+    fn the_value_decides_and_is_never_echoed() {
+        // Values are assembled at run time: no credential-shaped literal in the tree.
+        let token: String = "t0k".repeat(8);
+        let pem = format!("-----BEGIN {}-----\nAAAA\n-----END {}-----", ["OPENSSH", "PRIVATE", "KEY"].join(" "), ["OPENSSH", "PRIVATE", "KEY"].join(" "));
+        let var = |key: &str, value: &str, protected: bool| json!({"key": key, "value": value, "masked": false, "protected": protected, "variable_type": "env_var", "environment_scope": "*"});
+        let vars = vec![
+            var("DNS_API_TOKEN", &token, false),
+            var("TLS_SERVER_KEY", &pem, true),
+            var("DOCKER_AUTH_CONFIG", &format!("{{\"auths\":{{\"r\":{{\"auth\":\"{token}\"}}}}}}"), true),
+            var("STORAGE_PRIVATE_BUCKET", "backups", false),
+            var("DEPLOY_PUB_KEY", "ssh-ed25519 AAAA", false),
+            var("AUTHORIZED_KEYS_LIST", "[\"ssh-ed25519 AAAA a@b\", \"ssh-rsa AAAA c@d\"]", false),
+            var("DEPLOY_TOKEN", "$CI_JOB_TOKEN", false),
+            var("FEATURE_PASSWORD_LOGIN", "true", false),
+        ];
+        let f = audit_variables("group/app", &vars);
+        let got: Vec<(&str, Severity)> = f.iter().map(|x| (x.where_.split(" → ").nth(1).unwrap(), x.severity)).collect();
+        assert_eq!(
+            got,
+            vec![("DNS_API_TOKEN (scope=*)", Severity::Medium), ("TLS_SERVER_KEY (scope=*)", Severity::High), ("DOCKER_AUTH_CONFIG (scope=*)", Severity::Medium)]
+        );
+        assert!(f[0].detail.contains("Not protected") && !f[1].detail.contains("Not protected"));
+        assert!(f[2].detail.contains("cannot mask"));
+        let all = format!("{f:?}");
+        assert!(!all.contains(&token) && !all.contains("AAAA"), "no value in a finding");
+        let why: Vec<_> = vars.iter().filter_map(super::skipped_by_value).collect();
+        assert!(why.contains(&("AUTHORIZED_KEYS_LIST".to_string(), "public keys or certificates only")));
+        assert!(why.contains(&("DEPLOY_TOKEN".to_string(), "reference to another variable")));
+        assert!(why.contains(&("STORAGE_PRIVATE_BUCKET".to_string(), "name describes, does not hold, a secret")));
+        let named = |k: &str| super::unmasked_secret(&var(k, &token, false)).is_some();
+        assert!(!named("REGISTRY_TOKEN_USER") && !named("API_TOKEN_TTL") && !named("SIGNING_KEY_PATH"));
+        assert!(named("DB_USER_PASSWORD") && named("PIPELINE_TRIGGER_TOKEN"));
+        let h = super::unmasked_secret(&vars[0]).unwrap();
+        assert_eq!((h.len, h.fingerprint), (24, super::super::ci_exposure::fingerprint(&token)));
     }
 
     #[test]

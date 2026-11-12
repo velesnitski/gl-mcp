@@ -115,7 +115,8 @@ pub(crate) fn identifier_key(key: &str) -> bool {
     if k.contains("SECRET") || k.contains("PRIVATE") {
         return false;
     }
-    ["ACCESS_KEY", "ACCESSKEY", "KEY_ID", "PUBLIC_KEY", "PUBLISHABLE"].iter().any(|m| k.contains(m)) || k.ends_with("_ID")
+    ["ACCESS_KEY", "ACCESSKEY", "KEY_ID", "PUBLIC_KEY", "PUB_KEY", "PUBKEY", "PUBLISHABLE"].iter().any(|m| k.contains(m))
+        || k.ends_with("_ID")
 }
 
 pub(crate) fn secret_key(key: &str) -> bool {
@@ -125,14 +126,55 @@ pub(crate) fn secret_key(key: &str) -> bool {
 
 /// A value that holds no credential: a reference resolved at run time, a
 /// placeholder, a flag value or a path.
-fn harmless(value: &str) -> bool {
+pub(crate) fn harmless(value: &str) -> bool {
+    harmless_reason(value).is_some()
+}
+
+/// Public material only: SSH public keys (alone or in a list) or certificates, and
+/// nothing private.
+pub(crate) fn public_keys_only(value: &str) -> bool {
+    let ssh = ["ssh-rsa ", "ssh-ed25519 ", "ecdsa-sha2-", "sk-ssh-ed25519@"].iter().any(|p| value.contains(p));
+    let cert = value.contains("BEGIN CERTIFICATE");
+    (ssh || cert) && !value.contains("PRIVATE")
+}
+
+/// Values that are an address, not a credential: an email, a hostname or IP, or a
+/// URL with no user info, no query and no token-length path segment (a webhook's
+/// long segment is its secret, so webhooks still count).
+static ADDRESS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:[^@\s:/]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}|(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?|[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,24}(?::\d+)?|https?://[^\s/@?]+(?:/[^\s?@]*)?)$").unwrap()
+});
+
+fn address(v: &str) -> bool {
+    ADDRESS.is_match(v)
+        && !v
+            .split(['/', '.'])
+            .skip(1)
+            .any(|seg| seg.len() >= 20 && seg.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ':')))
+}
+
+/// Why a value is not a credential, if it is not: a category, never the value.
+pub(crate) fn harmless_reason(value: &str) -> Option<&'static str> {
     let v = unquote(value);
-    if v.is_empty() || REFERENCE.is_match(v) {
-        return true; // `$VAR`, `${VAR}`, `Bearer $TOKEN`, `$(cat file)`
+    if v.is_empty() {
+        return Some("empty");
+    }
+    if REFERENCE.is_match(v) {
+        return Some("reference to another variable"); // `$VAR`, `${VAR}`, `$(cat file)`
+    }
+    if SECRET_STORE_REF.is_match(v) {
+        return Some("reference to a secret store");
+    }
+    if public_keys_only(v) {
+        return Some("public keys or certificates only");
+    }
+    if address(v) {
+        return Some("an address (email, host or URL without credentials)");
     }
     let lower = v.to_ascii_lowercase();
     let placeholder = v.chars().all(|c| matches!(c, '*' | 'x' | 'X' | '.' | '-' | '_'))
-        || (v.starts_with('<') && v.ends_with('>'))
+        // `<your password>` is cut at its first space, so the closing `>` is often gone.
+        || v.starts_with('<')
         || v.starts_with("{{") // a template; the pattern stops at its first space
         || ["changeme", "change_me", "redacted", "todo", "none", "null", "~", "your_", "example"]
             .iter()
@@ -143,13 +185,31 @@ fn harmless(value: &str) -> bool {
         .any(|ext| lower.ends_with(ext));
     let path = v.starts_with('/') || v.starts_with("./") || v.starts_with("~/") || v.starts_with('.') || (file_like && !v.contains("://"));
     let too_short = v.chars().count() < 3; // no real credential is this short
-    placeholder || flag || path || too_short
+    if placeholder {
+        Some("placeholder")
+    } else if flag {
+        Some("boolean or YAML marker")
+    } else if path {
+        Some("file path")
+    } else if too_short {
+        Some("under 3 characters")
+    } else {
+        None
+    }
 }
 
 /// The value without its quotes, escaped quotes (`\"…\"` inside an `echo`) included.
 fn unquote(value: &str) -> &str {
     value.trim().trim_matches(|c| matches!(c, '"' | '\'' | '\\')).trim()
 }
+
+/// A pointer into a secret store, not the secret: GCP `--set-secrets KEY=name:latest`
+/// (or `name:3`), `projects/…/secrets/…`, AWS Secrets Manager and SSM ARNs, Vault
+/// paths, 1Password `op://` references. `--set-secrets` takes a comma-separated list,
+/// so the rest of the list may follow.
+static SECRET_STORE_REF: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:[A-Za-z0-9_.-]+:(?:latest|\d{1,3})|projects/[^/\s]+/secrets/\S+|arn:aws:(?:secretsmanager|ssm):\S+|vault:\S+|secret/data/\S+|op://\S+)(?:,\S*)?$").unwrap()
+});
 
 /// A run-time reference: `$NAME`, `${NAME}`, `$(command)`. A `$` followed by anything
 /// else is part of a literal (a password may contain one), not a reference.
@@ -159,7 +219,7 @@ static REFERENCE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\$(?:\{?[A-Za-
 /// runs or reversed by anyone who sees one.
 static RUN_KEY: LazyLock<RandomState> = LazyLock::new(RandomState::new);
 
-fn fingerprint(value: &str) -> u64 {
+pub(crate) fn fingerprint(value: &str) -> u64 {
     RUN_KEY.hash_one(unquote(value))
 }
 
@@ -348,6 +408,28 @@ mod tests {
         assert!(hits.iter().all(|h| h.len == 19), "length is reported, the value is not");
         let debug = format!("{hits:?}");
         assert!(!debug.contains(&pw), "no value is kept anywhere in a hit");
+    }
+
+    #[test]
+    fn secret_store_references_and_cut_placeholders_are_not_secrets() {
+        for v in ["mailer_password:latest", "api-key:3", "projects/p1/secrets/db/versions/2", "arn:aws:secretsmanager:eu-west-1:1:secret:x", "vault:secret/data/ci#token", "op://ci/deploy/password", "<your"] {
+            assert!(harmless_reason(v).is_some(), "{v} is not a secret");
+        }
+        assert_eq!(harmless_reason("name:latest"), Some("reference to a secret store"));
+        for v in ["ci-bot@example.com", "10.0.0.5:6379", "redis.internal.example.com", "https://hooks.example.com/status", "https://auth.example.com/oauth/token"] {
+            assert!(harmless_reason(v).is_some(), "{v} is an address");
+        }
+        let hook = format!("https://hooks.example.com/services/T0/B0/{}", word(24));
+        let bot = format!("https://api.example.org/bot123456:{}/send", word(30));
+        for v in [hook, bot, format!("https://ci:{}@git.example.com", word(12)), format!("https://x.example.com/a?token={}", word(12))] {
+            assert!(harmless_reason(&v).is_none(), "{v}: a URL carrying a credential still counts");
+        }
+        let real = word(16);
+        for v in [format!("admin:{real}"), format!("perm:{real}"), real.clone()] {
+            assert!(harmless_reason(&v).is_none(), "a credential must still count");
+        }
+        let ci = "deploy:\n  script:\n    - gcloud run deploy app --set-secrets MAILER_PASSWORD=mailer_password:latest,MONITOR_API_KEY=monitor_api_key:latest\n";
+        assert!(find_secrets(".gitlab-ci.yml", ci).is_empty());
     }
 
     #[test]

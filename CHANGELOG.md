@@ -7,7 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.9.1] - 2026-11-11
+## [2.10.0] - 2026-11-12
+
+### Added
+
+- The CI-literal email also lists secret CI/CD variables that are not masked,
+  grouped by value (one token stored in many projects is one row), with whether
+  each copy is protected. Repositories whose variables the token cannot read are
+  named as not checked (ADR 080).
+
+### Changed
+
+- The unmasked-variable check looks at the value without keeping it: empty values,
+  references to other variables, booleans and paths are not secrets; multi-line or
+  PEM-armoured values are key material (HIGH, file type); JSON such as
+  `DOCKER_AUTH_CONFIG` is reported as unmaskable. Bucket, endpoint, region and host
+  names, public keys and values holding only public SSH keys are not secrets.
+  Unprotected variables say so (ADR 080).
+- More values recognised as not secrets, in CI files and variables alike:
+  references to a secret store (GCP `--set-secrets KEY=name:latest`,
+  `projects/…/secrets/…`, AWS Secrets Manager / SSM ARNs, Vault paths, 1Password
+  `op://`), public certificates, email addresses, hostnames and IPs, URLs with no
+  credentials or token-length segment (webhooks still count), and `<placeholder`
+  text cut at its first space. For variables the name's last word decides:
+  `REGISTRY_TOKEN_USER`, `API_TOKEN_TTL`, `SIGNING_KEY_PATH` describe a secret,
+  `DB_USER_PASSWORD` holds one (ADR 080).
+- `audit_ci_security` names every secret-named variable it did not report and why
+  ("reference to another variable", "empty", "names a location"…), so each skip can
+  be checked without seeing the value; its footer says values are inspected, never
+  kept or reported.
+- `audit_ci_security` accepts the same `group_path` as `audit_dependencies`:
+  several groups (`a,b`), or `*` for every top-level group with `-name` exclusions.
 
 ### Fixed
 

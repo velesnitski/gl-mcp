@@ -845,6 +845,9 @@ pub(crate) struct RepoScan {
     pub ci_files: usize,
     /// Literal credentials in those files: location, key and length, never a value.
     pub ci_exposure: Vec<super::ci_exposure::SecretHit>,
+    /// Unmasked secret CI/CD variables (ADR 080); None when the token may not read
+    /// the project's variables: not checked, never "clean".
+    pub variables: Option<Vec<super::security::VarHit>>,
 }
 
 /// Lockfiles worth reading, in the order to read them. A `go.sum` next to a `go.mod`
@@ -900,6 +903,11 @@ async fn scan_repo(client: &GitLabClient, path: &str, internal_host: &str) -> Re
         .filter_map(|e| e["path"].as_str().map(str::to_string))
         .collect();
     let mut scan = RepoScan { path: path.to_string(), ..Default::default() };
+    scan.variables = client
+        .get::<Vec<Value>>(&format!("/projects/{enc}/variables"), &[("per_page", "100")])
+        .await
+        .ok()
+        .map(|vars| vars.iter().filter_map(super::security::unmasked_secret).collect());
     let mut infra_files: Vec<(String, infra::InfraKind)> =
         blobs.iter().filter_map(|b| infra::infra_kind(b).map(|k| (b.clone(), k))).collect();
     infra_files.sort_by_key(|(p, _)| (p.matches('/').count(), p.clone()));
@@ -1120,13 +1128,15 @@ impl GroupSpec {
     }
 }
 
-pub(crate) async fn collect_audit(
+/// The projects to audit: (paths, total in scope, scope label, short name). Shared by
+/// the dependency and CI security audits so both accept the same group syntax.
+pub(crate) async fn resolve_targets(
     client: &GitLabClient,
     project_id: &str,
     group_path: &str,
     max_projects: usize,
-) -> Result<Audit> {
-    let (targets, total_repos, scope, name) = if !group_path.is_empty() {
+) -> Result<(Vec<String>, usize, String, String)> {
+    Ok(if !group_path.is_empty() {
         // Several groups may be given, comma-separated: one instance, one report.
         // `*` is every top-level group the token can see; `-name` excludes one.
         let spec = GroupSpec::parse(group_path);
@@ -1176,7 +1186,16 @@ pub(crate) async fn collect_audit(
         (vec![project_id.to_string()], 1, format!("project `{project_id}`"), project_id.to_string())
     } else {
         return Err(Error::user_input("pass project_id (one repo) or group_path (a whole group)."));
-    };
+    })
+}
+
+pub(crate) async fn collect_audit(
+    client: &GitLabClient,
+    project_id: &str,
+    group_path: &str,
+    max_projects: usize,
+) -> Result<Audit> {
+    let (targets, total_repos, scope, name) = resolve_targets(client, project_id, group_path, max_projects).await?;
 
     let internal_host = client.host();
     let mut fan = FanOut::default();

@@ -266,7 +266,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
         "group_path": {
-          "description": "Group path — audit every non-archived project in the group",
+          "description": "Group path: audit every non-archived project in the group (with subgroups). Several groups: comma-separated (\"a,b\"). \"*\" = every top-level group the token can see; \"-name\" excludes one (\"*,-sandbox\")",
           "type": [
             "string",
             "null"

@@ -1787,7 +1787,7 @@ pub struct AuditCiSecurityParams {
     #[schemars(description = "Project ID or path. Omit when using group_path.")]
     #[serde(default)]
     pub project_id: Option<String>,
-    #[schemars(description = "Group path — audit every non-archived project in the group")]
+    #[schemars(description = "Group path: audit every non-archived project in the group (with subgroups). Several groups: comma-separated (\"a,b\"). \"*\" = every top-level group the token can see; \"-name\" excludes one (\"*,-sandbox\")")]
     pub group_path: Option<String>,
     #[schemars(
         description = "Max projects to audit in a group sweep (default: 60). A clean result over a subset is not a clean group, and the response says so."

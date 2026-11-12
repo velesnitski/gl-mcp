@@ -141,6 +141,90 @@ pub(crate) fn items_from_infra(infra: &[super::infra::InfraFinding], today: &str
 /// (ADR 079) and never appear in the dependency email.
 pub(crate) const CI_LITERAL: &str = "CI secret";
 
+/// Ecosystem label of unmasked secret CI/CD variables (ADR 080): CI-literal email only.
+pub(crate) const CI_VARIABLE: &str = "CI variable";
+
+pub(crate) fn items_from_unmasked_variables(scans: &[super::dependencies::RepoScan], today: &str) -> Vec<Item> {
+    use super::security::VarKind;
+    let mut out: Vec<Item> = Vec::new();
+    for s in scans {
+        for h in s.variables.iter().flatten() {
+            let package = format!("CI/CD variable · {} (scope {})", h.key, h.scope);
+            if out.iter().any(|i| i.repo == s.path && i.package == package) {
+                continue;
+            }
+            out.push(Item {
+                repo: s.path.clone(),
+                ecosystem: CI_VARIABLE.into(),
+                package,
+                version: "unmasked".into(),
+                severity: if h.high() { "HIGH" } else { "MEDIUM" }.into(),
+                advisories: vec!["secret CI/CD variable not masked".into()],
+                runtime: true,
+                build: false,
+                fix: match h.kind {
+                    VarKind::KeyMaterial => "set variable_type=file",
+                    VarKind::Json => "cannot be masked: protect and scope it, robot credential inside",
+                    VarKind::Secret => "mask it (and protect it)",
+                }
+                .into(),
+                first_seen: today.to_string(),
+            });
+        }
+    }
+    out
+}
+
+/// One value stored in unmasked CI/CD variables, and every place it is stored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct VarGroup {
+    pub keys: Vec<String>,
+    /// (repository, environment scope, protected), sorted.
+    pub places: Vec<(String, String, bool)>,
+    pub kind: super::security::VarKind,
+}
+
+/// Group unmasked variables by value within this run, key material first, then the
+/// most copied. Without a readable value (fingerprint 0) nothing is merged.
+pub(crate) fn variable_groups(scans: &[super::dependencies::RepoScan]) -> Vec<VarGroup> {
+    use super::security::VarKind;
+    let mut groups: Vec<(Option<u64>, VarGroup)> = Vec::new();
+    for s in scans {
+        for h in s.variables.iter().flatten() {
+            let id = (h.fingerprint != 0).then_some(h.fingerprint);
+            let i = match groups.iter().position(|(f, _)| id.is_some() && *f == id) {
+                Some(i) => i,
+                None => {
+                    groups.push((id, VarGroup { keys: Vec::new(), places: Vec::new(), kind: h.kind }));
+                    groups.len() - 1
+                }
+            };
+            let g = &mut groups[i].1;
+            if !g.keys.contains(&h.key) {
+                g.keys.push(h.key.clone());
+            }
+            g.places.push((s.path.clone(), h.scope.clone(), h.protected));
+            if h.kind == VarKind::KeyMaterial {
+                g.kind = VarKind::KeyMaterial;
+            }
+        }
+    }
+    let mut out: Vec<VarGroup> = groups
+        .into_iter()
+        .map(|(_, mut g)| {
+            g.keys.sort();
+            g.places.sort();
+            g.places.dedup();
+            g
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        (a.kind != VarKind::KeyMaterial, std::cmp::Reverse(a.places.len()), &a.keys)
+            .cmp(&(b.kind != VarKind::KeyMaterial, std::cmp::Reverse(b.places.len()), &b.keys))
+    });
+    out
+}
+
 pub(crate) fn items_from_ci_exposure(scans: &[super::dependencies::RepoScan], today: &str) -> Vec<Item> {
     let mut out: Vec<Item> = Vec::new();
     for s in scans {
@@ -344,7 +428,7 @@ pub(crate) fn subject(scope_name: &str, d: &Diff) -> String {
 
 /// Subject of the CI-literal email. Same three forms as the dependency subject
 /// ("baseline", "N new live", "nothing new live"), so a mid-week gate can read it.
-pub(crate) fn ci_subject(scope_name: &str, d: &Diff, live_distinct: usize) -> String {
+pub(crate) fn ci_subject(scope_name: &str, d: &Diff, live_distinct: usize, unmasked: usize) -> String {
     let new_live = d.new.iter().filter(|i| is_urgent(i)).count();
     let change = if d.baseline {
         "baseline".to_string()
@@ -358,7 +442,8 @@ pub(crate) fn ci_subject(scope_name: &str, d: &Diff, live_distinct: usize) -> St
     } else {
         format!(" · {} removed", d.fixed.len())
     };
-    format!("CI credentials — {scope_name}: {change} · {live_distinct} live{removed}")
+    let vars = if unmasked > 0 { format!(" · {unmasked} unmasked variables") } else { String::new() };
+    format!("CI credentials — {scope_name}: {change} · {live_distinct} live{vars}{removed}")
 }
 
 /// Whole weeks between two YYYY-MM-DD dates.
@@ -449,6 +534,10 @@ pub(crate) struct ReportMeta<'a> {
     pub ci_files: usize,
     /// Credentials written into those files, grouped by value (ADR 078).
     pub ci_credentials: Vec<super::ci_exposure::Credential>,
+    /// Unmasked secret CI/CD variables grouped by value, and the repositories whose
+    /// variables could not be read (ADR 080).
+    pub ci_variables: Vec<VarGroup>,
+    pub variables_unreadable: Vec<String>,
     pub warnings: &'a str,
 }
 
@@ -475,6 +564,8 @@ impl<'a> ReportMeta<'a> {
             declared_only,
             infra_files: audit.scans.iter().map(|s| s.infra_files).sum(),
             ci_files: audit.scans.iter().map(|s| s.ci_files).sum(),
+            ci_variables: variable_groups(&audit.scans),
+            variables_unreadable: audit.scans.iter().filter(|s| s.variables.is_none()).map(|s| s.path.clone()).collect(),
             ci_credentials: super::ci_exposure::credentials(
                 audit.scans.iter().flat_map(|s| s.ci_exposure.iter().map(move |h| (s.path.as_str(), h))),
             ),
@@ -544,6 +635,63 @@ fn ci_credentials_section(creds: &[super::ci_exposure::Credential], g: &str) -> 
         h.push_str(&format!(
             r#"<div style="{MUTED};margin-top:4px">{} more distinct credentials; every location is in the attached list.</div>"#,
             creds.len() - SHOWN
+        ));
+    }
+    h
+}
+
+/// Secret CI/CD variables that are not masked, one row per value (ADR 080).
+fn ci_variables_section(groups: &[VarGroup], g: &str) -> String {
+    use super::security::VarKind;
+    const SHOWN: usize = 25;
+    let places: usize = groups.iter().map(|v| v.places.len()).sum();
+    let unprotected = groups.iter().filter(|v| v.places.iter().any(|p| !p.2)).count();
+    let mut h = format!(
+        r#"<h2 style="{H2}">Secrets in CI/CD variables, not masked</h2><div style="{MUTED};margin-bottom:8px">{} distinct values in {places} variables; {unprotected} of them readable from unprotected branches. These are stored correctly — not in the repository — but a job that prints one writes it into the log in full. Masking keeps a value out of job logs; protection keeps it away from pipelines on unprotected branches, which is what stops any developer branch from reading it. One value in several projects is one secret.</div><table style="width:100%;border-collapse:collapse"><tr><th style="{TH}">State</th><th style="{TH}">Name</th><th style="{TH}">Stored in</th></tr>"#,
+        groups.len()
+    );
+    for v in groups.iter().take(SHOWN) {
+        let state = match v.kind {
+            VarKind::KeyMaterial => badge("HIGH"),
+            _ => badge("MEDIUM"),
+        };
+        let what = match v.kind {
+            VarKind::KeyMaterial => "key material: set variable_type=file",
+            VarKind::Json => "JSON, cannot be masked: protect and scope it",
+            VarKind::Secret => "mask it, and protect it",
+        };
+        let mut where_: Vec<String> = v
+            .places
+            .iter()
+            .take(6)
+            .map(|(repo, scope, protected)| {
+                format!(
+                    "{}{}{}",
+                    esc(&short_repo(repo, g)),
+                    if scope == "*" { String::new() } else { format!(" · {}", esc(scope)) },
+                    if *protected { "" } else { " (unprotected)" }
+                )
+            })
+            .collect();
+        if v.places.len() > 6 {
+            where_.push(format!("and {} more", v.places.len() - 6));
+        }
+        let copies = if v.places.len() > 1 {
+            format!(r#" · same value in {} projects"#, v.places.len())
+        } else {
+            String::new()
+        };
+        h.push_str(&format!(
+            r#"<tr><td style="{TD};width:80px">{state}</td><td style="{TD}">{}<div style="{MUTED}">{what}{copies}</div></td><td style="{TD}">{}</td></tr>"#,
+            esc(&v.keys.join(", ")),
+            where_.join("<br>")
+        ));
+    }
+    h.push_str("</table>");
+    if groups.len() > SHOWN {
+        h.push_str(&format!(
+            r#"<div style="{MUTED};margin-top:4px">{} more; <code>audit_ci_security</code> lists every one.</div>"#,
+            groups.len() - SHOWN
         ));
     }
     h
@@ -857,7 +1005,7 @@ pub(crate) fn render_ci_email(meta: &ReportMeta, d: &Diff) -> String {
     h.push_str(&kpi("Live credentials", live.to_string(), "#b91c1c", "distinct values in CI files"));
     h.push_str(&kpi("New live", dash(new_live.len()), "#c2410c", "since last report"));
     h.push_str(&kpi("Removed", dash(d.fixed.len()), "#15803d", "rotate if not done"));
-    h.push_str(&kpi("Places", creds.iter().map(|c| c.places.len()).sum::<usize>().to_string(), "#1d4ed8", "lines holding them"));
+    h.push_str(&kpi("Unmasked variables", meta.ci_variables.len().to_string(), "#1d4ed8", "distinct secret values in CI/CD settings"));
     h.push_str("</tr></table>\n");
     if !d.baseline && !d.new.is_empty() {
         h.push_str(&format!(
@@ -893,6 +1041,15 @@ pub(crate) fn render_ci_email(meta: &ReportMeta, d: &Diff) -> String {
         h.push_str(r#"<p style="font-size:14px;margin-top:16px">No credentials written into CI files. 👍</p>"#);
     } else {
         h.push_str(&ci_credentials_section(creds, g));
+    }
+    if !meta.ci_variables.is_empty() {
+        h.push_str(&ci_variables_section(&meta.ci_variables, g));
+    }
+    if !meta.variables_unreadable.is_empty() {
+        h.push_str(&format!(
+            r#"<div style="{MUTED};margin-top:8px">CI/CD variables of {} repos could not be read (the token needs the Maintainer role there): not checked.</div>"#,
+            meta.variables_unreadable.len()
+        ));
     }
     h.push_str(&format!(
         r#"<p style="{MUTED};margin-top:20px">Covers <code>.gitlab-ci.yml</code>, the CI YAML under <code>.gitlab/</code> or <code>ci/</code>, and local includes: assignments, auth headers, password flags, credentials in URLs and well-known key formats. Secrets kept in CI variables are not visible here. Values are never read into this report. Restricted distribution: do not forward. Generated by gl-mcp v{}.</p>
@@ -932,7 +1089,15 @@ pub async fn weekly_report(
     let mut items = items_from(&audit.findings, today);
     items.extend(items_from_infra(&audit.infra, today));
     let ci_scanned: BTreeSet<String> = audit.scans.iter().map(|s| s.path.clone()).collect();
-    let cd = diff(ci_previous.as_ref(), items_from_ci_exposure(&audit.scans, today), &audit.scope, &ci_scanned);
+    let mut ci_items = items_from_ci_exposure(&audit.scans, today);
+    ci_items.extend(items_from_unmasked_variables(&audit.scans, today));
+    // A repository whose variables could not be read this run is not rescanned for
+    // them: its variable items carry over instead of reading as fixed.
+    let unread: BTreeSet<&str> = audit.scans.iter().filter(|s| s.variables.is_none()).map(|s| s.path.as_str()).collect();
+    if let Some(p) = &ci_previous {
+        ci_items.extend(p.items.iter().filter(|i| i.ecosystem == CI_VARIABLE && unread.contains(i.repo.as_str())).cloned());
+    }
+    let cd = diff(ci_previous.as_ref(), ci_items, &audit.scope, &ci_scanned);
     let d = diff(
         previous.as_ref(),
         items,
@@ -956,7 +1121,7 @@ pub async fn weekly_report(
         date: today.to_string(),
         scope: audit.scope.clone(),
         scanned: ci_scanned.into_iter().collect(),
-        subject: ci_subject(&audit.name, &cd, meta.ci_credentials.iter().filter(|c| c.live).count()),
+        subject: ci_subject(&audit.name, &cd, meta.ci_credentials.iter().filter(|c| c.live).count(), meta.ci_variables.len()),
         items: cd.open,
     };
     let to_json = |s: &Snapshot| {
@@ -1197,6 +1362,8 @@ mod tests {
             infra_files: 3,
             ci_files: 0,
             ci_credentials: Vec::new(),
+            ci_variables: Vec::new(),
+            variables_unreadable: Vec::new(),
             internal_images: 1,
             warnings: "",
         }
@@ -1362,8 +1529,33 @@ mod tests {
         assert!(html.contains("STORE_PASSWORD, UPLOAD_PASSWORD"));
         assert!(html.contains("same value in 2 places across 2 repos — one rotation"));
         assert!(html.contains("No longer in the file") && html.contains("WEBHOOK_TOKEN"));
-        assert_eq!(ci_subject("acme", &d, 1), "CI credentials — acme: nothing new live · 1 live · 1 removed");
+        assert_eq!(ci_subject("acme", &d, 1, 0), "CI credentials — acme: nothing new live · 1 live · 1 removed");
         assert!(!html.contains(&value), "no credential value reaches the email");
+    }
+
+    #[test]
+    fn ci_email_lists_unmasked_variables_grouped_by_value() {
+        use super::super::security::unmasked_secret;
+        let token: String = "dn5".repeat(10);
+        let var = |key: &str, protected: bool| serde_json::json!({"key": key, "value": token, "masked": false, "protected": protected, "variable_type": "env_var", "environment_scope": "*"});
+        let scan = |path: &str, v: serde_json::Value| super::super::dependencies::RepoScan {
+            path: path.into(),
+            variables: Some(unmasked_secret(&v).into_iter().collect()),
+            ..Default::default()
+        };
+        let scans = vec![scan("acme/web", var("DNS_API_TOKEN", false)), scan("acme/api", var("DNS_API_TOKEN", true))];
+        let mut m = meta("2024-10-21");
+        m.ci_variables = variable_groups(&scans);
+        m.variables_unreadable = vec!["acme/legacy".into()];
+        assert_eq!(m.ci_variables.len(), 1, "one token stored twice is one secret");
+        let items = items_from_unmasked_variables(&scans, "2024-10-21");
+        assert_eq!((items.len(), items[0].severity.as_str()), (2, "MEDIUM"));
+        let d = Diff { baseline: true, open: items, ..Default::default() };
+        let html = render_ci_email(&m, &d);
+        assert!(html.contains("1 distinct values in 2 variables; 1 of them readable from unprotected branches"));
+        assert!(html.contains("same value in 2 projects") && html.contains("web (unprotected)"));
+        assert!(html.contains("variables of 1 repos could not be read"));
+        assert!(!html.contains(&token), "no value reaches the email");
     }
 
     #[test]

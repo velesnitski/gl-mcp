@@ -425,6 +425,13 @@ Its subject has the same three forms as the dependency one (`baseline`,
 `N new live`, `nothing new live`), so a mid-week job can send it only when a new
 live one appears.
 
+The same email lists **secret CI/CD variables that are not masked** (ADR 080):
+stored correctly, outside the repository, but printed in full if a job echoes one.
+The check looks at each value without keeping it (references, booleans, paths and
+empty values are skipped; multi-line values are key material for a file-type
+variable; JSON cannot be masked), groups one value stored in several projects, and
+notes which are unprotected and so readable from any branch's pipeline.
+
 They are listed **one row per credential, not per line** (ADR 078): a value copied
 into several files or repositories is one rotation, so the email names it once with
 every place it is written. Copies are matched within a single run by hashing each
