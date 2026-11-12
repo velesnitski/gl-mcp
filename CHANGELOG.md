@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.11.1] - 2026-11-12
+
+### Fixed
+
+- A build secret mount (`--secret id=name,env=VAR` or `id=name,src=path`) names
+  where the build reads a secret from and is no longer reported as a literal
+  (ADR 081 addendum).
+
 ## [2.11.0] - 2026-11-12
 
 ### Added

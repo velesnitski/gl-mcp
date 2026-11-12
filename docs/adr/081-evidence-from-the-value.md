@@ -32,3 +32,9 @@ cannot settle it, and the report cannot show the value.
 - Disputes about a finding start from evidence rather than from the variable's name.
 - A weak but real password is reported as trivial; it is still listed, so it is
   still fixed.
+
+## Addendum (2026-11-12): build secret mounts
+
+`--secret id=name,env=VAR` and `id=name,src=path` (BuildKit, Podman) tell the build
+where to read a secret from; the value is not in the line. They are recognised as
+references, like `$VAR`, and not reported.

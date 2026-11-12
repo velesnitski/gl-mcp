@@ -241,6 +241,9 @@ pub(crate) fn harmless_reason(value: &str) -> Option<&'static str> {
     if SECRET_STORE_REF.is_match(v) {
         return Some("reference to a secret store");
     }
+    if BUILD_SECRET_MOUNT.is_match(v) {
+        return Some("build secret mount (reads the value at build time)");
+    }
     if public_keys_only(v) {
         return Some("public keys or certificates only");
     }
@@ -285,6 +288,12 @@ fn unquote(value: &str) -> &str {
 /// so the rest of the list may follow.
 static SECRET_STORE_REF: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(?:[A-Za-z0-9_.-]+:(?:latest|\d{1,3})|projects/[^/\s]+/secrets/\S+|arn:aws:(?:secretsmanager|ssm):\S+|vault:\S+|secret/data/\S+|op://\S+)(?:,\S*)?$").unwrap()
+});
+
+/// A BuildKit / Podman secret mount: `--secret id=name,env=VAR`, `id=name,src=path`.
+/// It names where the build reads the secret from; the value is not in the line.
+static BUILD_SECRET_MOUNT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:(?:id|type|target|required|mode|uid|gid)=[^,\s]*,)*(?:id=[^,\s]+)(?:,(?:src|source|env|type|target|required|mode|uid|gid)=[^,\s]*)*$").unwrap()
 });
 
 /// A run-time reference: `$NAME`, `${NAME}`, `$(command)`. A `$` followed by anything
@@ -508,6 +517,15 @@ mod tests {
         }
         let ci = "deploy:\n  script:\n    - gcloud run deploy app --set-secrets MAILER_PASSWORD=mailer_password:latest,MONITOR_API_KEY=monitor_api_key:latest\n";
         assert!(find_secrets(".gitlab-ci.yml", ci).is_empty());
+    }
+
+    #[test]
+    fn build_secret_mounts_are_references() {
+        let ci = "build:\n  script:\n    - docker buildx build --secret id=npm_token,env=NPM_TOKEN --secret id=cfg,src=/run/cfg -t app .\n";
+        assert!(find_secrets(".gitlab-ci.yml", ci).is_empty(), "a mount names where the secret comes from");
+        assert_eq!(harmless_reason("id=registry_auth,env=CI_JOB_TOKEN"), Some("build secret mount (reads the value at build time)"));
+        let real = format!("--secret {}", word(18));
+        assert_eq!(find_secrets(".gitlab-ci.yml", &format!("  - tool push {real}\n")).len(), 1, "a literal after --secret still counts");
     }
 
     #[test]
