@@ -1706,12 +1706,13 @@ pub(crate) fn render_dependency_audit(
                 .position(|c| c.places.iter().any(|p| p.0 == repo && p.1 == h.path && p.2 == h.line))
                 .map_or(0, |i| i + 1);
             out.push(format!(
-                "| {n} | {} | {repo}:{}:{} | {} | {}{} | {} |",
+                "| {n} | {} | {repo}:{}:{} | {} | {}{}{} | {} |",
                 if h.high() { "HIGH" } else { "MEDIUM" },
                 h.path,
                 h.line,
                 if h.key == "-" { "—" } else { &h.key },
                 h.kind.describe(),
+                h.evidence.note().map(|n| format!("; {n}")).unwrap_or_default(),
                 if h.commented { " (commented out)" } else { "" },
                 h.len
             ));

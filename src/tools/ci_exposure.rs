@@ -67,6 +67,80 @@ pub(crate) struct SecretHit {
     pub len: usize,
     /// Equal for equal values within this process only (see the module docs).
     pub fingerprint: u64,
+    /// What the value itself suggests, judged without keeping it (ADR 081).
+    pub evidence: Evidence,
+}
+
+/// Evidence from the value's shape: a known credential format makes a finding
+/// near-certain; a trivial value (a default word, a repeated or sequential run) is most likely a
+/// test default or a leftover, so it is MEDIUM, not a live secret.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Evidence {
+    /// The value has the format of a specific credential type.
+    Format(&'static str),
+    /// Long and random-looking: mixed letters and digits, no dictionary shape.
+    Random,
+    /// A default, a repeated or sequential run, or a short number.
+    Trivial,
+    /// Nothing either way.
+    Unclear,
+}
+
+impl Evidence {
+    /// One line for reports: why the finding is (or likely is not) a real credential.
+    pub(crate) fn note(self) -> Option<String> {
+        match self {
+            Self::Format(what) => Some(format!("format matches {what}")),
+            Self::Random => Some("random-looking value".into()),
+            Self::Trivial => Some("trivial value (default, repeated or sequential): likely a test or leftover — confirm nothing accepts it".into()),
+            Self::Unclear => None,
+        }
+    }
+}
+
+/// Credential formats recognisable from the value alone, beyond `KNOWN` (which
+/// matches anywhere on a line): these need the whole value.
+static VALUE_FORMATS: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
+    [
+        ("an Apple app-specific password", r"^[a-z]{4}-[a-z]{4}-[a-z]{4}-[a-z]{4}$"),
+        ("a YouTrack permanent token", r"^perm[:-][A-Za-z0-9+/=._-]{20,}$"),
+        ("a GitLab token", r"^gl(?:pat|dt|cbt|ptt|rt|oas)-[A-Za-z0-9_-]{20,}$"),
+        ("a Slack webhook", r"^https://hooks\.slack\.com/services/\S+$"),
+        ("a Telegram bot token", r"^\d{8,10}:[A-Za-z0-9_-]{35}$"),
+        ("a JWT", r"^eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\."),
+        ("an API key with a provider prefix", r"^(?:sk|pk|rk|xai|AKIA|ghp|gho|sk-ant|sk-proj)[-_][A-Za-z0-9_-]{16,}$"),
+    ]
+    .into_iter()
+    .map(|(what, re)| (what, Regex::new(re).unwrap()))
+    .collect()
+});
+
+const DEFAULTS: &[&str] = &[
+    "password", "passw0rd", "pass", "admin", "root", "secret", "test", "testtest", "test123", "qwerty", "qwerty123",
+    "changeit", "default", "demo", "guest", "user", "letmein", "welcome", "abc123", "token", "dev", "local",
+];
+
+/// What the value suggests. Never stored: only the verdict is.
+pub(crate) fn evidence(key: &str, value: &str) -> Evidence {
+    let v = unquote(value);
+    if let Some((what, _)) = VALUE_FORMATS.iter().find(|(_, re)| re.is_match(v)) {
+        return Evidence::Format(what);
+    }
+    let lower = v.to_ascii_lowercase();
+    let chars: Vec<char> = v.chars().collect();
+    let same = chars.windows(2).all(|w| w[0] == w[1]);
+    let step = |d: i32| chars.len() >= 3 && chars.windows(2).all(|w| w[1] as i32 - w[0] as i32 == d);
+    let short_number = chars.len() <= 6 && chars.iter().all(char::is_ascii_digit);
+    let named_after_key = lower == key.to_ascii_lowercase() || lower.replace(['-', '_'], "") == key.to_ascii_lowercase().replace(['-', '_'], "");
+    if same || step(1) || step(-1) || short_number || named_after_key || DEFAULTS.contains(&lower.as_str()) {
+        return Evidence::Trivial;
+    }
+    let (letters, digits) = (chars.iter().any(|c| c.is_ascii_alphabetic()), chars.iter().any(char::is_ascii_digit));
+    let distinct = chars.iter().collect::<std::collections::BTreeSet<_>>().len();
+    if chars.len() >= 20 && letters && digits && distinct * 2 >= chars.len().min(40) {
+        return Evidence::Random;
+    }
+    Evidence::Unclear
 }
 
 /// CI definition files: the root file and the conventional homes of included files.
@@ -103,7 +177,9 @@ impl SecretHit {
     /// HIGH for a live credential; MEDIUM when commented out or a service-container
     /// password.
     pub(crate) fn high(&self) -> bool {
-        !self.commented && !matches!(self.kind, SecretKind::ServiceDatabase | SecretKind::Identifier)
+        !self.commented
+            && !matches!(self.kind, SecretKind::ServiceDatabase | SecretKind::Identifier)
+            && self.evidence != Evidence::Trivial
     }
 }
 
@@ -276,8 +352,8 @@ pub(crate) fn find_secrets(path: &str, content: &str) -> Vec<SecretHit> {
         let n = i + 1;
         let mut push = |key: &str, kind: SecretKind, value: &str| {
             if !out.iter().any(|h| h.line == n && h.key == key) {
-                let (len, fingerprint) = (unquote(value).chars().count(), fingerprint(value));
-                out.push(SecretHit { path: path.to_string(), line: n, key: key.to_string(), kind, commented, len, fingerprint });
+                let (len, fingerprint, evidence) = (unquote(value).chars().count(), fingerprint(value), evidence(key, value));
+                out.push(SecretHit { path: path.to_string(), line: n, key: key.to_string(), kind, commented, len, fingerprint, evidence });
             }
         };
         for (what, m) in KNOWN.iter().filter_map(|(what, re)| re.find(line).map(|m| (*what, m))) {
@@ -336,6 +412,8 @@ pub(crate) struct Credential {
     pub places: Vec<(String, String, usize, bool)>,
     /// At least one copy is a live (HIGH) line.
     pub live: bool,
+    /// What the value suggests (same value, so same for every copy).
+    pub evidence: Evidence,
 }
 
 /// Group hits by value within this run: live credentials first, then the most copied.
@@ -346,7 +424,7 @@ pub(crate) fn credentials<'a>(hits: impl IntoIterator<Item = (&'a str, &'a Secre
         let i = match by_value.iter().position(|(f, _)| *f == h.fingerprint) {
             Some(i) => i,
             None => {
-                by_value.push((h.fingerprint, Credential { keys: Vec::new(), places: Vec::new(), live: false }));
+                by_value.push((h.fingerprint, Credential { keys: Vec::new(), places: Vec::new(), live: false, evidence: h.evidence }));
                 by_value.len() - 1
             }
         };
@@ -441,6 +519,26 @@ mod tests {
         let hits = find_secrets(".gitlab-ci.yml", &ci);
         let got: Vec<(&str, bool)> = hits.iter().map(|h| (h.key.as_str(), h.high())).collect();
         assert_eq!(got, vec![("MYSQL_ROOT_PASSWORD", false), ("DB_PASSWORD", false), ("MAIL_PASSWORD", true)]);
+    }
+
+    #[test]
+    fn the_value_says_whether_a_finding_is_real() {
+        // Shapes assembled at run time: no credential-shaped literal in the tree.
+        let quad = |s: &str| [s, s, s, s].join("-");
+        assert_eq!(evidence("STORE_PASSWORD", &quad("abcd")), Evidence::Format("an Apple app-specific password"));
+        assert_eq!(evidence("TRACKER_TOKEN", &format!("perm:{}", word(30))), Evidence::Format("a YouTrack permanent token"));
+        let mixed: String = (0..30u32).map(|i| char::from_digit((i * 7 + 3) % 36, 36).unwrap()).collect();
+        assert_eq!(evidence("API_TOKEN", &mixed), Evidence::Random);
+        assert_eq!(evidence("API_TOKEN", &"k3Q9zP".repeat(5)), Evidence::Unclear, "a repeated block is not random");
+        for v in ["2345678", "98765", "777", "zzzzzz", "welcome", "Guest", "4096"] {
+            assert_eq!(evidence("TOOL_PASSWORD", v), Evidence::Trivial, "{v}");
+        }
+        assert_eq!(evidence("DEPLOY_TOKEN", "deploy_token"), Evidence::Trivial, "named after its key");
+        assert_eq!(evidence("DB_PASSWORD", "Summer-River-42"), Evidence::Unclear);
+        let ci = format!("variables:\n  TOOL_PASSWORD: \"3456789\"\n  STORE_PASSWORD: '{}'\n", quad("wxyz"));
+        let hits = find_secrets(".gitlab-ci.yml", &ci);
+        let got: Vec<(&str, bool)> = hits.iter().map(|h| (h.key.as_str(), h.high())).collect();
+        assert_eq!(got, vec![("TOOL_PASSWORD", false), ("STORE_PASSWORD", true)], "trivial is MEDIUM, a known format stays HIGH");
     }
 
     #[test]

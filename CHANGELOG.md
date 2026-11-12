@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.11.0] - 2026-11-12
+
+### Added
+
+- Each CI-file finding carries what its value suggests, without showing it: a known
+  credential format (near-certain), a random-looking value, or a trivial one (a
+  default word, a repeated or sequential run, a short number, the key's own name).
+  Trivial values are MEDIUM and not counted as live. Shown in `audit_ci_security`,
+  `audit_dependencies` and the CI email (ADR 081).
+
 ## [2.10.0] - 2026-11-12
 
 ### Added

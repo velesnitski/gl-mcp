@@ -624,8 +624,13 @@ fn ci_credentials_section(creds: &[super::ci_exposure::Credential], g: &str) -> 
         } else {
             String::new()
         };
+        let evidence = c
+            .evidence
+            .note()
+            .map(|n| format!(r#"<div style="{MUTED}">{}</div>"#, esc(&n)))
+            .unwrap_or_default();
         h.push_str(&format!(
-            r#"<tr><td style="{TD};width:80px">{state}</td><td style="{TD}">{}{copies}</td><td style="{TD}">{}</td></tr>"#,
+            r#"<tr><td style="{TD};width:80px">{state}</td><td style="{TD}">{}{copies}{evidence}</td><td style="{TD}">{}</td></tr>"#,
             esc(&c.keys.join(", ")),
             where_.join("<br>")
         ));
@@ -1495,6 +1500,7 @@ mod tests {
             commented,
             len: 12,
             fingerprint: 1,
+            evidence: super::super::ci_exposure::Evidence::Unclear,
         };
         let scan = |hits: Vec<SecretHit>| super::super::dependencies::RepoScan {
             path: "acme/app".into(),
