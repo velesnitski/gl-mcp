@@ -925,7 +925,8 @@ async fn scan_repo(client: &GitLabClient, path: &str, internal_host: &str) -> Re
         scan.infra_files += 1;
         if super::ci_exposure::is_ci_file(file) {
             scan.ci_files += 1;
-            scan.ci_exposure.extend(super::ci_exposure::find_secrets(file, &text));
+            scan.ci_exposure
+                .extend(super::ci_exposure::find_secrets(file, &text).into_iter().filter(|h| h.not_reported().is_none()));
         }
         let images = match kind {
             infra::InfraKind::Dockerfile => infra::dockerfile_images(&text),
@@ -957,7 +958,8 @@ async fn scan_repo(client: &GitLabClient, path: &str, internal_host: &str) -> Re
             .await
         {
             scan.ci_files += 1;
-            scan.ci_exposure.extend(super::ci_exposure::find_secrets(file, &text));
+            scan.ci_exposure
+                .extend(super::ci_exposure::find_secrets(file, &text).into_iter().filter(|h| h.not_reported().is_none()));
         }
     }
     let mut found = select_lockfiles(&blobs);

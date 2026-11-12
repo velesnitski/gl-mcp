@@ -143,6 +143,9 @@ pub(crate) fn skipped_by_value(v: &Value) -> Option<(String, &'static str)> {
     if super::ci_exposure::identifier_key(key) {
         return Some((key.to_string(), "names a key, signs nothing"));
     }
+    if super::ci_exposure::browser_public_key(key) {
+        return Some((key.to_string(), "front-end build variable, public by design"));
+    }
     if descriptive_key(key) {
         return Some((key.to_string(), "name describes, does not hold, a secret"));
     }
@@ -164,7 +167,7 @@ pub(crate) fn unmasked_secret(v: &Value) -> Option<VarHit> {
     }
     let upper = key.to_ascii_uppercase();
     let secretish = SECRETISH.iter().any(|m| upper.contains(m));
-    if !secretish || super::ci_exposure::identifier_key(key) || descriptive_key(key) {
+    if !secretish || super::ci_exposure::identifier_key(key) || super::ci_exposure::browser_public_key(key) || descriptive_key(key) {
         return None;
     }
     let value = v["value"].as_str();
@@ -387,7 +390,12 @@ async fn audit_project(client: &GitLabClient, path: &str) -> Result<ProjectAudit
         {
             Ok(text) => {
                 findings.extend(audit_ci_file(path, &file, &text));
-                findings.extend(secret_findings(path, &super::ci_exposure::find_secrets(&file, &text)));
+                let (quiet, hits): (Vec<_>, Vec<_>) =
+                    super::ci_exposure::find_secrets(&file, &text).into_iter().partition(|h| h.not_reported().is_some());
+                findings.extend(secret_findings(path, &hits));
+                skipped.extend(quiet.iter().map(|h| {
+                    (format!("{}:{} {}", h.path, h.line, h.key), h.not_reported().unwrap_or_default())
+                }));
                 queue.extend(super::ci_exposure::local_includes(&text));
             }
             Err(e) if e.is_user_error() => {}
@@ -431,7 +439,7 @@ pub async fn audit_ci_security(
     if !skipped.is_empty() {
         let _ = write!(
             report,
-            "\n\nSecret-named variables not reported, by what their value is (value not shown): {}",
+            "\n\nSecret-named variables and CI-file values not reported, and why (value not shown): {}",
             skipped.join("; ")
         );
     }

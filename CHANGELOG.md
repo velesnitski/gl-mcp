@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.12.0] - 2026-11-12
+
+### Changed
+
+- Fewer false positives in CI secret checks (ADR 082). Front-end build variables
+  (`NUXT_PUBLIC_`, `NEXT_PUBLIC_`, `VITE_`, `REACT_APP_` and similar) are public by
+  design and no longer reported, unless the name says SECRET, PRIVATE or PASSWORD.
+  An access key ID in a CI file, and a test service-container password with a
+  trivial value, are skipped with their reason instead of reported as MEDIUM.
+- The skip line in `audit_ci_security` now covers CI-file values as well as
+  variables.
+
 ## [2.11.1] - 2026-11-12
 
 ### Fixed

@@ -181,6 +181,29 @@ impl SecretHit {
             && !matches!(self.kind, SecretKind::ServiceDatabase | SecretKind::Identifier)
             && self.evidence != Evidence::Trivial
     }
+
+    /// Why this hit is not worth reporting, if it is not (ADR 082): the public half of a
+    /// key pair, or a throwaway service-container password that is also trivial. Both
+    /// are listed as skipped, by category, so a skip can still be checked.
+    pub(crate) fn not_reported(&self) -> Option<&'static str> {
+        match (self.kind, self.evidence) {
+            (SecretKind::Identifier, _) => Some("names a key, signs nothing"),
+            (SecretKind::ServiceDatabase, Evidence::Trivial) => Some("trivial password of a test service container"),
+            _ => None,
+        }
+    }
+}
+
+/// Front-end build variables: every framework inlines these into the JavaScript it
+/// ships, so their values are public by design (an error-tracking DSN, a payment provider's
+/// client-side token). A name that still says SECRET, PRIVATE or PASSWORD is reported:
+/// that is a secret about to be published, not public config.
+pub(crate) fn browser_public_key(key: &str) -> bool {
+    let k = key.to_ascii_uppercase();
+    let public = ["NUXT_PUBLIC_", "NEXT_PUBLIC_", "VITE_", "REACT_APP_", "VUE_APP_", "EXPO_PUBLIC_", "GATSBY_", "PUBLIC_"]
+        .iter()
+        .any(|p| k.starts_with(p));
+    public && !["SECRET", "PRIVATE", "PASSWORD", "PASSWD"].iter().any(|m| k.contains(m))
 }
 
 /// Names of the public half of a key pair: an access key ID, a public or publishable
@@ -197,7 +220,7 @@ pub(crate) fn identifier_key(key: &str) -> bool {
 
 pub(crate) fn secret_key(key: &str) -> bool {
     let k = key.to_ascii_uppercase().replace(['-', '.'], "_");
-    SECRET_KEY.iter().any(|m| k.contains(m)) && !NOT_SECRET.iter().any(|m| k.contains(m))
+    SECRET_KEY.iter().any(|m| k.contains(m)) && !NOT_SECRET.iter().any(|m| k.contains(m)) && !browser_public_key(key)
 }
 
 /// A value that holds no credential: a reference resolved at run time, a
@@ -653,5 +676,37 @@ mod tests {
         let root = "include:\n  - local: '/ci/build.yml'\n  - local: ci/release.yml\n  - project: other/p\n    file: x.yml\n";
         assert_eq!(local_includes(root), vec!["ci/build.yml", "ci/release.yml"]);
         assert_eq!(local_includes("include: '.gitlab/ci/all.yml'\n"), vec![".gitlab/ci/all.yml"]);
+    }
+
+    #[test]
+    fn noise_is_skipped_with_a_reason_and_real_values_are_not() {
+        let ci = [
+            "  MYSQL_ROOT_PASSWORD: zzzzzzzz".to_string(),
+            format!("  POSTGRES_PASSWORD: {}", word(24)),
+            format!("  STORE_ACCESS_KEY: {}", word(20)),
+            format!("  DEPLOY_TOKEN: {}", word(30)),
+        ]
+        .join("\n");
+        let why: Vec<(usize, Option<&str>)> = find_secrets(".gitlab-ci.yml", &ci).iter().map(|h| (h.line, h.not_reported())).collect();
+        assert_eq!(
+            why,
+            vec![
+                (1, Some("trivial password of a test service container")),
+                (2, None), // a service password that is not trivial may be reused elsewhere
+                (3, Some("names a key, signs nothing")),
+                (4, None),
+            ]
+        );
+    }
+
+    #[test]
+    fn front_end_build_variables_are_public_unless_named_secret() {
+        for k in ["NUXT_PUBLIC_TRACKING_DSN", "VITE_PAYMENT_CLIENT_TOKEN", "NEXT_PUBLIC_API_KEY", "REACT_APP_MAPS_KEY"] {
+            assert!(browser_public_key(k), "{k}");
+            assert!(!secret_key(k), "{k}");
+        }
+        for k in ["NUXT_PUBLIC_API_SECRET", "VITE_ADMIN_PASSWORD", "NEXT_PUBLIC_PRIVATE_KEY", "BUILD_AUTH_TOKEN", "APP_PUBLIC_TOKEN"] {
+            assert!(!browser_public_key(k), "{k}");
+        }
     }
 }
